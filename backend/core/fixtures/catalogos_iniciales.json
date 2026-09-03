@@ -1,0 +1,26 @@
+[
+  {"model": "core.categoriaproblema", "pk": 1, "fields": {"nombre": "Eléctrico", "activo": true}},
+  {"model": "core.categoriaproblema", "pk": 2, "fields": {"nombre": "Gasfitería y sanitarios", "activo": true}},
+  {"model": "core.categoriaproblema", "pk": 3, "fields": {"nombre": "Refrigeración", "activo": true}},
+  {"model": "core.categoriaproblema", "pk": 4, "fields": {"nombre": "Climatización", "activo": true}},
+  {"model": "core.categoriaproblema", "pk": 5, "fields": {"nombre": "Infraestructura", "activo": true}},
+  {"model": "core.categoriaproblema", "pk": 6, "fields": {"nombre": "Carpintería y cerrajería", "activo": true}},
+  {"model": "core.categoriaproblema", "pk": 7, "fields": {"nombre": "Otros", "activo": true}},
+
+  {"model": "core.nivelurgencia", "pk": 1, "fields": {"nombre": "Alta", "sla_primera_respuesta_horas": 2, "sla_resolucion_horas": 24}},
+  {"model": "core.nivelurgencia", "pk": 2, "fields": {"nombre": "Media", "sla_primera_respuesta_horas": 8, "sla_resolucion_horas": 72}},
+  {"model": "core.nivelurgencia", "pk": 3, "fields": {"nombre": "Baja", "sla_primera_respuesta_horas": 24, "sla_resolucion_horas": 168}},
+
+  {"model": "core.plantillachecklist", "pk": 1, "fields": {"nombre": "Checklist estándar MASS", "version": 1, "activa": true}},
+
+  {"model": "core.itemplantilla", "pk": 1, "fields": {"plantilla": 1, "descripcion": "Tableros eléctricos", "orden": 1, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 2, "fields": {"plantilla": 1, "descripcion": "Iluminación", "orden": 2, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 3, "fields": {"plantilla": 1, "descripcion": "Refrigeración", "orden": 3, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 4, "fields": {"plantilla": 1, "descripcion": "Climatización", "orden": 4, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 5, "fields": {"plantilla": 1, "descripcion": "Servicios higiénicos", "orden": 5, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 6, "fields": {"plantilla": 1, "descripcion": "Puertas", "orden": 6, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 7, "fields": {"plantilla": 1, "descripcion": "Pisos, paredes y techos", "orden": 7, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 8, "fields": {"plantilla": 1, "descripcion": "Señalización de seguridad", "orden": 8, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 9, "fields": {"plantilla": 1, "descripcion": "Cámaras", "orden": 9, "activo": true}},
+  {"model": "core.itemplantilla", "pk": 10, "fields": {"plantilla": 1, "descripcion": "Observaciones generales", "orden": 10, "activo": true}}
+]
