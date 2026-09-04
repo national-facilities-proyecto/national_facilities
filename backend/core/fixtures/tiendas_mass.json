@@ -1,0 +1,34 @@
+[
+  {
+    "model": "core.cliente",
+    "pk": 1,
+    "fields": {
+      "razon_social": "Mass Distribuidora S.A.C. (MASS)",
+      "ruc": "20601234567",
+      "contacto_nombre": "Gerencia de Mantenimiento MASS",
+      "contacto_email": "mantenimiento@mass-test.pe"
+    }
+  },
+
+  {
+    "model": "core.contrato",
+    "pk": 1,
+    "fields": {
+      "cliente": 1,
+      "plantilla_checklist": 1,
+      "frecuencia_visitas_mensual": 1,
+      "minimo_intervenciones_mensual": 2,
+      "radio_validacion_metros": 100,
+      "fecha_inicio": "2026-01-01",
+      "fecha_fin": null,
+      "activo": true
+    }
+  },
+
+  {"model": "core.tienda", "pk": 1, "fields": {"cliente": 1, "nombre": "MASS - San Isidro", "direccion": "Av. Principal s/n, San Isidro, Lima", "latitud": "-12.098500", "longitud": "-77.035500"}},
+  {"model": "core.tienda", "pk": 2, "fields": {"cliente": 1, "nombre": "MASS - Miraflores", "direccion": "Av. Principal s/n, Miraflores, Lima", "latitud": "-12.121500", "longitud": "-77.032800"}},
+  {"model": "core.tienda", "pk": 3, "fields": {"cliente": 1, "nombre": "MASS - Surco", "direccion": "Av. Principal s/n, Santiago de Surco, Lima", "latitud": "-12.135000", "longitud": "-76.995000"}},
+  {"model": "core.tienda", "pk": 4, "fields": {"cliente": 1, "nombre": "MASS - San Borja", "direccion": "Av. Principal s/n, San Borja, Lima", "latitud": "-12.108400", "longitud": "-77.000700"}},
+  {"model": "core.tienda", "pk": 5, "fields": {"cliente": 1, "nombre": "MASS - Chorrillos", "direccion": "Av. Principal s/n, Chorrillos, Lima", "latitud": "-12.173900", "longitud": "-77.018100"}},
+  {"model": "core.tienda", "pk": 6, "fields": {"cliente": 1, "nombre": "MASS - La Molina", "direccion": "Av. Principal s/n, La Molina, Lima", "latitud": "-12.080000", "longitud": "-76.942000"}}
+]
