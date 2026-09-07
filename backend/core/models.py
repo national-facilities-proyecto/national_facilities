@@ -118,9 +118,19 @@ class Visita(models.Model):
         ("pendiente_validacion", "Pendiente de validación (excepción de ubicación)"),
         ("no_realizada", "No realizada"),
     ]
+    ORIGEN_CHOICES = [
+        ("checklist", "Checklist mensual (bolsa compartida)"),
+        ("ticket", "Generada desde un ticket"),
+    ]
 
     tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, related_name="visitas")
-    tecnico = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name="visitas_asignadas")
+    origen = models.CharField(max_length=20, choices=ORIGEN_CHOICES, default="checklist")
+    tecnico = models.ForeignKey(
+        Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="visitas_asignadas"
+    )
+    ticket_origen = models.ForeignKey(
+        "Ticket", on_delete=models.SET_NULL, null=True, blank=True, related_name="visitas_generadas"
+    )
     fecha_programada = models.DateTimeField()
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="programada")
     justificacion = models.TextField(blank=True)
@@ -147,7 +157,6 @@ class Visita(models.Model):
 
     def __str__(self):
         return f"Visita a {self.tienda.nombre} - {self.fecha_programada:%Y-%m-%d}"
-
 
 class Checklist(models.Model):
     visita = models.OneToOneField(Visita, on_delete=models.CASCADE, related_name="checklist")
