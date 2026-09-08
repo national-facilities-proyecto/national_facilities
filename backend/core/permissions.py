@@ -14,17 +14,28 @@ class TienePermisoDeRol(BasePermission):
         )
 
 
+class EsTecnico(TienePermisoDeRol):
+    roles_permitidos = ("Tecnico",)
+
+
+class EsAdministrador(TienePermisoDeRol):
+    roles_permitidos = ("Administrador",)
+
+
 def tiendas_visibles_para(usuario):
     """
     Devuelve el queryset de Tienda que el usuario puede ver según su rol.
 
-    Administrador ve todas. Supervisor de cuenta y supervisor de tienda
-    ven solo las tiendas con una AsignacionTienda activa a su nombre
-    (ver docstring de AsignacionTienda en models.py).
+    Administrador y tecnico ven todas las tiendas (el tecnico trabaja
+    sobre la bolsa compartida de la cuenta, no tiene asignacion individual).
+    Supervisor de cuenta y supervisor de tienda ven solo las tiendas con
+    una AsignacionTienda activa a su nombre.
     """
     from .models import Tienda
 
-    if usuario.rol and usuario.rol.nombre == "Administrador":
+    rol = usuario.rol.nombre if usuario.rol else None
+
+    if rol in ("Administrador", "Tecnico"):
         return Tienda.objects.all()
 
     return Tienda.objects.filter(
