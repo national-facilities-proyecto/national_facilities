@@ -7,9 +7,10 @@
   {"model": "core.categoriaproblema", "pk": 6, "fields": {"nombre": "Carpintería y cerrajería", "activo": true}},
   {"model": "core.categoriaproblema", "pk": 7, "fields": {"nombre": "Otros", "activo": true}},
 
-  {"model": "core.nivelurgencia", "pk": 1, "fields": {"nombre": "Alta", "sla_primera_respuesta_horas": 2, "sla_resolucion_horas": 24}},
-  {"model": "core.nivelurgencia", "pk": 2, "fields": {"nombre": "Media", "sla_primera_respuesta_horas": 8, "sla_resolucion_horas": 72}},
-  {"model": "core.nivelurgencia", "pk": 3, "fields": {"nombre": "Baja", "sla_primera_respuesta_horas": 24, "sla_resolucion_horas": 168}},
+  {"model": "core.nivelurgencia", "pk": 1, "fields": {"nombre": "Crítica", "sla_primera_respuesta_horas": 1, "sla_resolucion_horas": 8}},
+  {"model": "core.nivelurgencia", "pk": 2, "fields": {"nombre": "Alta", "sla_primera_respuesta_horas": 2, "sla_resolucion_horas": 16}},
+  {"model": "core.nivelurgencia", "pk": 3, "fields": {"nombre": "Media", "sla_primera_respuesta_horas": 4, "sla_resolucion_horas": 24}},
+  {"model": "core.nivelurgencia", "pk": 4, "fields": {"nombre": "Baja", "sla_primera_respuesta_horas": 8, "sla_resolucion_horas": 48}},
 
   {"model": "core.plantillachecklist", "pk": 1, "fields": {"nombre": "Checklist estándar MASS", "version": 1, "activa": true}},
 
