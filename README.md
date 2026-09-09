@@ -17,19 +17,21 @@ National Facilities brinda servicios de mantenimiento a cadenas de retail bajo c
 
 Aplicación web con cuatro módulos:
 
-- **Checklist y evidencia:** bolsa de trabajo mensual compartida entre los técnicos de la cuenta, con captura fotográfica en vivo (sin acceso a galería) y validación de proximidad geográfica al iniciar y cerrar.
-- **Tickets ("prontos"):** el supervisor de tienda genera las solicitudes desde el sistema; el supervisor de cuenta las asigna a un técnico y programa su atención, con seguimiento de estado e historial.
-- **Programación de prontos y rutas en mapa:** el supervisor de cuenta programa la atención asignando técnico y fecha; el técnico visualiza sus tiendas en un mapa, organizadas en atrasadas, del día y futuras.
-- **Panel de trazabilidad:** indicadores de cumplimiento de checklist, mínimo de intervenciones mensuales, tickets atendidos y tiempos de respuesta.
+- **Checklist y evidencia:** bolsa de trabajo mensual compartida entre los técnicos de la cuenta. El checklist mensual no se programa ni se asigna: todos los técnicos ven las tiendas pendientes y la primera persona que toma una la retira para los demás. Incluye captura fotográfica en vivo (sin acceso a galería) y validación de proximidad geográfica al iniciar y al cerrar.
+- **Tickets ("prontos"):** el supervisor de tienda genera las solicitudes desde el sistema; el supervisor de cuenta las asigna a un técnico y programa su atención, con seguimiento de estado e historial de reasignaciones.
+- **Prontos asignados y mapa:** a diferencia del checklist, los prontos sí llevan técnico y fecha. El técnico los visualiza clasificados en atrasados, del día y futuros, y ve las ubicaciones en un mapa.
+- **Panel de trazabilidad:** indicadores de cumplimiento de checklist, mínimo de intervenciones mensuales, tickets atendidos y tiempos de respuesta, para el supervisor de cuenta.
 
 ## Roles del sistema
 
 | Rol | Descripción |
 |---|---|
-| Técnico de campo | Ejecuta el checklist mensual y atiende los prontos asignados |
-| Supervisor de cuenta | Programa la atención de prontos, asigna y da seguimiento |
-| Supervisor de tienda (cliente) | Genera tickets ("prontos") de atención para su local |
+| Técnico de campo | Toma checklists de la bolsa compartida y atiende los prontos asignados |
+| Supervisor de cuenta | Asigna técnico y fecha a los prontos, valida excepciones de ubicación y da seguimiento |
+| Supervisor de tienda (cliente) | Genera tickets ("prontos") de atención para su local y consulta su estado |
 | Administrador | Gestiona usuarios, tiendas, contratos y catálogos por cliente |
+
+La gerencia de operaciones no accede al sistema: recibe la información mediante el reporte del supervisor de cuenta.
 
 ## Stack tecnológico
 
@@ -40,14 +42,14 @@ Aplicación web con cuatro módulos:
 | Base de datos | PostgreSQL 16 |
 | Mapas | Leaflet + OpenFreeMap (datos de OpenStreetMap) |
 | Contenedores | Docker + Docker Compose |
-| Infraestructura | DigitalOcean (App/Droplet + Managed Database) |
+| Infraestructura | Google Cloud — Cloud Run + Cloud SQL (PostgreSQL) + Cloud Storage |
 | Gestión | Jira (Scrum) · Diseño: Figma |
 
-Las decisiones técnicas y sus alternativas evaluadas están documentadas en [`docs/decisions`](docs/decisions/README.md).
+Las decisiones técnicas y sus alternativas evaluadas están documentadas en [`docs/decisions`](docs/decisions/README.md). La elección del proveedor de nube se registró en el [ADR-007](docs/decisions/007-proveedor-de-nube.md).
 
 ## Metodología
 
-Scrum, con sprints planificados en Jira. Cada historia de usuario se desarrolla en una rama propia y se integra a `main` mediante Pull Request con squash merge. Ver [CONTRIBUTING.md](CONTRIBUTING.md).
+Scrum, con sprints planificados en Jira. Cada historia de usuario se desarrolla en una rama propia y se integra a `main` mediante Pull Request revisado, conservando los commits originales de cada autor. Ver [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Puesta en marcha (desarrollo local)
 
@@ -97,11 +99,13 @@ docker compose exec backend python manage.py migrate
 docker compose exec backend python manage.py createsuperuser
 ```
 
-7. (Opcional) Carga los catálogos iniciales (categorías de problema, niveles de urgencia, ítems de checklist):
+7. Carga los datos iniciales. **Este paso no es opcional:** sin él el sistema queda sin tiendas y la bolsa de checklists y el mapa aparecen vacíos.
 
 ```bash
-docker compose exec backend python manage.py loaddata catalogos_iniciales
+docker compose exec backend python manage.py loaddata catalogos_iniciales tiendas_mass
 ```
+
+`catalogos_iniciales` carga las categorías de problema, los niveles de urgencia y los ítems de checklist. `tiendas_mass` carga las tiendas de la cuenta MASS con sus coordenadas.
 
 ### URLs locales
 
@@ -109,13 +113,21 @@ docker compose exec backend python manage.py loaddata catalogos_iniciales
 - Backend (API): http://localhost:8000/api/
 - Panel de administración: http://localhost:8000/admin/
 
+### Verificación
+
+El entorno se considera correctamente levantado cuando un integrante distinto de quien lo construyó completa los siete pasos anteriores desde cero, siguiendo únicamente este README, y obtiene el sistema operativo con tiendas visibles en el mapa.
+
 ## Estructura del repositorio
 
 ```
 ├── backend/          # API REST (Django + DRF)
+│   └── core/
+│       └── fixtures/ # Datos iniciales (catálogos y tiendas MASS)
 ├── frontend/         # SPA (React + Vite)
 ├── docs/
-│   └── decisions/    # ADR — Registro de decisiones de arquitectura
+│   ├── decisions/    # ADR — Registro de decisiones de arquitectura
+│   ├── gestion/      # Artefactos de gestión del proyecto
+│   └── diseno/       # Wireframes y mockups exportados
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
@@ -126,9 +138,9 @@ docker compose exec backend python manage.py loaddata catalogos_iniciales
 | Integrante | Rol Scrum |
 |---|---|
 | Edu Joaquin Villasante | Product Owner |
-| Anthony | Scrum Master |
-| Rogelio | Desarrollo / UX |
-| Fabrizio | Desarrollo Frontend |
-| Bryan | Desarrollo Backend / DevOps |
+| Anthony Palomino | Scrum Master |
+| Rogelio Espinoza | Desarrollo / UX |
+| Fabrizio Alex | Desarrollo Frontend |
+| Bryan Cacsire | Desarrollo Backend / DevOps |
 
 **Docente:** Ecmias Eduardo Fernández Gálvez
