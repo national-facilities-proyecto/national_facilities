@@ -1,5 +1,5 @@
 import { ChevronLeft, ClipboardCheck, MapPin, Navigation } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CameraModal } from '../features/technician/CameraModal'
 import { checklistTasks, demoStores } from '../features/technician/data'
@@ -8,7 +8,7 @@ import { ObservationDialog } from '../components/ObservationDialog'
 import { LocationResultModal, type LocationResult } from '../components/LocationResultModal'
 import { requestFreshLocation as requestBrowserLocation, requestMockLocation, GeolocationError } from '../services/geolocationService'
 import { completeVisitMock, requestLocationExceptionMock } from '../services/visitService'
-import { getTechnicianLocation } from '../services/technicianLocationStore'
+import { getTechnicianLocation, setTechnicianLocation } from '../services/technicianLocationStore'
 import type { ChecklistAnswer } from '../types/domain'
 
 // El flujo productivo permanece en modo simulado hasta que exista el contrato GPS del backend.
@@ -16,6 +16,7 @@ const requestFreshLocation = import.meta.env.MODE === 'test' ? requestBrowserLoc
 
 export default function ChecklistExecutionPage() {
   const { id } = useParams(); const navigate = useNavigate(); const store = demoStores.find((item) => item.id === Number(id)) ?? demoStores[0]
+  useEffect(() => { if (import.meta.env.MODE !== 'test' && navigator.geolocation) void requestBrowserLocation().then(setTechnicianLocation).catch(() => undefined) }, [])
   const [answers, setAnswers] = useState<Record<number, ChecklistAnswer>>({}); const [camera, setCamera] = useState<number | null>(null); const [observation, setObservation] = useState<number | null>(null); const [error, setError] = useState(''); const [result, setResult] = useState<LocationResult | null>(null); const [exception, setException] = useState(false); const [reason, setReason] = useState(''); const [loading, setLoading] = useState(false)
   const update = (taskId: number, patch: Partial<ChecklistAnswer>) => { setError(''); setAnswers((current) => ({ ...current, [taskId]: { ...current[taskId], ...patch, responseItemId: taskId } })) }
   const finish = async () => { const missingResult = checklistTasks.some((task) => !answers[task.id]?.result); const missingPhoto = checklistTasks.some((task) => task.photoRequired && !answers[task.id]?.evidence); const missingObservation = checklistTasks.some((task) => answers[task.id]?.result === 'no_conforme' && !answers[task.id]?.observation?.trim()); if (missingResult || missingPhoto || missingObservation) { setError(missingResult ? 'Completa el resultado de cada tarea.' : missingPhoto ? 'Faltan fotografías obligatorias.' : 'Las tareas no conformes requieren observación.'); return }; setLoading(true); try { const coordinates = await requestFreshLocation(); const completion = await completeVisitMock(Number(id), { coordinates, answers: Object.values(answers) }); setResult({ kind: 'success', title: 'Checklist completado', message: `Simulación backend: ubicación validada a ${completion.distanceMeters} m de la tienda (radio permitido: ${completion.allowedRadiusMeters} m).` }) } catch (cause) { setException(true); const gpsFailure = cause instanceof GeolocationError; setResult({ kind: 'error', title: gpsFailure ? 'Ubicación no disponible' : 'Ubicación fuera del radio', message: cause instanceof Error ? cause.message : 'No fue posible validar la proximidad.' }); if (cause instanceof GeolocationError) void cause.reason } finally { setLoading(false) } }

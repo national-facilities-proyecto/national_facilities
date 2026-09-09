@@ -89,6 +89,10 @@ export const demoRoutes: RouteTicket[] = [
   },
 ]
 
+const pendingRouteIds = new Set(demoRoutes.map((route) => route.id))
+export function isRoutePending(routeId: number): boolean { return pendingRouteIds.has(routeId) }
+export function submitRouteForApproval(routeId: number): void { pendingRouteIds.delete(routeId) }
+
 export async function getVisibleStores(): Promise<Store[]> {
   const token = sessionStorage.getItem('nf_access_token')
   if (!token) return demoStores

@@ -2,7 +2,7 @@ import { AlertTriangle, CalendarDays, Clock3, MapPin } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AssignedLocationsMap } from '../features/technician/AssignedLocationsMap'
-import { demoRoutes, type RouteStatus } from '../features/technician/data'
+import { demoRoutes, isRoutePending, type RouteStatus } from '../features/technician/data'
 
 const routeFilters: Array<{ id: RouteStatus; label: string }> = [
   { id: 'today', label: 'Hoy' },
@@ -13,7 +13,8 @@ const routeFilters: Array<{ id: RouteStatus; label: string }> = [
 export default function RoutesPage() {
   const [status, setStatus] = useState<RouteStatus>('today')
   const navigate = useNavigate()
-  const visibleRoutes = demoRoutes.filter((route) => route.status === status)
+  const pendingRoutes = demoRoutes.filter((route) => isRoutePending(route.id))
+  const visibleRoutes = pendingRoutes.filter((route) => route.status === status)
 
   return <>
     <header className="page-heading route-heading">
@@ -25,7 +26,7 @@ export default function RoutesPage() {
       <div className="route-heading__date"><CalendarDays size={17} aria-hidden="true" /><span>26 de agosto de 2026</span></div>
     </header>
 
-    <AssignedLocationsMap stores={Array.from(new Map(demoRoutes.map((route) => [route.store.id, route.store])).values())} />
+    <AssignedLocationsMap stores={Array.from(new Map(pendingRoutes.map((route) => [route.store.id, route.store])).values())} />
 
     <section className="routes-section" aria-labelledby="routes-list-title">
       <div className="routes-section__header">

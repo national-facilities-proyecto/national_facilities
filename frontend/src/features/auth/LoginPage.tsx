@@ -1,9 +1,9 @@
 import { type FormEvent, useId, useState } from 'react'
-import { AuthenticationError, login, saveSession } from './authApi'
+import { AuthenticationError, login, roleHome, saveSession } from './authApi'
 import logo from '../../assets/national-facilities-logo.png'
 
 type LoginPageProps = {
-  onAuthenticated: () => void
+  onAuthenticated: (homePath?: string) => void
 }
 
 type LoginErrors = {
@@ -67,7 +67,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
       const tokens = await login(email, password)
       saveSession(tokens)
       if (localStorage.getItem('nf_password_initialized') !== 'true') setMustChangePassword(true)
-      else onAuthenticated()
+      else onAuthenticated(roleHome(tokens.role ?? null))
     } catch (error) {
       setRequestError(
         error instanceof AuthenticationError
@@ -129,7 +129,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 
             <form className="auth-form" noValidate onSubmit={handleLogin}>
               <div className="field">
-                <label className="field__label" htmlFor={emailId}>Correo electrónico</label>
+                <label className="field__label" htmlFor={emailId}>Usuario</label>
                 <input
                   className="field__input"
                   id={emailId}
@@ -138,7 +138,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
                   value={email}
                   autoComplete="email"
                   inputMode="email"
-                  placeholder="nombre@empresa.com"
+                  placeholder="Ingresa tu usuario"
                   aria-invalid={Boolean(errors.email)}
                   aria-describedby={errors.email ? `${emailId}-error` : undefined}
                   onChange={(event) => {
@@ -160,7 +160,8 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
                     value={password}
                     autoComplete="current-password"
                     aria-invalid={Boolean(errors.password)}
-                    aria-describedby={errors.password ? `${passwordId}-error` : undefined}
+                    placeholder="Ingresa tu contraseña"
+                    aria-describedby={errors.password ? `${passwordId}-hint ${passwordId}-error` : `${passwordId}-hint`}
                     onChange={(event) => {
                       setPassword(event.target.value)
                       if (errors.password || requestError) resetMessages()
@@ -176,6 +177,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
                     {showPassword ? 'Ocultar' : 'Mostrar'}
                   </button>
                 </div>
+                <p className="field__hint" id={`${passwordId}-hint`}>Mínimo 8 caracteres.</p>
                 {errors.password && (
                   <p className="field__error" id={`${passwordId}-error`}>{errors.password}</p>
                 )}
@@ -201,7 +203,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
             ) : (
               <form className="auth-form" noValidate onSubmit={handleRecovery}>
                 <div className="field">
-                  <label className="field__label" htmlFor={emailId}>Correo electrónico</label>
+                  <label className="field__label" htmlFor={emailId}>Usuario</label>
                   <input
                     className="field__input"
                     id={emailId}
@@ -210,7 +212,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
                     value={email}
                     autoComplete="email"
                     inputMode="email"
-                    placeholder="nombre@empresa.com"
+                    placeholder="Ingresa tu usuario"
                     aria-invalid={Boolean(errors.email)}
                     aria-describedby={errors.email ? `${emailId}-error` : undefined}
                     onChange={(event) => {

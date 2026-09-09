@@ -180,6 +180,13 @@ export function AssignedLocationsMap({ stores, onSelect }: { stores: Store[]; on
   const [mapAttempt, setMapAttempt] = useState(0)
   const center = useMemo<[number, number]>(() => [stores[0]?.latitude ?? -12.14, stores[0]?.longitude ?? -77.02], [stores])
 
+  useEffect(() => {
+    if (technicianLocation || !navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
+      setTechnicianLocation({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy })
+    }, () => undefined, { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 })
+  }, [technicianLocation])
+
   const locate = () => {
     if (!navigator.geolocation) { setMessage('Tu navegador no admite ubicación.'); return }
     navigator.geolocation.getCurrentPosition(({ coords }) => { setPosition([coords.latitude, coords.longitude]); setMessage('Tu ubicación se muestra en el mapa.') }, () => setMessage('No se pudo obtener tu ubicación. Las tiendas siguen disponibles.'), { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 })
