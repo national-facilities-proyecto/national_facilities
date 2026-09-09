@@ -1,8 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type { Coordinates } from '../types/domain'
 
-const MOCK_LOCATION: Coordinates = { latitude: -12.1739, longitude: -77.0181, accuracy: 8 }
-let currentLocation: Coordinates | null = MOCK_LOCATION
+let currentLocation: Coordinates | null = null
 const listeners = new Set<() => void>()
 
 export function getTechnicianLocation(): Coordinates | null { return currentLocation }
