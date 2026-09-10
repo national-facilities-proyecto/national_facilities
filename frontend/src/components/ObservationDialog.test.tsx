@@ -1,5 +1,36 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { ObservationDialog } from './ObservationDialog'
-it('expone diálogo accesible y exige observación', () => { const save = vi.fn(); render(<ObservationDialog open initialValue="" onCancel={vi.fn()} onSave={save} />); const dialog = screen.getByRole('dialog'); expect(dialog).toHaveAccessibleName('Describe lo encontrado'); expect(dialog).toHaveAttribute('aria-modal', 'true'); expect(screen.getByRole('button', { name: 'Guardar observación' })).toBeDisabled(); fireEvent.change(screen.getByLabelText('Descripción obligatoria'), { target: { value: 'Filtro dañado' } }); fireEvent.click(screen.getByRole('button', { name: 'Guardar observación' })); expect(save).toHaveBeenCalledWith('Filtro dañado') })
-it('cierra con Escape y restaura foco', () => { const cancel = vi.fn(); const { rerender } = render(<><button>Origen</button><ObservationDialog open initialValue="" onCancel={cancel} onSave={vi.fn()} /></>); const origin = screen.getByRole('button', { name: 'Origen' }); origin.focus(); fireEvent.keyDown(document, { key: 'Escape' }); expect(cancel).toHaveBeenCalled(); rerender(<><button>Origen</button><ObservationDialog open={false} initialValue="" onCancel={cancel} onSave={vi.fn()} /></>); expect(document.activeElement).toBe(origin) })
+it('expone diálogo accesible y exige observación', () => {
+  const save = vi.fn()
+  render(<ObservationDialog open initialValue="" onCancel={vi.fn()} onSave={save} />)
+  const dialog = screen.getByRole('dialog')
+  expect(dialog).toHaveAccessibleName('Describe lo encontrado')
+  expect(dialog).toHaveAttribute('aria-modal', 'true')
+  expect(screen.getByRole('button', { name: 'Guardar observación' })).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Descripción obligatoria'), {
+    target: { value: 'Filtro dañado' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar observación' }))
+  expect(save).toHaveBeenCalledWith('Filtro dañado')
+})
+it('cierra con Escape y restaura foco', () => {
+  const cancel = vi.fn()
+  const { rerender } = render(
+    <>
+      <button>Origen</button>
+      <ObservationDialog open initialValue="" onCancel={cancel} onSave={vi.fn()} />
+    </>,
+  )
+  const origin = screen.getByRole('button', { name: 'Origen' })
+  origin.focus()
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(cancel).toHaveBeenCalled()
+  rerender(
+    <>
+      <button>Origen</button>
+      <ObservationDialog open={false} initialValue="" onCancel={cancel} onSave={vi.fn()} />
+    </>,
+  )
+  expect(document.activeElement).toBe(origin)
+})

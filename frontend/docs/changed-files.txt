@@ -1,0 +1,146 @@
+﻿Inventario de la refactorización frontend
+Referencia: 28b37636cdc1b355a778b22561f02c9fa980bbfc
+M = modificado; D = eliminado; ?? = creado sin commit
+
+ M frontend/.gitignore
+ M frontend/Dockerfile
+ M frontend/README.md
+ M frontend/eslint.config.js
+ M frontend/index.html
+ M frontend/package-lock.json
+ M frontend/package.json
+ M frontend/postcss.config.js
+ D frontend/public/favicon.svg
+ D frontend/public/icons.svg
+ M frontend/src/App.css
+ M frontend/src/App.tsx
+ D frontend/src/assets/react.svg
+ D frontend/src/assets/vite.svg
+ M frontend/src/components/ChecklistTaskCard.test.tsx
+ M frontend/src/components/ChecklistTaskCard.tsx
+ D frontend/src/components/LocationResultModal.tsx
+ M frontend/src/components/ObservationDialog.test.tsx
+ M frontend/src/components/ObservationDialog.tsx
+ M frontend/src/components/ProfileMenu.tsx
+ M frontend/src/features/auth/LoginPage.test.tsx
+ M frontend/src/features/auth/LoginPage.tsx
+ D frontend/src/features/auth/authApi.ts
+ D frontend/src/features/supervisor/supervisor.css
+ D frontend/src/features/supervisor/ticketService.ts
+ D frontend/src/features/supervisor/ticketTypes.ts
+ D frontend/src/features/technicalSupervisor/checklists.ts
+ D frontend/src/features/technicalSupervisor/data.ts
+ D frontend/src/features/technicalSupervisor/technicalSupervisor.css
+ M frontend/src/features/technician/AssignedLocationsMap.test.tsx
+ M frontend/src/features/technician/AssignedLocationsMap.tsx
+ M frontend/src/features/technician/CameraModal.test.tsx
+ M frontend/src/features/technician/CameraModal.tsx
+ D frontend/src/features/technician/data.ts
+ D frontend/src/features/technician/geolocation.ts
+ D frontend/src/features/technician/technician.css
+ M frontend/src/index.css
+ D frontend/src/layouts/SupervisorLayout.tsx
+ D frontend/src/layouts/TechnicalSupervisorLayout.tsx
+ D frontend/src/layouts/TechnicianLayout.tsx
+ M frontend/src/main.tsx
+ M frontend/src/pages/ChecklistExecutionPage.test.tsx
+ M frontend/src/pages/ChecklistExecutionPage.tsx
+ M frontend/src/pages/ChecklistListPage.tsx
+ M frontend/src/pages/ChecklistVisitDetailPage.tsx
+ M frontend/src/pages/RoutesPage.tsx
+ M frontend/src/pages/SupervisorNewTicketPage.tsx
+ M frontend/src/pages/SupervisorTicketDetailPage.tsx
+ M frontend/src/pages/SupervisorTicketsPage.tsx
+ M frontend/src/pages/TechnicalSupervisorChecklistDetailPage.tsx
+ M frontend/src/pages/TechnicalSupervisorChecklistsPage.tsx
+ M frontend/src/pages/TechnicalSupervisorCompletedPage.tsx
+ M frontend/src/pages/TechnicalSupervisorIncidentDetailPage.tsx
+ M frontend/src/pages/TechnicalSupervisorVisitsPage.tsx
+ M frontend/src/pages/TicketDetailPage.tsx
+ M frontend/src/services/geolocationService.test.ts
+ D frontend/src/services/geolocationService.ts
+ D frontend/src/services/technicianLocationStore.ts
+ D frontend/src/services/visitService.ts
+ M frontend/src/test/setup.ts
+ D frontend/src/types/domain.ts
+ M frontend/tailwind.config.js
+ M frontend/tsconfig.app.json
+ M frontend/tsconfig.json
+ M frontend/tsconfig.node.json
+ M frontend/vite.config.ts
+ M frontend/vitest.config.ts
+?? .github/workflows/frontend.yml
+?? frontend/.env.api
+?? frontend/.env.demo
+?? frontend/.env.development
+?? frontend/.env.example
+?? frontend/.env.test
+?? frontend/.prettierignore
+?? frontend/.prettierrc.json
+?? frontend/docs/backend-contracts.md
+?? frontend/docs/bundle-report.json
+?? frontend/docs/changed-files.txt
+?? frontend/docs/implementation.md
+?? frontend/docs/lighthouse-summary.json
+?? frontend/docs/validation.md
+?? frontend/docs/wpo.md
+?? frontend/e2e/flows.spec.ts
+?? frontend/playwright.config.ts
+?? frontend/scripts/bundle-report.mjs
+?? frontend/scripts/check-api-build.mjs
+?? frontend/scripts/lighthouse.mjs
+?? frontend/src/app/RepositoriesProvider.tsx
+?? frontend/src/app/config.ts
+?? frontend/src/app/navigation.ts
+?? frontend/src/components/EvidenceGallery.tsx
+?? frontend/src/components/feedback/ErrorBoundary.tsx
+?? frontend/src/components/feedback/QueryState.tsx
+?? frontend/src/components/ui/Modal.tsx
+?? frontend/src/components/ui/index.tsx
+?? frontend/src/features/administration/AdminForm.tsx
+?? frontend/src/features/administration/AdministrationPage.tsx
+?? frontend/src/features/administration/TemplateItems.tsx
+?? frontend/src/features/administration/fields.ts
+?? frontend/src/features/auth/AuthProvider.tsx
+?? frontend/src/features/auth/PasswordPage.tsx
+?? frontend/src/features/auth/session.ts
+?? frontend/src/features/checklists/VisitEditor.tsx
+?? frontend/src/features/checklists/VisitStart.tsx
+?? frontend/src/features/checklists/useVisitEditor.ts
+?? frontend/src/features/checklists/validation.ts
+?? frontend/src/features/dashboard/DashboardPage.tsx
+?? frontend/src/features/geolocation/location.ts
+?? frontend/src/features/geolocation/useLocation.tsx
+?? frontend/src/features/technician/LazyMap.tsx
+?? frontend/src/features/technician/map.css
+?? frontend/src/features/tickets/TicketDetail.tsx
+?? frontend/src/features/tickets/TicketList.test.tsx
+?? frontend/src/features/tickets/TicketList.tsx
+?? frontend/src/features/tickets/TicketReport.tsx
+?? frontend/src/hooks/useObjectUrl.test.tsx
+?? frontend/src/hooks/useObjectUrl.ts
+?? frontend/src/hooks/useQuery.ts
+?? frontend/src/layouts/PortalLayout.tsx
+?? frontend/src/mocks/administrationRepository.ts
+?? frontend/src/mocks/authRepository.ts
+?? frontend/src/mocks/checklistsRepository.ts
+?? frontend/src/mocks/dashboardRepository.ts
+?? frontend/src/mocks/demoRepository.ts
+?? frontend/src/mocks/fixtures.ts
+?? frontend/src/mocks/repositories.test.ts
+?? frontend/src/mocks/repositories.ts
+?? frontend/src/mocks/runtime.ts
+?? frontend/src/mocks/storage.ts
+?? frontend/src/mocks/storesRepository.ts
+?? frontend/src/mocks/ticketsRepository.ts
+?? frontend/src/mocks/usersRepository.ts
+?? frontend/src/mocks/visitsRepository.ts
+?? frontend/src/services/adapters/httpRepositories.ts
+?? frontend/src/services/errors.ts
+?? frontend/src/services/evidence.ts
+?? frontend/src/services/http/client.ts
+?? frontend/src/services/repositories/contracts.ts
+?? frontend/src/styles/components.css
+?? frontend/src/test/render.tsx
+?? frontend/src/types/models.ts
+?? frontend/src/utils/dates.ts

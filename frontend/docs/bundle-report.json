@@ -1,0 +1,201 @@
+{
+  "generatedAt": "2026-09-10T05:45:10.265Z",
+  "note": "Tamaños de artefactos. No equivalen al tráfico inicial ni a métricas Lighthouse.",
+  "assets": [
+    {
+      "file": "index-gPOTM3Dq.js",
+      "bytes": 242923,
+      "gzipBytes": 78283
+    },
+    {
+      "file": "AssignedLocationsMap-BjunsPKU.js",
+      "bytes": 157059,
+      "gzipBytes": 46143
+    },
+    {
+      "file": "inter-latin-wght-normal-Dx4kXJAl.woff2",
+      "bytes": 48256,
+      "gzipBytes": 48254
+    },
+    {
+      "file": "Leaflet.VectorGrid.bundled.min-BdHWu2J1.js",
+      "bytes": 46175,
+      "gzipBytes": 14738
+    },
+    {
+      "file": "index-eqSzWutW.css",
+      "bytes": 22939,
+      "gzipBytes": 4627
+    },
+    {
+      "file": "repositories-DyPo3xWK.js",
+      "bytes": 17540,
+      "gzipBytes": 5877
+    },
+    {
+      "file": "AssignedLocationsMap-DSk8bjnX.css",
+      "bytes": 15491,
+      "gzipBytes": 6563
+    },
+    {
+      "file": "VisitEditor-BD1wflub.js",
+      "bytes": 13844,
+      "gzipBytes": 5005
+    },
+    {
+      "file": "ui-DX2TmfSv.js",
+      "bytes": 11335,
+      "gzipBytes": 4224
+    },
+    {
+      "file": "AdministrationPage-zfFZ25Ja.js",
+      "bytes": 8890,
+      "gzipBytes": 3304
+    },
+    {
+      "file": "national-facilities-logo-nAxRnaw4.png",
+      "bytes": 6981,
+      "gzipBytes": 6779
+    },
+    {
+      "file": "SupervisorNewTicketPage-D0Kqq1UO.js",
+      "bytes": 4050,
+      "gzipBytes": 1802
+    },
+    {
+      "file": "TicketDetail-2MRDQ1T1.js",
+      "bytes": 3692,
+      "gzipBytes": 1599
+    },
+    {
+      "file": "TicketList-CmwnIgBe.js",
+      "bytes": 3252,
+      "gzipBytes": 1356
+    },
+    {
+      "file": "TechnicalSupervisorChecklistDetailPage-Duvii-Us.js",
+      "bytes": 2839,
+      "gzipBytes": 1335
+    },
+    {
+      "file": "LoginPage-Dsk00yI2.js",
+      "bytes": 2646,
+      "gzipBytes": 1286
+    },
+    {
+      "file": "ChecklistVisitDetailPage-Djdoo-ZA.js",
+      "bytes": 2205,
+      "gzipBytes": 1095
+    },
+    {
+      "file": "TechnicalSupervisorChecklistsPage-DKALp_mR.js",
+      "bytes": 2142,
+      "gzipBytes": 1031
+    },
+    {
+      "file": "useLocation-Dc8Ngk4h.js",
+      "bytes": 1925,
+      "gzipBytes": 907
+    },
+    {
+      "file": "DashboardPage-GDQ8yZVP.js",
+      "bytes": 1842,
+      "gzipBytes": 866
+    },
+    {
+      "file": "location-DOiJzzcj.js",
+      "bytes": 1826,
+      "gzipBytes": 923
+    },
+    {
+      "file": "RoutesPage-CuS5DEqb.js",
+      "bytes": 1806,
+      "gzipBytes": 946
+    },
+    {
+      "file": "ChecklistListPage-BA0yb67j.js",
+      "bytes": 1703,
+      "gzipBytes": 852
+    },
+    {
+      "file": "PasswordPage-CKX1SEem.js",
+      "bytes": 1478,
+      "gzipBytes": 769
+    },
+    {
+      "file": "evidence-DFbnLj-f.js",
+      "bytes": 1433,
+      "gzipBytes": 795
+    },
+    {
+      "file": "QueryState-BFCdqd1j.js",
+      "bytes": 1253,
+      "gzipBytes": 652
+    },
+    {
+      "file": "EvidenceGallery-C8gU0PSP.js",
+      "bytes": 1241,
+      "gzipBytes": 725
+    },
+    {
+      "file": "TicketDetailPage-ClcKBHW-.js",
+      "bytes": 1128,
+      "gzipBytes": 648
+    },
+    {
+      "file": "LazyMap-Uh396AAT.js",
+      "bytes": 910,
+      "gzipBytes": 492
+    },
+    {
+      "file": "VisitStart-KQnV7xbF.js",
+      "bytes": 869,
+      "gzipBytes": 549
+    },
+    {
+      "file": "dates-gaJ2VN35.js",
+      "bytes": 598,
+      "gzipBytes": 363
+    },
+    {
+      "file": "validation-BYeYwuuR.js",
+      "bytes": 524,
+      "gzipBytes": 337
+    },
+    {
+      "file": "errors-Bbdn4f0W.js",
+      "bytes": 278,
+      "gzipBytes": 223
+    },
+    {
+      "file": "ChecklistExecutionPage-DeLglRuK.js",
+      "bytes": 234,
+      "gzipBytes": 194
+    },
+    {
+      "file": "TechnicalSupervisorIncidentDetailPage-CtriQpW3.js",
+      "bytes": 227,
+      "gzipBytes": 187
+    },
+    {
+      "file": "SupervisorTicketDetailPage-Bh-jKcjV.js",
+      "bytes": 216,
+      "gzipBytes": 179
+    },
+    {
+      "file": "TechnicalSupervisorVisitsPage-xd-3rm_W.js",
+      "bytes": 164,
+      "gzipBytes": 157
+    },
+    {
+      "file": "TechnicalSupervisorCompletedPage-D7Ot5Tqk.js",
+      "bytes": 153,
+      "gzipBytes": 149
+    },
+    {
+      "file": "SupervisorTicketsPage-Z8bVE0Cs.js",
+      "bytes": 143,
+      "gzipBytes": 141
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+.nf-map {
+  height: clamp(260px, 40vh, 400px);
+  position: relative;
+  isolation: isolate;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.nf-map-container {
+  height: 100%;
+  width: 100%;
+}
+.nf-map-status {
+  position: absolute;
+  inset: 0;
+  z-index: 600;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  background: #f3f6f7ed;
+  text-align: center;
+}
+.nf-map-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.nf-marker span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: white;
+  background: #075c78;
+  border: 2px solid white;
+  border-radius: 50%;
+  font-weight: 700;
+}
+.nf-map-label {
+  border: 0;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px #17203333;
+  color: #172033;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  padding: 5px 7px;
+  text-align: center;
+}
+.nf-map-label::before {
+  display: none;
+}
+.nf-map-label strong,
+.nf-map-label span {
+  display: block;
+}
+.nf-map-label span {
+  color: #4d5c70;
+  font-size: 0.6875rem;
+  margin-top: 2px;
+}
+.leaflet-control-zoom a {
+  min-width: 44px;
+  min-height: 44px;
+  line-height: 44px;
+}
+.leaflet-control-attribution {
+  color: #172033;
+}

@@ -1,0 +1,369 @@
+@layer components {
+  .nf-button {
+    @apply inline-flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-lg border border-transparent bg-brand-800 px-4 py-2 text-sm font-semibold text-white transition-colors;
+  }
+  .nf-button:hover:not(:disabled) {
+    @apply bg-brand-950;
+  }
+  .nf-button:disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
+  .nf-button--secondary {
+    @apply border-slate-300 bg-white text-brand-950;
+  }
+  .nf-button--secondary:hover:not(:disabled),
+  .nf-button[aria-pressed='true'] {
+    @apply border-brand-800 bg-brand-50 text-brand-950;
+  }
+  .nf-button--danger {
+    @apply bg-red-800;
+  }
+  .nf-field {
+    @apply grid min-w-0 gap-2 text-sm font-semibold text-slate-700;
+  }
+  .nf-field input,
+  .nf-field select,
+  .nf-field textarea {
+    @apply min-h-11 w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-base font-normal text-slate-900;
+  }
+  .nf-field textarea {
+    @apply min-h-28 resize-y;
+  }
+  .nf-form {
+    @apply grid gap-5;
+  }
+  .nf-card,
+  .nf-task {
+    @apply my-4 min-w-0 rounded-xl border border-slate-300 bg-white p-5 shadow-card sm:p-6;
+  }
+  .nf-card h2,
+  .nf-task h2 {
+    @apply mb-3 text-lg font-semibold text-slate-900;
+  }
+  .nf-card p {
+    @apply my-3 leading-relaxed text-slate-700;
+  }
+  .nf-card h3 {
+    @apply my-2 text-lg font-semibold text-slate-900;
+  }
+  .nf-heading {
+    @apply mb-6;
+  }
+  .nf-heading h1 {
+    @apply my-2 text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl;
+  }
+  .nf-heading p {
+    @apply leading-relaxed text-slate-600;
+  }
+  .eyebrow {
+    @apply text-xs font-bold uppercase tracking-widest text-brand-800;
+  }
+  .nf-alert {
+    @apply my-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm leading-relaxed text-red-800;
+  }
+  .nf-alert--success {
+    @apply border-emerald-200 bg-emerald-50 text-emerald-900;
+  }
+  .nf-empty {
+    @apply my-5 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-600;
+  }
+  .nf-actions {
+    @apply my-4 flex flex-wrap items-center gap-3;
+  }
+  .nf-two-columns {
+    @apply grid min-w-0 gap-4 md:grid-cols-2;
+  }
+  .nf-filters {
+    @apply grid items-end gap-4 sm:grid-cols-2 xl:grid-cols-3;
+  }
+  .nf-list {
+    @apply my-5 grid min-w-0 gap-3;
+  }
+  .nf-list > h2 {
+    @apply mt-3 text-xl font-semibold;
+  }
+  .nf-list > .nf-card {
+    @apply my-0;
+  }
+  .nf-segmented {
+    @apply flex flex-wrap gap-2;
+  }
+  .nf-link {
+    @apply inline-flex min-h-11 items-center rounded-lg px-2 py-2 text-sm font-semibold text-brand-800 underline underline-offset-4;
+  }
+  .nf-badge {
+    @apply inline-block rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-950;
+  }
+  .nf-badge--open {
+    @apply bg-amber-100 text-amber-900;
+  }
+  .nf-badge--scheduled {
+    @apply bg-sky-100 text-sky-900;
+  }
+  .nf-badge--pending_approval {
+    @apply bg-violet-100 text-violet-900;
+  }
+  .nf-badge--completed {
+    @apply bg-emerald-100 text-emerald-900;
+  }
+  .nf-table {
+    @apply my-5 w-full table-fixed border-collapse rounded-xl bg-white text-left text-sm;
+  }
+  .nf-table caption {
+    @apply py-3 text-left text-sm font-semibold text-slate-700;
+  }
+  .nf-table th {
+    @apply border-b border-slate-300 bg-slate-100 p-4 text-xs font-bold uppercase text-slate-600;
+  }
+  .nf-table td {
+    @apply border-b border-slate-200 p-4 align-top text-slate-700;
+  }
+  .nf-details {
+    @apply grid gap-4;
+  }
+  .nf-details > div {
+    @apply grid gap-1;
+  }
+  .nf-details dt {
+    @apply text-xs font-semibold uppercase text-slate-600;
+  }
+  .nf-details dd {
+    @apply m-0 text-sm text-slate-900;
+  }
+  .nf-modal {
+    @apply m-auto w-[calc(100%-2rem)] max-w-xl rounded-2xl border border-slate-300 bg-white p-5 text-slate-900 shadow-xl sm:p-6;
+    max-height: calc(100dvh - 2rem);
+    overflow: auto;
+  }
+  .nf-modal::backdrop {
+    background: rgb(4 30 44 / 65%);
+  }
+  .nf-modal__header {
+    @apply mb-5 flex items-center justify-between gap-3;
+  }
+  .nf-modal__header h2 {
+    @apply text-xl font-semibold;
+  }
+  .nf-shell {
+    @apply min-h-screen bg-slate-50 lg:grid lg:grid-cols-[240px_minmax(0,1fr)];
+  }
+  .nf-shell--sidebar-collapsed {
+    @apply lg:grid-cols-[minmax(0,1fr)];
+  }
+  .nf-sidebar {
+    @apply sticky top-0 hidden h-screen bg-brand-950 p-5 text-white lg:block;
+  }
+  .nf-sidebar--collapsed {
+    @apply lg:hidden;
+  }
+  .nf-sidebar__header {
+    @apply flex items-center justify-between gap-3;
+  }
+  .nf-sidebar > p {
+    @apply my-6 text-sm font-semibold;
+  }
+  .nf-sidebar__header > p {
+    @apply my-6 text-sm font-semibold;
+  }
+  .nf-sidebar nav,
+  .nf-drawer {
+    @apply grid gap-2;
+  }
+  .nf-sidebar a,
+  .nf-drawer a {
+    @apply flex min-h-11 items-center rounded-lg px-3 py-3 text-sm font-semibold;
+  }
+  .nf-sidebar a.active,
+  .nf-sidebar a:hover {
+    @apply bg-brand-50 text-brand-950;
+  }
+  .nf-drawer a.active {
+    @apply bg-brand-50 text-brand-950;
+  }
+  .nf-body {
+    @apply min-w-0;
+  }
+  .nf-topbar {
+    @apply sticky top-0 z-20 flex min-h-16 items-center justify-between gap-2 border-b border-slate-300 bg-white px-3 py-2 sm:px-6;
+  }
+  .nf-topbar > img {
+    @apply absolute left-1/2 h-12 w-48 -translate-x-1/2 object-contain sm:h-14 sm:w-56;
+  }
+  .nf-content {
+    @apply mx-auto w-full max-w-screen-xl px-4 pb-28 pt-6 sm:px-6 lg:px-8;
+  }
+  .nf-profile {
+    @apply relative ml-auto;
+  }
+  .nf-profile__trigger {
+    @apply flex min-h-11 min-w-11 items-center gap-3 text-left;
+  }
+  .nf-profile__trigger strong,
+  .nf-profile__trigger small {
+    @apply block;
+  }
+  .nf-profile__trigger strong {
+    @apply text-sm text-slate-900;
+  }
+  .nf-profile__trigger small {
+    @apply text-xs text-slate-600;
+  }
+  .nf-avatar {
+    @apply grid h-11 w-11 place-items-center rounded-full bg-brand-50 text-sm font-bold text-brand-950;
+  }
+  .nf-profile__panel {
+    @apply absolute right-0 top-full z-30 mt-2 grid w-64 max-w-[calc(100vw-2rem)] gap-2 rounded-xl border border-slate-300 bg-white p-4 shadow-xl;
+  }
+  .nf-profile__panel p {
+    @apply text-sm text-slate-600;
+  }
+  .nf-bottom-nav {
+    @apply fixed inset-x-0 bottom-0 z-20 flex border-t border-slate-300 bg-white px-4 lg:hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .nf-bottom-nav a {
+    @apply flex min-h-14 flex-1 items-center justify-center text-sm font-semibold text-slate-700;
+  }
+  .nf-bottom-nav a.active {
+    @apply border-t-2 border-brand-800 bg-brand-50 text-brand-950;
+  }
+  .nf-demo {
+    @apply flex flex-wrap items-start justify-between gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-950;
+  }
+  .nf-demo summary {
+    @apply flex min-h-11 cursor-pointer items-center font-semibold;
+  }
+  .nf-demo > span {
+    @apply flex min-h-11 items-center;
+  }
+  .nf-demo details[open] {
+    @apply w-full sm:w-auto;
+  }
+  .nf-evidence-grid {
+    @apply my-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3;
+  }
+  .nf-evidence {
+    @apply min-w-0;
+  }
+  .nf-evidence img {
+    @apply aspect-[4/3] w-full rounded-lg object-cover;
+  }
+  .nf-evidence figcaption {
+    @apply my-2 text-sm text-slate-700;
+  }
+  .nf-evidence small {
+    @apply block text-xs;
+  }
+  .nf-camera {
+    @apply aspect-[4/3] w-full rounded-lg bg-slate-100 object-contain;
+  }
+  .nf-task > header {
+    @apply mb-4 flex items-start gap-3;
+  }
+  .nf-task__number {
+    @apply grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-50 font-semibold text-brand-950;
+  }
+  .nf-task .nf-evidence-grid {
+    @apply max-w-sm;
+  }
+  .nf-progress {
+    @apply my-4 grid gap-2 text-sm font-semibold text-slate-700;
+  }
+  .nf-location-controls {
+    @apply my-4 grid gap-2;
+  }
+  .nf-location-controls p {
+    @apply text-sm text-slate-600;
+  }
+  .nf-upload {
+    @apply rounded-xl border border-dashed border-slate-400 bg-slate-50 p-5 text-center;
+  }
+  .nf-timeline {
+    @apply grid list-none gap-5;
+  }
+  .nf-timeline li {
+    @apply border-l-4 border-brand-800 pl-4;
+  }
+  .nf-metrics {
+    @apply grid gap-4 sm:grid-cols-2 xl:grid-cols-4;
+  }
+  .nf-metric {
+    @apply text-3xl text-brand-800;
+  }
+  .nf-check {
+    @apply my-3 flex min-h-11 items-center gap-3 text-sm;
+  }
+  .nf-check input {
+    @apply h-5 w-5;
+  }
+  .nf-editor-fields {
+    @apply m-0 min-w-0 border-0 p-0;
+  }
+  .nf-skip {
+    @apply fixed left-4 top-4 z-50 -translate-y-32 rounded-lg bg-white p-4 text-brand-950 focus:translate-y-0;
+  }
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #172033;
+  background: #f3f6f7;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+a,
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+:focus-visible {
+  outline: 3px solid #087492;
+  outline-offset: 3px;
+}
+p,
+h1,
+h2,
+h3,
+td,
+dd,
+a {
+  overflow-wrap: anywhere;
+}
+progress {
+  width: 100%;
+  height: 12px;
+  accent-color: #075c78;
+}
+summary {
+  min-height: 44px;
+  cursor: pointer;
+  padding: 10px 0;
+}
+fieldset {
+  min-width: 0;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #596579;
+}
+.nf-topbar {
+  padding-top: max(8px, env(safe-area-inset-top));
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

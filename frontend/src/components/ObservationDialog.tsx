@@ -1,2 +1,43 @@
-import { useEffect, useRef, useState } from 'react'
-export function ObservationDialog({ open, initialValue, onCancel, onSave }: { open: boolean; initialValue: string; onCancel: () => void; onSave: (value: string) => void }) { const [value, setValue] = useState(initialValue); const dialog = useRef<HTMLFormElement>(null); const restore = useRef<HTMLElement | null>(null); useEffect(() => { if (!open) return; restore.current = document.activeElement as HTMLElement; const focus = () => dialog.current?.querySelector<HTMLElement>('textarea,button')?.focus(); const timer = window.setTimeout(focus); const keys = (event: KeyboardEvent) => { if (event.key === 'Escape') { onCancel(); return } if (event.key !== 'Tab') return; const nodes = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button,textarea') ?? []); const first = nodes[0]; const last = nodes.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() } }; document.addEventListener('keydown', keys); return () => { window.clearTimeout(timer); document.removeEventListener('keydown', keys); restore.current?.focus() } }, [onCancel, open]); if (!open) return null; return <div className="modal-backdrop"><form ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="observation-title" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSave(value.trim()) }}><div className="modal__header"><h2 id="observation-title">Describe lo encontrado</h2><button className="icon-button" type="button" aria-label="Cerrar observación" onClick={onCancel}>×</button></div><label className="field__label" htmlFor="observation">Descripción obligatoria</label><textarea id="observation" className="textarea" value={value} onChange={(event) => setValue(event.target.value)} required rows={5} /><div className="modal__actions"><button className="action-button action-button--ghost" type="button" onClick={onCancel}>Cancelar</button><button className="action-button action-button--primary" disabled={!value.trim()}>Guardar observación</button></div></form></div> }
+import { useState } from 'react'
+import { Modal } from './ui/Modal'
+import { Button, Textarea } from './ui'
+type Props = {
+  open: boolean
+  initialValue: string
+  onCancel(this: void): void
+  onSave(this: void, value: string): void
+}
+export function ObservationDialog({ open, ...props }: Props) {
+  return open ? <ObservationForm {...props} /> : null
+}
+function ObservationForm({ initialValue, onCancel, onSave }: Omit<Props, 'open'>) {
+  const [value, setValue] = useState(initialValue)
+  return (
+    <Modal open title="Describe lo encontrado" onClose={onCancel}>
+      <form
+        className="nf-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (value.trim()) onSave(value.trim())
+        }}
+      >
+        <Textarea
+          label="Descripción obligatoria"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          required
+          autoFocus
+          rows={5}
+        />
+        <div className="nf-actions">
+          <Button variant="secondary" onClick={onCancel}>
+            Cancelar
+          </Button>
+          <Button type="submit" disabled={!value.trim()}>
+            Guardar observación
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}

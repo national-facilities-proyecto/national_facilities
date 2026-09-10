@@ -1,19 +1,67 @@
-import { ArrowRight, MapPin, Navigation, UserRound } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { AssignedLocationsMap } from '../features/technician/AssignedLocationsMap'
-import { demoStores } from '../features/technician/data'
-
+import { useCallback } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { useRepositories } from '../app/RepositoriesProvider'
+import { useQuery } from '../hooks/useQuery'
+import { QueryState } from '../components/feedback/QueryState'
+import { Alert, Badge, Card } from '../components/ui'
+import { visitStatusLabels } from '../types/models'
+import { LazyMap } from '../features/technician/LazyMap'
+import { VisitStart } from '../features/checklists/VisitStart'
 export default function ChecklistVisitDetailPage() {
   const { id } = useParams()
-  const navigate = useNavigate()
-  const store = demoStores.find((item) => item.id === Number(id)) ?? demoStores[0]
-  return <section className="checklist-visit-detail">
-    <button className="back-link" onClick={() => navigate('/checklists')}>← Mis checklist</button>
-    <header className="page-heading"><div><span className="eyebrow">Detalle de visita</span><h1>{store.name}</h1><p className="checklist-store-address"><MapPin size={16} aria-hidden="true" /> {store.address}</p></div></header>
-    <div className="checklist-visit-grid">
-      <section className="checklist-visit-info"><h2>Información de la tienda</h2><dl className="visit-info"><div><dt>Dirección</dt><dd><MapPin size={15} aria-hidden="true" /> {store.address}</dd></div><div><dt>Encargado</dt><dd><UserRound size={15} aria-hidden="true" /> {store.contact}</dd></div></dl><a className="action-button action-button--ghost checklist-directions" target="_blank" rel="noreferrer" href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}><Navigation size={16} aria-hidden="true" /> Cómo llegar</a></section>
-      <section className="checklist-visit-map"><AssignedLocationsMap stores={[store]} /></section>
-    </div>
-    <section className="checklist-start-panel"><div><span className="eyebrow">Trabajo preventivo</span><h2>Checklist pendiente</h2><p>Revisa las tareas y registra las evidencias de la visita.</p></div><button className="action-button action-button--primary" onClick={() => navigate(`/checklists/${store.id}/start`)}>Iniciar checklist <ArrowRight size={17} aria-hidden="true" /></button></section>
-  </section>
+  const repos = useRepositories()
+  const query = useQuery(
+    useCallback(
+      async (signal) => {
+        const visit = await repos.checklists.get(Number(id), { signal })
+        const store = await repos.stores.get(visit.storeId, { signal })
+        return { visit, store }
+      },
+      [id, repos],
+    ),
+    false,
+  )
+  if (!query.data || query.status !== 'success') return <QueryState query={query} />
+  const { visit, store } = query.data
+  return (
+    <>
+      <Link className="nf-link" to="/checklists">
+        ← Mis checklists
+      </Link>
+      <div className="nf-two-columns">
+        <Card>
+          <span className="eyebrow">Información de la tienda</span>
+          <h1>{store.name}</h1>
+          <p>{store.address}</p>
+          <Badge>{visitStatusLabels[visit.status]}</Badge>
+          <p>Contacto: {store.contact}</p>
+          <a
+            className="nf-button nf-button--primary nf-directions"
+            target="_blank"
+            rel="noopener noreferrer"
+            href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}
+          >
+            Abrir indicaciones en Google Maps
+          </a>
+        </Card>
+        <LazyMap stores={[store]} />
+      </div>
+      {visit.status === 'available' && (
+        <VisitStart visit={visit} store={store} claimBeforeStart />
+      )}
+      {visit.status === 'claimed' && <VisitStart visit={visit} store={store} />}
+      {visit.status === 'in_progress' && (
+        <Link className="nf-link" to={`/checklists/${visit.id}/start`}>
+          Continuar checklist
+        </Link>
+      )}
+      {visit.status === 'pending_approval' && (
+        <Alert success>Excepción enviada para revisión.</Alert>
+      )}
+      {visit.status === 'completed' && <Alert success>Checklist completado.</Alert>}
+      {visit.exception?.approved === false && (
+        <Alert>Excepción rechazada: {visit.exception.reviewReason}</Alert>
+      )}
+    </>
+  )
 }

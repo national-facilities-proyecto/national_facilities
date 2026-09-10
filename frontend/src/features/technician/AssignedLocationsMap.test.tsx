@@ -2,35 +2,42 @@ import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const mapMocks = vi.hoisted(() => {
-  const listeners = new Map<string, Set<(payload?: unknown) => void>>()
-  const add = (event: string, callback: (payload?: unknown) => void) => {
-    const callbacks = listeners.get(event) ?? new Set<(payload?: unknown) => void>()
-    callbacks.add(callback)
-    listeners.set(event, callbacks)
+  const listeners = new Map<string, () => void>()
+  const layer = {
+    addTo: vi.fn(),
+    once: vi.fn((event: string, callback: () => void) => {
+      listeners.set(event, callback)
+      return layer
+    }),
+    remove: vi.fn(),
   }
-  const remove = (event: string, callback: (payload?: unknown) => void) => listeners.get(event)?.delete(callback)
-  const maplibreMap = {
-    loaded: vi.fn(() => false),
-    isStyleLoaded: vi.fn(() => false),
-    once: vi.fn(add),
-    on: vi.fn(add),
-    off: vi.fn(remove),
+  return {
+    createLayer: vi.fn(() => Promise.resolve(layer)),
+    emit: (event: string) => listeners.get(event)?.(),
+    layer,
+    listeners,
   }
-  const layer = { addTo: vi.fn(() => layer), getMaplibreMap: vi.fn(() => maplibreMap), remove: vi.fn() }
-  return { listeners, maplibreMap, layer, maplibreGL: vi.fn(() => layer), emit: (event: string, payload?: unknown) => listeners.get(event)?.forEach((callback) => callback(payload)) }
 })
 
-vi.mock('react-leaflet', () => ({ useMap: () => ({}), AttributionControl: () => null, MapContainer: () => null, Marker: () => null, Popup: () => null }))
-vi.mock('@maplibre/maplibre-gl-leaflet', () => ({ maplibreGL: mapMocks.maplibreGL }))
+vi.mock('react-leaflet', () => ({
+  useMap: () => ({}),
+  AttributionControl: () => null,
+  MapContainer: () => null,
+  Marker: () => null,
+  Popup: () => null,
+}))
+
+vi.mock('./openFreeMap', () => ({ createOpenFreeMapLayer: mapMocks.createLayer }))
 
 import { OpenFreeMapLayer } from './AssignedLocationsMap'
 
 beforeEach(() => {
   vi.useFakeTimers()
+  mapMocks.createLayer.mockClear()
+  mapMocks.layer.addTo.mockClear()
+  mapMocks.layer.once.mockClear()
+  mapMocks.layer.remove.mockClear()
   mapMocks.listeners.clear()
-  mapMocks.maplibreMap.loaded.mockReturnValue(false)
-  mapMocks.maplibreMap.isStyleLoaded.mockReturnValue(false)
-  mapMocks.maplibreGL.mockClear()
 })
 
 afterEach(() => {
@@ -38,21 +45,37 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-it('transiciona de loading a ready cuando MapLibre emite load', () => {
+it('transiciona de loading a ready cuando Leaflet carga tiles vectoriales de OpenFreeMap', async () => {
   const onReady = vi.fn()
   render(<OpenFreeMapLayer onReady={onReady} onError={vi.fn()} timeoutMs={1000} />)
-  expect(onReady).not.toHaveBeenCalled()
+  await act(async () => {})
 
   act(() => mapMocks.emit('load'))
 
   expect(onReady).toHaveBeenCalledOnce()
+  expect(mapMocks.createLayer).toHaveBeenCalledOnce()
 })
 
-it('informa error recuperable cuando el estilo supera el timeout', () => {
+it('informa error recuperable cuando OpenFreeMap no entrega un tile vectorial', async () => {
   const onError = vi.fn()
   render(<OpenFreeMapLayer onReady={vi.fn()} onError={onError} timeoutMs={1200} />)
+  await act(async () => {})
 
-  act(() => vi.advanceTimersByTime(1200))
+  act(() => mapMocks.emit('tileerror'))
+
+  expect(onError).toHaveBeenCalledWith('No se pudo cargar el mapa base.')
+
+  act(() => mapMocks.emit('load'))
+
+  expect(onError).toHaveBeenCalledOnce()
+})
+
+it('informa error recuperable cuando el mapa supera el timeout', async () => {
+  const onError = vi.fn()
+  render(<OpenFreeMapLayer onReady={vi.fn()} onError={onError} timeoutMs={1200} />)
+  await act(async () => {})
+
+  await act(async () => vi.advanceTimersByTime(1200))
 
   expect(onError).toHaveBeenCalledWith('Tiempo de espera agotado al cargar el mapa base.')
 })
