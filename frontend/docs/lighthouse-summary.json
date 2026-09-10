@@ -1,0 +1,34 @@
+{
+  "version": "12.8.2",
+  "fetchedAt": "2026-09-10T04:22:11.166Z",
+  "url": "http://127.0.0.1:5175/login",
+  "scope": "Login demo, navegación móvil simulada, localhost. No mide dispositivos reales ni todos los portales.",
+  "scores": {
+    "performance": 0.97,
+    "accessibility": 1,
+    "best-practices": 1
+  },
+  "metrics": {
+    "first-contentful-paint": {
+      "value": 1995.59625,
+      "unit": "millisecond"
+    },
+    "largest-contentful-paint": {
+      "value": 2172.795,
+      "unit": "millisecond"
+    },
+    "total-blocking-time": {
+      "value": 0,
+      "unit": "millisecond"
+    },
+    "cumulative-layout-shift": {
+      "value": 0.052259684732234996,
+      "unit": "unitless"
+    },
+    "speed-index": {
+      "value": 1995.59625,
+      "unit": "millisecond"
+    }
+  },
+  "warnings": []
+}

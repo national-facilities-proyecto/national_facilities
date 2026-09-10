@@ -1,12 +1,211 @@
-import { useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createTicket } from '../features/supervisor/ticketService'
-import type { TicketEvidence, TicketPriority } from '../features/supervisor/ticketTypes'
-
+import { useRepositories } from '../app/RepositoriesProvider'
+import { useQuery } from '../hooks/useQuery'
+import { QueryState } from '../components/feedback/QueryState'
+import { Alert, Button, Card, PageHeader, Select, Textarea } from '../components/ui'
+import { EvidenceGallery } from '../components/EvidenceGallery'
+import type { Priority } from '../types/models'
+import { validateFiles } from '../services/evidence'
+import { errorMessage } from '../services/errors'
 export default function SupervisorNewTicketPage() {
-  const navigate = useNavigate(); const inputRef = useRef<HTMLInputElement>(null); const [category, setCategory] = useState(''); const [priority, setPriority] = useState<TicketPriority | ''>(''); const [description, setDescription] = useState(''); const [evidence, setEvidence] = useState<TicketEvidence[]>([]); const [error, setError] = useState(''); const [saving, setSaving] = useState(false); const [drag, setDrag] = useState(false)
-  const addFiles = (files: FileList | File[]) => { const accepted = Array.from(files); const invalid = accepted.find((file) => !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 5 * 1024 * 1024); if (invalid) { setError('Solo se aceptan JPG, PNG o WebP de hasta 5 MB.'); return } if (evidence.length + accepted.length > 5) { setError('Puedes adjuntar máximo 5 fotografías.'); return } setError(''); setEvidence((current) => [...current, ...accepted.map((file, index) => ({ id: `${file.name}-${Date.now()}-${index}`, name: file.name, type: file.type, url: URL.createObjectURL(file) }))]) }
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!category || !priority || description.trim().length < 10) { setError('Completa categoría, prioridad y una descripción de al menos 10 caracteres.'); return } setSaving(true); const ticket = await createTicket({ category, priority, description: description.trim(), evidence }); setSaving(false); navigate(`/supervisor/tickets/${ticket.id}`) }
-  return <section><div className="supervisor-page-heading"><span className="eyebrow">Portal tienda</span><h1>Registrar nueva incidencia</h1><p>Registra y documenta los detalles de la avería de tu tienda.</p></div><form className="ticket-form" onSubmit={submit}><div className="form-grid"><label>Especialidad<select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">Seleccione la especialidad...</option><option>Climatización</option><option>Eléctrico</option><option>Plomería</option><option>Refrigeración</option></select></label><label>Prioridad<select value={priority} onChange={(event) => setPriority(event.target.value as TicketPriority)}><option value="">Seleccione prioridad...</option><option>Alta</option><option>Media</option><option>Baja</option></select></label></div><label>Descripción del problema<textarea value={description} maxLength={500} onChange={(event) => setDescription(event.target.value)} placeholder="Describe detalladamente la incidencia..." /><small>{description.length}/500 caracteres</small></label><label>Fotografías de evidencia<div className={`upload-box${drag ? ' upload-box--drag' : ''}`} onDragOver={(event) => { event.preventDefault(); setDrag(true) }} onDragLeave={() => setDrag(false)} onDrop={(event) => { event.preventDefault(); setDrag(false); addFiles(event.dataTransfer.files) }} onClick={() => inputRef.current?.click()}><strong>↑</strong><span>Arrastra fotos o haz clic para subir</span><small>Máx. 5 archivos, JPG, PNG o WebP</small><input ref={inputRef} hidden type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => event.target.files && addFiles(event.target.files)} /></div></label>{evidence.length > 0 && <div className="evidence-grid">{evidence.map((file) => <div key={file.id}><img src={file.url} alt={file.name} /><button type="button" onClick={() => setEvidence((items) => items.filter((item) => item.id !== file.id))}>Eliminar</button></div>)}</div>}{error && <p className="form-error" role="alert">{error}</p>}<div className="form-actions"><button type="button" className="button-secondary" onClick={() => navigate('/supervisor/tickets')}>Cancelar</button><button type="submit" className="button-primary" disabled={saving}>{saving ? 'Enviando...' : 'Enviar reporte'}</button></div></form></section>
+  const repos = useRepositories()
+  const navigate = useNavigate()
+  const input = useRef<HTMLInputElement>(null)
+  const [category, setCategory] = useState('')
+  const [priority, setPriority] = useState<Priority | ''>('')
+  const [description, setDescription] = useState('')
+  const [storeId, setStoreId] = useState(0)
+  const [ids, setIds] = useState<string[]>([])
+  const ownedIds = useRef<string[]>([])
+  const submitted = useRef(false)
+  const mounted = useRef(true)
+  const [errors, setErrors] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const query = useQuery(
+    useCallback((signal) => repos.stores.list({ signal }), [repos]),
+    false,
+  )
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (!submitted.current)
+        ownedIds.current.forEach((id) => {
+          void repos.evidence.remove(id).catch(() => undefined)
+        })
+    }
+  }, [repos])
+  const addFiles = async (files: File[]) => {
+    if (uploading || saving) return
+    setUploading(true)
+    const { accepted, errors: fileErrors } = validateFiles(files, ids.length)
+    const newIds: string[] = []
+    try {
+      for (const file of accepted) {
+        const id = crypto.randomUUID()
+        await repos.evidence.put({
+          id,
+          blob: file,
+          name: file.name,
+          mimeType: file.type,
+          size: file.size,
+          source: 'upload',
+          capturedAt: new Date().toISOString(),
+        })
+        if (!mounted.current) {
+          await repos.evidence.remove(id)
+          break
+        }
+        newIds.push(id)
+        ownedIds.current.push(id)
+      }
+      setErrors(fileErrors)
+    } catch (cause) {
+      setErrors([...fileErrors, errorMessage(cause)])
+    } finally {
+      if (mounted.current) setIds((current) => [...current, ...newIds])
+      setUploading(false)
+      if (input.current) input.current.value = ''
+    }
+  }
+  if (!query.data || query.status !== 'success') return <QueryState query={query} />
+  return (
+    <>
+      <PageHeader
+        title="Registrar nueva incidencia"
+        description="Describe el problema y adjunta fotografías de tu tienda."
+      />
+      <Card>
+        <form
+          className="nf-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (saving || uploading) return
+            if (!category || !priority || description.trim().length < 10) {
+              setErrors([
+                'Completa especialidad, prioridad y una descripción de al menos 10 caracteres.',
+              ])
+              return
+            }
+            setSaving(true)
+            setErrors([])
+            void repos.tickets
+              .create({
+                category,
+                priority,
+                description: description.trim(),
+                storeId: storeId || query.data?.[0]?.id || 0,
+                evidenceIds: ids,
+              })
+              .then((ticket) => {
+                submitted.current = true
+                void navigate(`/supervisor/tickets/${ticket.id}`)
+              })
+              .catch((cause) => setErrors([errorMessage(cause)]))
+              .finally(() => setSaving(false))
+          }}
+        >
+          <div className="nf-two-columns">
+            <Select
+              label="Tienda"
+              value={storeId || query.data[0]?.id || 0}
+              onChange={(event) => setStoreId(Number(event.target.value))}
+            >
+              {query.data.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.name}
+                </option>
+              ))}
+            </Select>
+            <Select
+              label="Especialidad"
+              required
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+            >
+              <option value="">Seleccionar especialidad</option>
+              {['Climatización', 'Eléctrico', 'Plomería', 'Refrigeración'].map((value) => (
+                <option key={value}>{value}</option>
+              ))}
+            </Select>
+            <Select
+              label="Prioridad"
+              required
+              value={priority}
+              onChange={(event) => setPriority(event.target.value as Priority)}
+            >
+              <option value="">Seleccionar prioridad</option>
+              <option>Alta</option>
+              <option>Media</option>
+              <option>Baja</option>
+            </Select>
+          </div>
+          <Textarea
+            label="Descripción del problema"
+            minLength={10}
+            maxLength={500}
+            required
+            rows={5}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+          <p>{description.length}/500 caracteres</p>
+          <div
+            className="nf-upload"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault()
+              void addFiles(Array.from(event.dataTransfer.files))
+            }}
+          >
+            <p>Fotografías del reporte · Hasta 5 archivos de 5 MB</p>
+            <input
+              ref={input}
+              type="file"
+              aria-label="Fotografías del reporte"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              hidden
+              onChange={(event) => {
+                if (event.target.files) void addFiles(Array.from(event.target.files))
+              }}
+            />
+            <Button
+              variant="secondary"
+              disabled={uploading || saving}
+              onClick={() => input.current?.click()}
+            >
+              {uploading ? 'Guardando fotografías…' : 'Seleccionar fotografías'}
+            </Button>
+            <p>JPG, PNG o WebP. También puedes arrastrar archivos aquí.</p>
+          </div>
+          <EvidenceGallery
+            ids={ids}
+            onRemove={(id) => {
+              setIds((current) => current.filter((value) => value !== id))
+              ownedIds.current = ownedIds.current.filter((value) => value !== id)
+              void repos.evidence.remove(id).catch((cause) => setErrors([errorMessage(cause)]))
+            }}
+          />
+          {errors.map((error) => (
+            <Alert key={error}>{error}</Alert>
+          ))}
+          <div className="nf-actions">
+            <Button type="submit" disabled={saving || uploading || !query.data.length}>
+              {saving ? 'Enviando…' : 'Enviar reporte'}
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={saving || uploading}
+              onClick={() => void navigate('/supervisor/tickets')}
+            >
+              Cancelar
+            </Button>
+          </div>
+        </form>
+      </Card>
+    </>
+  )
 }

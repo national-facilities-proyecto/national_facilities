@@ -1,2 +1,0 @@
-export type LocationResult = { kind: 'success' | 'outside' | 'error'; title: string; message: string }
-export function LocationResultModal({ result, onClose }: { result: LocationResult | null; onClose: () => void }) { if (!result) return null; return <div className="modal-backdrop"><section className="modal result-modal" role="dialog" aria-modal="true"><h2>{result.title}</h2><p>{result.message}</p><button className="action-button action-button--primary" onClick={onClose}>Entendido</button></section></div> }

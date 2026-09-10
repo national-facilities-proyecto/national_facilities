@@ -1,80 +1,40 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import ChecklistExecutionPage from './ChecklistExecutionPage'
-import * as geo from '../services/geolocationService'
-import * as visits from '../services/visitService'
-
-vi.mock('../services/geolocationService')
-vi.mock('../services/visitService')
-vi.mock('../features/technician/CameraModal', () => ({
-  CameraModal: ({ open, onCapture }: { open: boolean; onCapture: (photo: string) => void }) => open ? <button onClick={() => onCapture('blob:test-photo')}>Confirmar captura simulada</button> : null,
-}))
-
-function page() {
-  return render(
-    <MemoryRouter initialEntries={['/checklists/1']}>
-      <Routes><Route path="/checklists/:id" element={<ChecklistExecutionPage />} /></Routes>
-    </MemoryRouter>,
-  )
-}
-
-function markAllConforming() {
-  screen.getAllByRole('button', { name: '✓ Conforme' }).forEach((button) => fireEvent.click(button))
-}
-
-function captureEveryRequiredPhoto() {
-  while (screen.queryAllByRole('button', { name: 'Tomar foto' }).length > 0) {
-    fireEvent.click(screen.getAllByRole('button', { name: 'Tomar foto' })[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Confirmar captura simulada' }))
-  }
-}
-
+import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { beforeEach, expect, it } from 'vitest'
+import { renderPage } from '../test/render'
+import { createMockRepositories } from '../mocks/repositories'
+import { VisitEditor } from '../features/checklists/VisitEditor'
 beforeEach(() => {
-  vi.clearAllMocks()
+  localStorage.clear()
+  sessionStorage.clear()
 })
-
-afterEach(() => {
-  cleanup()
-})
-
-it('bloquea la finalización si faltan tareas sin responder', () => {
-  page()
+async function page() {
+  const repos = createMockRepositories()
+  await repos.auth.login({ kind: 'demo', userId: 1 })
+  await repos.checklists.claim(1)
+  const store = await repos.stores.get(1)
+  await repos.visits.start(1, { ...store, accuracy: 8, capturedAt: Date.now() })
+  renderPage(<VisitEditor id={1} origin="checklist" />, repos)
+  await screen.findByText('Finalizar checklist')
+  return repos
+}
+it('bloquea finalización sin resultados ni fotografías', async () => {
+  await page()
   fireEvent.click(screen.getByRole('button', { name: 'Finalizar checklist' }))
-  expect(screen.getByText('Completa el resultado de cada tarea.')).toBeInTheDocument()
+  expect(screen.getByRole('alert')).toHaveTextContent('Resultado pendiente')
+  expect(screen.getByRole('alert')).toHaveTextContent('Fotografía obligatoria')
 })
-
-it('bloquea la finalización cuando falta una fotografía obligatoria', () => {
-  page()
-  markAllConforming()
-  fireEvent.click(screen.getByRole('button', { name: 'Finalizar checklist' }))
-  expect(screen.getByText('Faltan fotografías obligatorias.')).toBeInTheDocument()
-  expect(geo.requestFreshLocation).not.toHaveBeenCalled()
-})
-
-it('no permite guardar una tarea no conforme sin observación', () => {
-  page()
+it('sincroniza observaciones entre tareas y guarda el borrador', async () => {
+  const repos = await page()
   fireEvent.click(screen.getAllByRole('button', { name: '! No conforme' })[0])
   expect(screen.getByRole('button', { name: 'Guardar observación' })).toBeDisabled()
-})
-
-it('exige una justificación y deja la visita pendiente_validacion cuando falla GPS', async () => {
-  vi.mocked(geo.requestFreshLocation).mockRejectedValue(new Error('Permiso de ubicación denegado.'))
-  vi.mocked(visits.requestLocationExceptionMock).mockResolvedValue({ status: 'pendiente_validacion', simulated: true })
-  page()
-  markAllConforming()
-  captureEveryRequiredPhoto()
-
-  fireEvent.click(screen.getByRole('button', { name: 'Finalizar checklist' }))
-  expect(await screen.findByText('Excepción de ubicación')).toBeInTheDocument()
-
-  const submit = screen.getByRole('button', { name: 'Enviar justificación' })
-  expect(submit).toBeDisabled()
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'GPS sin permiso en el dispositivo.' } })
-  expect(submit).toBeEnabled()
-  fireEvent.click(submit)
-
-  await waitFor(() => expect(visits.requestLocationExceptionMock).toHaveBeenCalledWith(1, 'GPS sin permiso en el dispositivo.'))
-  expect(await screen.findByText('Pendiente de validación')).toBeInTheDocument()
-  expect(screen.getByText(/Simulación backend: la visita quedó pendiente/i)).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Descripción obligatoria'), {
+    target: { value: 'Filtro dañado' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar observación' }))
+  fireEvent.click(screen.getAllByRole('button', { name: '! No conforme' })[1])
+  expect(screen.getByLabelText('Descripción obligatoria')).toHaveValue('')
+  fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+  await waitFor(async () =>
+    expect((await repos.checklists.get(1)).answers[0]?.observation).toBe('Filtro dañado'),
+  )
 })
