@@ -1,6 +1,7 @@
-import type { Answer, ChecklistTask } from '../types/models'
+﻿import type { Answer, ChecklistTask } from '../types/models'
 import { Badge, Button } from './ui'
 import { EvidenceGallery } from './EvidenceGallery'
+
 export function ChecklistTaskCard({
   task,
   order,
@@ -8,6 +9,7 @@ export function ChecklistTaskCard({
   onConforming,
   onNonConforming,
   onCamera,
+  onGallery,
   onRemove,
 }: {
   task: ChecklistTask
@@ -16,6 +18,7 @@ export function ChecklistTaskCard({
   onConforming(this: void): void
   onNonConforming(this: void): void
   onCamera(this: void): void
+  onGallery?(this: void): void
   onRemove(this: void, id: string): void
 }) {
   return (
@@ -49,9 +52,16 @@ export function ChecklistTaskCard({
         </p>
       )}
       <EvidenceGallery ids={answer?.evidenceIds ?? []} onRemove={onRemove} />
-      <Button variant="secondary" onClick={onCamera}>
-        {answer?.evidenceIds.length ? 'Repetir fotografía' : 'Tomar foto'}
-      </Button>
+      <div className="nf-actions">
+        <Button variant="secondary" onClick={onCamera}>
+          Tomar foto
+        </Button>
+        {onGallery && (
+          <Button variant="secondary" onClick={onGallery}>
+            Seleccionar de galería
+          </Button>
+        )}
+      </div>
     </article>
   )
 }

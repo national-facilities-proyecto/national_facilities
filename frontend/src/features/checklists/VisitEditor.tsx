@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
@@ -13,6 +13,9 @@ import { Alert, Button, Card, PageHeader, Textarea } from '../../components/ui'
 import { QueryState } from '../../components/feedback/QueryState'
 import { TicketReport } from '../tickets/TicketReport'
 import { useVisitEditor } from './useVisitEditor'
+import { ChecklistTimer } from './ChecklistTimer'
+import { validateFiles } from '../../services/evidence'
+import { distanceMeters } from '../geolocation/location'
 
 export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'] }) {
   const repos = useRepositories()
@@ -33,6 +36,8 @@ export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'
   return <Editor key={id} initial={query.data.visit} store={query.data.store} />
 }
 function Editor({ initial, store }: { initial: Visit; store: Store }) {
+  const galleryInput = useRef<HTMLInputElement>(null)
+  const galleryTaskId = useRef<number | undefined>()
   const {
     repos,
     navigate,
@@ -58,6 +63,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     capture,
     remove,
     finish,
+    confirmFinish,
     issues,
     doneTasks,
     editable,
@@ -96,6 +102,40 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         }
       />
       {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
+      {visit.origin === 'checklist' && <ChecklistTimer visit={visit} />}
+      <input
+        ref={galleryInput}
+        className="sr-only"
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (!file) return
+          const taskId = galleryTaskId.current
+          const existing = taskId
+            ? (visit.answers.find((answer) => answer.taskId === taskId)?.evidenceIds.length ?? 0)
+            : visit.evidenceIds.length
+          const result = validateFiles([file], existing)
+          if (!result.accepted.length) {
+            setError(result.errors.join(' '))
+            return
+          }
+          const accepted = result.accepted[0]
+          void capture(
+            {
+              id: crypto.randomUUID(),
+              blob: accepted,
+              name: accepted.name,
+              mimeType: accepted.type,
+              size: accepted.size,
+              capturedAt: new Date().toISOString(),
+              source: 'gallery',
+            },
+            taskId,
+          ).catch((cause) => setError(errorMessage(cause)))
+        }}
+      />
       <fieldset
         disabled={step.kind === 'validating' || saving || exceptionBusy || step.kind === 'success'}
         className="nf-editor-fields"
@@ -122,6 +162,10 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                   onConforming={() => patchAnswer(task.id, { result: 'conforme', observation: '' })}
                   onNonConforming={() => setStep({ kind: 'observation', taskId: task.id })}
                   onCamera={() => setStep({ kind: 'camera', taskId: task.id })}
+                  onGallery={() => {
+                    galleryTaskId.current = task.id
+                    galleryInput.current?.click()
+                  }}
                   onRemove={(id) => remove(id, task.id)}
                 />
               ))}
@@ -138,6 +182,15 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             <EvidenceGallery ids={visit.evidenceIds} onRemove={(id) => remove(id)} />
             <Button variant="secondary" onClick={() => setStep({ kind: 'camera' })}>
               {visit.evidenceIds.length ? 'Repetir fotografía' : 'Tomar foto'}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                galleryTaskId.current = undefined
+                galleryInput.current?.click()
+              }}
+            >
+              Seleccionar de galería
             </Button>
           </Card>
         )}
@@ -257,6 +310,25 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             )}
           </Modal>
           <Modal
+            open={step.kind === 'confirm_finish'}
+            title="Confirmar ubicación de cierre"
+            onClose={() => setStep({ kind: 'editing' })}
+          >
+            {step.kind === 'confirm_finish' && (
+              <>
+                <p>Distancia: {Math.round(distanceMeters(step.location, store))} m.</p>
+                <p>
+                  Precisión: ±{Math.round(step.location.accuracy)} m. Radio permitido:{' '}
+                  {visit.radiusMeters} m.
+                </p>
+                <p>Capturada: {new Date(step.location.capturedAt).toLocaleString('es-PE')}.</p>
+                <Button onClick={() => void confirmFinish(step.location)}>
+                  Confirmar finalización
+                </Button>
+              </>
+            )}
+          </Modal>
+          <Modal
             open={step.kind === 'exception'}
             title="Excepción de ubicación"
             busy={exceptionBusy}
@@ -291,6 +363,53 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               }}
             >
               Enviar justificación
+            </Button>
+          </Modal>
+          <Modal
+            open={step.kind === 'time_exception'}
+            title="Tiempo máximo vencido"
+            busy={exceptionBusy}
+            onClose={() => setStep({ kind: 'editing' })}
+          >
+            <Alert>El tiempo máximo para completar el checklist ha vencido.</Alert>
+            <p>
+              Inicio:{' '}
+              {visit.startedAt
+                ? new Date(visit.startedAt).toLocaleString('es-PE')
+                : 'No registrado'}
+            </p>
+            <p>
+              Vencimiento:{' '}
+              {visit.expiresAt
+                ? new Date(visit.expiresAt).toLocaleString('es-PE')
+                : 'No registrado'}
+            </p>
+            <Textarea
+              label="Justificación obligatoria"
+              value={reason}
+              maxLength={500}
+              onChange={(event) => setReason(event.target.value)}
+            />
+            <Button
+              disabled={exceptionBusy || reason.trim().length < 10}
+              onClick={() => {
+                if (step.kind !== 'time_exception' || exceptionBusy) return
+                setExceptionBusy(true)
+                void repos.visits
+                  .requestTimeException(visit.id, reason)
+                  .then((next) => {
+                    setVisit(next)
+                    latest.current = next
+                    setStep({ kind: 'success', pending: true })
+                  })
+                  .catch((cause) => {
+                    setError(errorMessage(cause))
+                    setStep({ kind: 'editing' })
+                  })
+                  .finally(() => setExceptionBusy(false))
+              }}
+            >
+              Enviar para revisión
             </Button>
           </Modal>
           <Modal

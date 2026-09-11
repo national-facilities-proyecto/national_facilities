@@ -1,37 +1,48 @@
-import { test, expect } from '@playwright/test'
+﻿import { test, expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
 async function login(page: Page, user = '1') {
   await page.goto('/login')
-  await page.getByLabel('Cuenta de demostración').selectOption(user)
-  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click()
+  const accounts: Record<string, string> = {
+    '1': 'tecnico@example.test',
+    '2': 'tienda@example.test',
+    '3': 'cuenta@example.test',
+    '4': 'admin@example.test',
+  }
+  await page.getByLabel('Usuario').fill(accounts[user])
+  await page.getByLabel('Contraseña', { exact: true }).fill('National2026!')
+  await page.getByRole('button', { name: /Iniciar/ }).click()
   await expect(page.getByRole('button', { name: /Perfil de/ })).toBeVisible()
 }
 async function logout(page: Page) {
   await page.getByRole('button', { name: /Perfil de/ }).click()
-  await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Iniciar sesión' })).toBeVisible()
+  await page.getByRole('button', { name: 'Cerrar sesiÃ³n', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Iniciar sesiÃ³n' })).toBeVisible()
 }
 async function photograph(page: Page) {
   await page.getByRole('button', { name: 'Tomar foto', exact: true }).first().click()
-  const dialog = page.getByRole('dialog', { name: 'Tomar fotografía' })
+  const dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: 'Capturar', exact: true }).click()
   await dialog.getByRole('button', { name: 'Confirmar foto' }).click()
   await expect(dialog).not.toBeVisible()
 }
 async function checklist(page: Page, id = '1') {
   await page.goto(`/checklists/${id}`)
-  await page.getByRole('button', { name: 'Iniciar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirmar inicio', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Finalizar checklist' })).toBeVisible()
-  const conforms = page.getByRole('button', { name: '✓ Conforme', exact: true })
+  const conforms = page.getByRole('button', { name: /Conforme/ })
   for (let index = 0; index < (await conforms.count()); index++) await conforms.nth(index).click()
   for (let index = 0; index < 4; index++) await photograph(page)
   await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
 }
-test('toma y completa checklist con cámara y ubicación de la segunda tienda', async ({ page }) => {
+test('toma y completa checklist con cÃ¡mara y ubicaciÃ³n de la segunda tienda', async ({
+  page,
+}) => {
   await login(page)
   await checklist(page, '2')
   await page.getByRole('button', { name: 'Finalizar checklist' }).click()
+  await page.getByRole('button', { name: 'Confirmar finalización' }).click()
   await expect(page.getByRole('dialog', { name: 'Trabajo completado' })).toBeVisible()
   await page.getByRole('button', { name: 'Volver al listado' }).click()
   await expect(page.getByRole('heading', { name: 'Mis Checklist', exact: true })).toBeVisible()
@@ -44,24 +55,26 @@ test('registra incidencia, programa, reasigna y resuelve ticket entre portales',
 }) => {
   await login(page, '2')
   await page.goto('/supervisor/tickets/new')
-  await page.getByLabel('Especialidad', { exact: true }).selectOption('Plomería')
+  await page.getByLabel('Especialidad', { exact: true }).selectOption('PlomerÃ­a')
   await page.getByLabel('Prioridad', { exact: true }).selectOption('Alta')
-  await page.getByLabel('Descripción del problema').fill('Fuga en la válvula de agua de la tienda.')
+  await page
+    .getByLabel('DescripciÃ³n del problema')
+    .fill('Fuga en la vÃ¡lvula de agua de la tienda.')
   await page.getByRole('button', { name: 'Enviar reporte' }).click()
   await expect(page.getByRole('heading', { name: /Ticket #/ })).toBeVisible()
   const id = page.url().split('/').at(-1)!
   await logout(page)
   await login(page, '3')
   await page.goto(`/technical-supervisor/incidents/${id}`)
-  await page.getByLabel('Técnico asignado', { exact: true }).selectOption('5')
+  await page.getByLabel('TÃ©cnico asignado', { exact: true }).selectOption('5')
   await page.getByRole('button', { name: 'Programar visita' }).click()
-  await expect(page.getByRole('button', { name: 'Guardar reprogramación' })).toBeVisible()
-  await page.getByLabel('Técnico asignado', { exact: true }).selectOption('1')
+  await expect(page.getByRole('button', { name: 'Guardar reprogramaciÃ³n' })).toBeVisible()
+  await page.getByLabel('TÃ©cnico asignado', { exact: true }).selectOption('1')
   await page
-    .getByLabel('Motivo de reprogramación o reasignación')
-    .fill('Cambio de disponibilidad del técnico.')
-  await page.getByRole('button', { name: 'Guardar reprogramación' }).click()
-  await expect(page.getByText(/Reprogramación \/ reasignación:/)).toBeVisible()
+    .getByLabel('Motivo de reprogramaciÃ³n o reasignaciÃ³n')
+    .fill('Cambio de disponibilidad del tÃ©cnico.')
+  await page.getByRole('button', { name: 'Guardar reprogramaciÃ³n' }).click()
+  await expect(page.getByText(/ReprogramaciÃ³n \/ reasignaciÃ³n:/)).toBeVisible()
   await logout(page)
   await login(page)
   await page.goto('/routes')
@@ -69,21 +82,23 @@ test('registra incidencia, programa, reasigna y resuelve ticket entre portales',
     .locator('.nf-card')
     .filter({ has: page.getByText(`Ticket #${id}`, { exact: true }) })
   await card.getByRole('link', { name: 'Ver detalle' }).click()
-  await page.getByRole('button', { name: 'Iniciar atención' }).click()
+  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirmar inicio', exact: true }).click()
   await page
-    .getByLabel('Descripción del trabajo realizado')
-    .fill('Se sustituyó la válvula y se verificó la presión de agua.')
+    .getByLabel('DescripciÃ³n del trabajo realizado')
+    .fill('Se sustituyÃ³ la vÃ¡lvula y se verificÃ³ la presiÃ³n de agua.')
   await photograph(page)
   await page.getByRole('button', { name: 'Finalizar ticket' }).click()
+  await page.getByRole('button', { name: 'Confirmar finalización' }).click()
   await expect(page.getByRole('dialog', { name: 'Trabajo completado' })).toBeVisible()
   await page.getByRole('button', { name: 'Volver al listado' }).click()
   await logout(page)
   await login(page, '2')
   await page.goto(`/supervisor/tickets/${id}`)
   await expect(page.getByText('Resuelto', { exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Resolución del técnico' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'ResoluciÃ³n del tÃ©cnico' })).toBeVisible()
 })
-test('IDs inválidos, roles y sesión sin rol fallan cerrado', async ({ page }) => {
+test('IDs invÃ¡lidos, roles y sesiÃ³n sin rol fallan cerrado', async ({ page }) => {
   await login(page)
   await page.goto('/routes/999')
   await expect(page.getByRole('alert')).toContainText('Ticket no encontrado')
@@ -98,7 +113,7 @@ test('IDs inválidos, roles y sesión sin rol fallan cerrado', async ({ page }) 
     }
   })
   await page.goto('/checklists')
-  await expect(page.getByRole('heading', { name: 'Sesión expirada' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'SesiÃ³n expirada' })).toBeVisible()
 })
 for (const user of ['1', '2', '3', '4'])
   test(`responsive y accesibilidad del portal ${user}`, async ({ page }) => {
@@ -112,12 +127,12 @@ for (const user of ['1', '2', '3', '4'])
       ).toBe(true)
     }
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.getByRole('button', { name: 'Abrir menú' }).click()
-    const menu = page.getByRole('dialog', { name: 'Menú de navegación' })
+    await page.getByRole('button', { name: 'Abrir menÃº' }).click()
+    const menu = page.getByRole('dialog', { name: 'MenÃº de navegaciÃ³n' })
     await expect(menu).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(menu).not.toBeVisible()
-    await expect(page.getByRole('button', { name: 'Abrir menú' })).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Abrir menÃº' })).toBeFocused()
     const accessibility = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
       .analyze()
@@ -126,18 +141,18 @@ for (const user of ['1', '2', '3', '4'])
     await page.setViewportSize({ width: 1440, height: 1000 })
     await page.screenshot({ path: `test-results/portal-${user}-desktop.png`, fullPage: true })
   })
-test('administrador crea una plantilla con ítems y la conserva', async ({ page }) => {
+test('administrador crea una plantilla con Ã­tems y la conserva', async ({ page }) => {
   await login(page, '4')
   await page.goto('/admin/templates')
   await page.getByRole('button', { name: 'Crear registro' }).click()
-  await page.getByLabel('Nombre de plantilla').fill('Inspección de prueba')
-  await page.getByRole('button', { name: 'Agregar ítem' }).click()
-  await page.getByLabel('Ítem 1', { exact: true }).fill('Revisar luminarias')
+  await page.getByLabel('Nombre de plantilla').fill('InspecciÃ³n de prueba')
+  await page.getByRole('button', { name: 'Agregar Ã­tem' }).click()
+  await page.getByLabel('Ãtem 1', { exact: true }).fill('Revisar luminarias')
   await page.getByRole('button', { name: 'Revisar cambios' }).click()
   await page.getByRole('button', { name: 'Confirmar y guardar' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.reload()
-  await expect(page.getByText(/Inspección de prueba/).first()).toBeVisible()
+  await expect(page.getByText(/InspecciÃ³n de prueba/).first()).toBeVisible()
 })
 
 test('mapa se descarga bajo demanda y el fallo del proveedor conserva la lista', async ({

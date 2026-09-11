@@ -42,6 +42,7 @@ export interface VisitRepository {
   start(id: number, location: Coordinates): Promise<Visit>
   complete(id: number, location: Coordinates): Promise<Visit>
   requestException(id: number, reason: string, failure: string): Promise<Visit>
+  requestTimeException(id: number, reason: string): Promise<Visit>
   reviewException(id: number, approved: boolean, reason: string): Promise<Visit>
 }
 export interface TicketRepository {

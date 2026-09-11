@@ -87,11 +87,14 @@ export function validateDatabase(value: unknown): value is MockDatabase {
   )
     return false
   const visits = value.visits as unknown[]
+  const visitShape = { ...seed.visits[0] }
+  delete visitShape.timeLimitSeconds
+  delete visitShape.timeLimitExceeded
   if (
     !visits.every(
       (visit) =>
         isRecord(visit) &&
-        matches(visit, seed.visits[0]) &&
+        matches(visit, visitShape) &&
         ['available', 'claimed', 'in_progress', 'pending_approval', 'completed'].includes(
           String(visit.status),
         ) &&

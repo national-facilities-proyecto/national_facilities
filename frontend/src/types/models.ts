@@ -27,6 +27,11 @@ export type Coordinates = {
   accuracy: number
   capturedAt: number
 }
+export type LocationEvidence = Coordinates & {
+  distanceMeters: number
+  radiusMeters: number
+  validated: boolean
+}
 export type Store = {
   id: number
   name: string
@@ -51,7 +56,7 @@ export type Evidence = {
   mimeType: string
   size: number
   capturedAt: string
-  source: 'camera' | 'upload'
+  source: 'camera' | 'gallery' | 'upload'
   blob: Blob
 }
 export type EvidenceMeta = Omit<Evidence, 'blob'>
@@ -63,6 +68,7 @@ export type Answer = {
 }
 export type VisitStatus = 'available' | 'claimed' | 'in_progress' | 'pending_approval' | 'completed'
 export type LocationException = {
+  type: 'location' | 'time_limit'
   reason: string
   failure: string
   requestedAt: string
@@ -86,7 +92,12 @@ export type Visit = {
   startLocation?: Coordinates
   endLocation?: Coordinates
   startedAt?: string
+  expiresAt?: string
   completedAt?: string
+  timeLimitSeconds?: number
+  timeLimitExceeded?: boolean
+  timeExceptionReason?: string
+  timeExceptionStatus?: 'pending' | 'approved' | 'rejected'
   exception?: LocationException
   radiusMeters: number
 }

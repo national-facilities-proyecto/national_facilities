@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
-import type { Answer, Evidence, Store, Visit } from '../../types/models'
+import type { Answer, Coordinates, Evidence, Store, Visit } from '../../types/models'
 import { errorMessage } from '../../services/errors'
 import { LocationError } from '../geolocation/location'
 import { useLocationRequest } from '../geolocation/useLocation'
@@ -12,8 +12,10 @@ type Step =
   | { kind: 'observation'; taskId: number }
   | { kind: 'camera'; taskId?: number }
   | { kind: 'validating' }
+  | { kind: 'confirm_finish'; location: Coordinates }
   | { kind: 'location_error'; message: string; failure: string }
   | { kind: 'exception'; failure: string }
+  | { kind: 'time_exception' }
   | { kind: 'success'; pending: boolean }
 export function useVisitEditor(initial: Visit, store: Store) {
   const repos = useRepositories()
@@ -97,8 +99,8 @@ export function useVisitEditor(initial: Visit, store: Store) {
       ],
     })
   }
-  const capture = async (photo: Evidence) => {
-    const taskId = step.kind === 'camera' ? step.taskId : undefined
+  const capture = async (photo: Evidence, taskIdOverride?: number) => {
+    const taskId = taskIdOverride ?? (step.kind === 'camera' ? step.taskId : undefined)
     const oldIds = taskId
       ? (latest.current.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
       : latest.current.evidenceIds
@@ -124,17 +126,46 @@ export function useVisitEditor(initial: Visit, store: Store) {
       setError(pending.join(' '))
       return
     }
+    if (
+      visit.origin === 'checklist' &&
+      visit.expiresAt &&
+      Date.now() >= Date.parse(visit.expiresAt)
+    ) {
+      setStep({ kind: 'time_exception' })
+      return
+    }
     setStep({ kind: 'validating' })
     setError('')
     try {
       await save()
       const coordinates = await location.request()
+      setStep({ kind: 'confirm_finish', location: coordinates })
+    } catch (cause) {
+      setStep({
+        kind: 'location_error',
+        message: errorMessage(cause),
+        failure: cause instanceof LocationError ? cause.reason : 'service',
+      })
+    }
+  }
+  const confirmFinish = async (coordinates: Coordinates) => {
+    if (saving) return
+    setStep({ kind: 'validating' })
+    try {
       const next = await repos.visits.complete(visit.id, coordinates)
       setVisit(next)
       latest.current = next
       setDirty(false)
       setStep({ kind: 'success', pending: false })
     } catch (cause) {
+      if (
+        visit.origin === 'checklist' &&
+        visit.expiresAt &&
+        Date.now() >= Date.parse(visit.expiresAt)
+      ) {
+        setStep({ kind: 'time_exception' })
+        return
+      }
       setStep({
         kind: 'location_error',
         message: errorMessage(cause),
@@ -173,6 +204,7 @@ export function useVisitEditor(initial: Visit, store: Store) {
     capture,
     remove,
     finish,
+    confirmFinish,
     issues,
     doneTasks,
     editable,
