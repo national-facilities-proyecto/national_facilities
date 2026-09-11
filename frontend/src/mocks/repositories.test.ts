@@ -276,3 +276,23 @@ it('tienda puede consultar el técnico asignado sin ver usuarios de otras tienda
   expect(users.some((user) => user.id === 1)).toBe(true)
   expect(users.some((user) => user.id === 6 || user.role === 'administrator')).toBe(false)
 })
+it('persiste el límite de cinco minutos y envía la excepción por tiempo vencido', async () => {
+  await start(1)
+  const started = await repos.checklists.get(1)
+  expect(started.timeLimitSeconds).toBe(300)
+  expect(Date.parse(started.expiresAt!) - Date.parse(started.startedAt!)).toBe(300000)
+  const db = readDatabase()
+  const visit = db.visits.find((item) => item.id === 1)!
+  visit.expiresAt = new Date(Date.now() - 1000).toISOString()
+  writeDatabase(db)
+  await expect(repos.visits.requestTimeException(1, '   ')).rejects.toMatchObject({
+    code: 'validation',
+  })
+  const pending = await repos.visits.requestTimeException(
+    1,
+    'La inspección requirió detener el equipo de forma segura.',
+  )
+  expect(pending.status).toBe('pending_approval')
+  expect(pending.exception?.type).toBe('time_limit')
+  expect(pending.timeExceptionStatus).toBe('pending')
+})

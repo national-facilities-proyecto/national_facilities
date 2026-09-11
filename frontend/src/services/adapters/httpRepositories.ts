@@ -114,6 +114,7 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       start: pending,
       complete: pending,
       requestException: pending,
+      requestTimeException: pending,
       reviewException: pending,
     },
     tickets: { list: pending, get: pending, create: pending, schedule: pending },
