@@ -21,6 +21,12 @@ class EsTecnico(TienePermisoDeRol):
 class EsAdministrador(TienePermisoDeRol):
     roles_permitidos = ("Administrador",)
 
+class EsSupervisorDeTienda(TienePermisoDeRol):
+    roles_permitidos = ("SupervisorTienda",)
+
+
+class EsSupervisorDeCuenta(TienePermisoDeRol):
+    roles_permitidos = ("SupervisorCuenta",)
 
 def tiendas_visibles_para(usuario):
     """
