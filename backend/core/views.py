@@ -37,7 +37,7 @@ class VisitaPoolListView(ListAPIView):
     permission_classes = [EsTecnico]
 
     def get_queryset(self):
-        return Visita.objects.filter(origen="checklist", estado__in=["programada", "en_curso"])
+        return Visita.objects.filter(origen="checklist", tecnico__isnull=True)
 
 
 class VisitaTomarView(APIView):
