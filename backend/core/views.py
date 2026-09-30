@@ -51,7 +51,7 @@ class VisitaPoolListView(ListAPIView):
     serializer_class = VisitaSerializer
     permission_classes = [EsTecnico]
 
-    def get_queryset(self):
+def get_queryset(self):
         asegurar_bolsa_mes_actual()
         return Visita.objects.filter(origen="checklist", tecnico__isnull=True)
 
