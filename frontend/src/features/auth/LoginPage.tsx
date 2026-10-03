@@ -16,7 +16,14 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const passwordId = useId()
-  if (auth.status === 'initializing') return <LoadingState />
+  if (auth.status === 'initializing')
+    return (
+      <LoadingState
+        variant="session"
+        title="Recuperando tu sesión"
+        description="Estamos preparando tu acceso al portal."
+      />
+    )
   if (auth.session) return <Navigate to={roleHomes[auth.session.user.role]} replace />
 
   const submit = async () => {
@@ -86,7 +93,11 @@ export function LoginPage() {
               aria-pressed={showPassword}
               onClick={() => setShowPassword((value) => !value)}
             >
-              {showPassword ? <Eye aria-hidden="true" size={20} /> : <EyeOff aria-hidden="true" size={20} />}
+              {showPassword ? (
+                <Eye aria-hidden="true" size={20} />
+              ) : (
+                <EyeOff aria-hidden="true" size={20} />
+              )}
             </button>
           </div>
           {error && <Alert>{error}</Alert>}

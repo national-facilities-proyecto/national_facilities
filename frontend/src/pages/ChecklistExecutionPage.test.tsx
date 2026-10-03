@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it } from 'vitest'
 import { renderPage } from '../test/render'
-import { createMockRepositories } from '../mocks/repositories'
+import { createMockRepositories } from '../test/doubles/repositories'
 import { VisitEditor } from '../features/checklists/VisitEditor'
 beforeEach(() => {
   localStorage.clear()
@@ -13,6 +13,7 @@ async function page() {
   await repos.checklists.claim(1)
   const store = await repos.stores.get(1)
   await repos.visits.start(1, { ...store, accuracy: 8, capturedAt: Date.now() })
+  await repos.visits.openForm?.(1)
   renderPage(<VisitEditor id={1} origin="checklist" />, repos)
   await screen.findByText('Finalizar checklist')
   return repos

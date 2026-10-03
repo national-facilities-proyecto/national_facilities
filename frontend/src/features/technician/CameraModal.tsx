@@ -90,7 +90,7 @@ function CameraSession({ onClose, onCapture }: Omit<Props, 'open'>) {
         setPhoto({
           id,
           blob,
-          name: `Evidencia ${new Date().toLocaleTimeString('es-PE')}`,
+          name: `evidencia-${id}.jpg`,
           mimeType: blob.type,
           size: blob.size,
           capturedAt: new Date().toISOString(),

@@ -1,5 +1,7 @@
 # Rendimiento y mapas
 
+> Medición histórica del build demo de septiembre de 2026. El runtime vigente usa API real; estas cifras no se presentan como rendimiento actual. Consulta [validación](validation.md) y [README](../README.md).
+
 Medición local del build demo el 09/09/2026, Windows y Node 22.14.0. Los tamaños completos están en [bundle-report.json](bundle-report.json); las cifras Lighthouse, en [lighthouse-summary.json](lighthouse-summary.json).
 
 ## Tamaños de artefactos

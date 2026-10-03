@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 import { LoginPage } from './LoginPage'
 import { renderPage } from '../../test/render'
 import { createHttpRepositories } from '../../services/adapters/httpRepositories'
-import { createMockRepositories } from '../../mocks/repositories'
+import { createMockRepositories } from '../../test/doubles/repositories'
 import { canAccess, normalizeRole, validSession } from './session'
 beforeEach(() => {
   localStorage.clear()
@@ -58,7 +58,7 @@ it('no autoriza tokens de Django sin contrato de usuario', async () => {
   const repos = createHttpRepositories('http://localhost/api')
   await expect(
     repos.auth.login({ kind: 'credentials', username: 'user', password: 'password' }),
-  ).rejects.toMatchObject({ code: 'not_implemented' })
+  ).rejects.toMatchObject({ code: 'network' })
   expect(sessionStorage.getItem('nf:session:api:v1')).toBeNull()
   vi.unstubAllGlobals()
 })

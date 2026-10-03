@@ -1,0 +1,314 @@
+.nf-loading {
+  min-width: 0;
+}
+.nf-query-refresh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #075c78;
+  font-size: 0.8125rem;
+}
+.nf-query-refresh svg {
+  animation: nf-loading-spin 1.2s linear infinite;
+}
+.nf-loading-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 24px;
+}
+.nf-loading-status__icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #d5e8ed;
+  border-radius: 14px;
+  background: #e7f3f6;
+  color: #075c78;
+}
+.nf-loading-status__icon svg {
+  animation: nf-loading-spin 1.2s linear infinite;
+}
+.nf-loading-status__title {
+  margin: 0;
+  color: #172033;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.nf-loading-status__description {
+  margin: 3px 0 0;
+  color: #596579;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.nf-loading-content {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  animation: nf-loading-reveal 180ms ease-out both;
+}
+.nf-skeleton {
+  position: relative;
+  display: block;
+  height: 12px;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #e9eff2;
+}
+.nf-skeleton::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  transform: translateX(-100%);
+  background: linear-gradient(100deg, transparent 15%, #ffffffaa 50%, transparent 85%);
+  animation: nf-loading-sheen 1.9s ease-in-out infinite;
+}
+.nf-skeleton--title {
+  width: 58%;
+  height: 22px;
+}
+.nf-skeleton--line {
+  width: 90%;
+}
+.nf-skeleton--medium {
+  width: 68%;
+}
+.nf-skeleton--short {
+  width: 40%;
+}
+.nf-skeleton--badge {
+  width: 94px;
+  height: 26px;
+  border-radius: 20px;
+}
+.nf-skeleton--button {
+  width: 148px;
+  height: 44px;
+  border-radius: 8px;
+}
+.nf-skeleton--field {
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+}
+.nf-skeleton--textarea {
+  width: 100%;
+  height: 120px;
+  border-radius: 8px;
+}
+.nf-skeleton--metric {
+  width: 100px;
+  height: 42px;
+}
+.nf-loading-card {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid #e0e7eb;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(20 44 57 / 3%);
+}
+.nf-loading-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 6px;
+}
+.nf-loading-fields,
+.nf-loading-filters,
+.nf-loading-metrics {
+  display: grid;
+  min-width: 0;
+  gap: 20px;
+}
+.nf-loading-filters {
+  padding: 16px 0;
+}
+.nf-loading-table {
+  overflow: hidden;
+  border: 1px solid #e0e7eb;
+  border-radius: 12px;
+  background: white;
+}
+.nf-loading-table__row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 100px;
+  align-items: center;
+  gap: 20px;
+  padding: 24px;
+  border-bottom: 1px solid #edf1f3;
+}
+.nf-loading-table__row:last-child {
+  border-bottom: 0;
+}
+.nf-loading-table__row--header {
+  padding-block: 18px;
+  background: #f6f8fa;
+}
+.nf-loading-table__cell {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+.nf-loading-session .nf-loading-status {
+  margin: 8px 0 24px;
+}
+.nf-loading-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #e7f3f6;
+}
+.nf-loading-track::after {
+  display: block;
+  width: 36%;
+  height: 100%;
+  border-radius: inherit;
+  background: #087492;
+  content: '';
+  animation: nf-loading-travel 1.7s ease-in-out infinite;
+}
+.nf-loading--map {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: clamp(260px, 40vh, 400px);
+  padding: 24px;
+  overflow: hidden;
+  border: 1px solid #e0e7eb;
+  border-radius: 12px;
+  background: radial-gradient(ellipse at center, #e7f3f6 0%, #f6f9fa 72%);
+}
+.nf-loading--map .nf-loading-content {
+  order: 0;
+  margin-bottom: 22px;
+}
+.nf-loading--map .nf-loading-status {
+  display: block;
+  order: 1;
+  margin: 0;
+  text-align: center;
+}
+.nf-loading--map .nf-loading-status__icon {
+  display: none;
+}
+.nf-loading-map-mark {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border: 1px solid #cce3ea;
+  border-radius: 24px;
+  background: #ffffffd9;
+  box-shadow:
+    0 0 0 10px #e7f3f680,
+    0 0 0 22px #e7f3f640;
+  color: #087492;
+}
+.nf-map-loading-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.nf-map-loading-heading .nf-skeleton {
+  width: 130px;
+}
+.nf-evidence-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  border: 1px solid #e0e7eb;
+  border-radius: 8px;
+  background: #f1f6f8;
+  color: #596579;
+}
+.nf-evidence-placeholder p {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+.nf-evidence-placeholder .nf-skeleton {
+  width: 45%;
+}
+@keyframes nf-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes nf-loading-sheen {
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes nf-loading-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes nf-loading-travel {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(380%);
+  }
+}
+@media (min-width: 640px) {
+  .nf-loading-fields,
+  .nf-loading-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .nf-loading-filters {
+    grid-template-columns: 1fr 1fr 148px;
+  }
+}
+@media (max-width: 639px) {
+  .nf-loading-card {
+    padding: 20px;
+  }
+  .nf-loading-table__row {
+    grid-template-columns: 1fr 90px;
+    gap: 16px;
+    padding: 20px;
+  }
+  .nf-loading-table__row > :nth-child(2) {
+    display: none;
+  }
+  .nf-loading-table__row--header {
+    padding-block: 18px;
+  }
+  .nf-loading-filters {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .nf-loading-filters > :last-child {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nf-query-refresh svg,
+  .nf-skeleton::after,
+  .nf-loading-status__icon svg,
+  .nf-loading-content,
+  .nf-loading-track::after {
+    animation: none;
+  }
+}

@@ -4,7 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './map.css'
 import type { Store } from '../../types/models'
-import { Button } from '../../components/ui'
+import { Button, LoadingState } from '../../components/ui'
 import { requestLocation } from '../geolocation/location'
 import { createOpenFreeMapLayer } from './openFreeMap'
 const icon = L.divIcon({
@@ -53,7 +53,10 @@ export function OpenFreeMapLayer({
       failed = true
       onError(message)
     }
-    const timer = setTimeout(() => fail('Tiempo de espera agotado al cargar el mapa base.'), timeoutMs)
+    const timer = setTimeout(
+      () => fail('Tiempo de espera agotado al cargar el mapa base.'),
+      timeoutMs,
+    )
     void createOpenFreeMapLayer()
       .then((createdLayer) => {
         layer = createdLayer
@@ -143,9 +146,13 @@ export function AssignedLocationsMap({
           )}
         </MapContainer>
         {state !== 'ready' && (
-          <div className="nf-map-status" role={state === 'error' ? 'alert' : 'status'}>
+          <div className="nf-map-status" role={state === 'error' ? 'alert' : undefined}>
             {state === 'loading' ? (
-              'Cargando mapa…'
+              <LoadingState
+                variant="map"
+                title="Cargando mapa"
+                description="Puedes continuar desde la lista mientras se carga."
+              />
             ) : (
               <>
                 <p>Mapa no disponible. Puedes continuar desde la lista de tiendas.</p>

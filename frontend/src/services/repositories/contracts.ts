@@ -11,11 +11,17 @@ import type {
   Priority,
   User,
   Visit,
+  Catalogs,
 } from '../../types/models'
 export type LoginInput =
   { kind: 'credentials'; username: string; password: string } | { kind: 'demo'; userId: number }
 export type RequestOptions = { signal?: AbortSignal }
-export type DraftInput = { answers: Answer[]; workDescription: string; evidenceIds: string[] }
+export type DraftInput = {
+  answers: Answer[]
+  workDescription: string
+  evidenceIds: string[]
+  revision?: number
+}
 export type TicketInput = {
   category: string
   priority: Priority
@@ -27,10 +33,15 @@ export interface AuthRepository {
   login(input: LoginInput): Promise<Session>
   restore(): Promise<Session | null>
   logout(): Promise<void>
-  changePassword(password: string): Promise<Session>
-  demoUsers(): Promise<User[]>
+  changePassword(
+    password: string,
+    currentPassword?: string,
+    confirmation?: string,
+  ): Promise<Session>
+  refresh?(): Promise<Session | null>
 }
 export interface ChecklistRepository {
+  generate?(): Promise<void>
   list(options?: RequestOptions): Promise<Visit[]>
   get(id: number, options?: RequestOptions): Promise<Visit>
   claim(id: number): Promise<Visit>
@@ -40,12 +51,23 @@ export interface VisitRepository {
   list(options?: RequestOptions): Promise<Visit[]>
   get(id: number, options?: RequestOptions): Promise<Visit>
   start(id: number, location: Coordinates): Promise<Visit>
+  openForm?(id: number): Promise<Visit>
+  recordEndGps?(id: number, location: Coordinates): Promise<Visit>
+  submitReview?(id: number, input: import('../../types/models').ReviewSubmission): Promise<Visit>
   complete(id: number, location: Coordinates): Promise<Visit>
   requestException(id: number, reason: string, failure: string): Promise<Visit>
   requestTimeException(id: number, reason: string): Promise<Visit>
-  reviewException(id: number, approved: boolean, reason: string): Promise<Visit>
+  reviewException(
+    id: number,
+    approved: boolean,
+    reason: string,
+    exceptionId?: number,
+    versions?: { revision: number; exceptionRevision: number },
+  ): Promise<Visit>
 }
 export interface TicketRepository {
+  catalogs?(): Promise<Catalogs>
+  close?(id: number): Promise<Ticket>
   list(options?: RequestOptions): Promise<Ticket[]>
   get(id: number, options?: RequestOptions): Promise<Ticket>
   create(input: TicketInput): Promise<Ticket>
@@ -55,6 +77,7 @@ export interface TicketRepository {
     scheduledAt: string,
     priority: Priority,
     reason: string,
+    revision?: number,
   ): Promise<Ticket>
 }
 export interface StoreRepository {
@@ -65,13 +88,14 @@ export interface UserRepository {
   list(options?: RequestOptions): Promise<User[]>
 }
 export interface DashboardRepository {
-  get(options?: RequestOptions): Promise<Dashboard>
+  get(options?: RequestOptions & { period?: string; clientId?: number }): Promise<Dashboard>
 }
 export interface AdministrationRepository {
   list<K extends AdminKind>(kind: K, options?: RequestOptions): Promise<AdminEntities[K][]>
   save<K extends AdminKind>(kind: K, entity: AdminEntities[K]): Promise<AdminEntities[K]>
 }
 export interface EvidenceRepository {
+  listTemporary(): Promise<string[]>
   put(evidence: Evidence): Promise<void>
   get(id: string): Promise<Evidence | undefined>
   remove(id: string): Promise<void>
@@ -88,5 +112,9 @@ export interface Repositories {
   dashboard: DashboardRepository
   administration: AdministrationRepository
   evidence: EvidenceRepository
+  reports?: {
+    list(period: string, clientId?: number): Promise<Visit[]>
+    export(period: string, clientId?: number): Promise<Blob>
+  }
   demo?: { reset(): Promise<void>; setScenario(value: MockScenario): void }
 }

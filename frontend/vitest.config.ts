@@ -11,7 +11,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary', 'html'],
       include: [
-        'src/mocks/**/*.ts',
+        'src/services/adapters/mappers.ts',
+        'src/services/http/client.ts',
         'src/features/auth/session.ts',
         'src/features/checklists/validation.ts',
         'src/features/geolocation/location.ts',

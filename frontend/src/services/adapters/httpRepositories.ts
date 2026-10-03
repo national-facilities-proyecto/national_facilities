@@ -1,127 +1,358 @@
 import type { Repositories } from '../repositories/contracts'
-import type { Session, Store } from '../../types/models'
+import type { Session, AdminKind, AdminEntities, Catalogs } from '../../types/models'
 import { AppError } from '../errors'
-import { API_SESSION_KEY, createHttpClient } from '../http/client'
-import { clearNfSession, normalizeRole, validSession } from '../../features/auth/session'
-async function pending(): Promise<never> {
-  throw new AppError(
-    'not_implemented',
-    'Esta operación requiere un contrato de API pendiente de integración. Consulta la documentación del frontend.',
-  )
+import { createHttpClient, savedSession, persistSession } from '../http/client'
+import { clearNfSession, validSession } from '../../features/auth/session'
+import {
+  mapStore,
+  mapUser,
+  mapVisit,
+  mapTicket,
+  mapClient,
+  mapContract,
+  mapTemplate,
+  mapEvidence,
+  mapCatalogs,
+  mapDashboard,
+  object,
+  rows,
+  number,
+  string,
+} from './mappers'
+export { mapStore } from './mappers'
+
+const paths: Record<AdminKind, string> = {
+  users: 'usuarios',
+  stores: 'tiendas',
+  clients: 'clientes',
+  contracts: 'contratos',
+  templates: 'plantillas',
 }
-export function mapStore(value: unknown): Store {
-  if (!value || typeof value !== 'object')
-    throw new AppError('network', 'Formato de tienda incompatible.')
-  const item = value as Record<string, unknown>
-  const latitude = Number(item.latitud)
-  const longitude = Number(item.longitud)
-  if (
-    typeof item.id !== 'number' ||
-    typeof item.nombre !== 'string' ||
-    typeof item.direccion !== 'string' ||
-    typeof item.cliente !== 'number' ||
-    !Number.isFinite(latitude) ||
-    !Number.isFinite(longitude)
-  )
-    throw new AppError('network', 'Formato de tienda incompatible.')
-  return {
-    id: item.id,
-    name: item.nombre,
-    address: item.direccion,
-    clientId: item.cliente,
-    latitude,
-    longitude,
-    active: true,
-    contact: 'Contacto no disponible',
+const mappers: { [K in AdminKind]: (v: unknown) => AdminEntities[K] } = {
+  users: mapUser,
+  stores: mapStore,
+  clients: mapClient,
+  contracts: mapContract,
+  templates: mapTemplate,
+}
+function mapSession(raw: unknown): Session {
+  const v = object(raw)
+  const session = {
+    access: string(v.access),
+    refresh: string(v.refresh),
+    expiresAt: number(v.expiresAt),
+    user: mapUser(v.user),
+    source: 'api' as const,
   }
+  if (!validSession(session))
+    throw new AppError('unauthorized', 'La cuenta no tiene una sesión y un rol activos.')
+  return session
 }
 export function createHttpRepositories(apiUrl: string): Repositories {
   const request = createHttpClient(apiUrl)
+  const pendingKeys = new Map<string, string>()
+  const mutate = async (
+    path: string,
+    body: unknown = {},
+    method = 'POST',
+    notify = true,
+  ): Promise<unknown> => {
+    const serialized = JSON.stringify(body)
+    const signature = apiUrl + savedSession()?.user.id + method + path + serialized
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signature))
+    const storageKey =
+      'nf:operation:' +
+      Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+    // Solo conserva un identificador de reintento; no guarda contenido operativo.
+    const key =
+      pendingKeys.get(signature) ?? sessionStorage.getItem(storageKey) ?? crypto.randomUUID()
+    pendingKeys.set(signature, key)
+    sessionStorage.setItem(storageKey, key)
+    try {
+      const raw = await request(path, {
+        method,
+        body: serialized,
+        headers: { 'Idempotency-Key': key },
+      })
+      if (path.startsWith('/visitas/')) mapVisit(raw)
+      if (path.startsWith('/tickets/')) mapTicket(raw)
+      for (const kind of ['users', 'stores', 'clients', 'contracts', 'templates'] as const) {
+        if (path.startsWith('/admin/' + paths[kind] + '/')) mappers[kind](raw)
+      }
+      pendingKeys.delete(signature)
+      sessionStorage.removeItem(storageKey)
+      if (notify) window.dispatchEvent(new Event('nf:data'))
+      return raw
+    } catch (error) {
+      // Errores con respuesta clara permiten una operación distinta. Un timeout conserva la clave.
+      if (error instanceof AppError && error.status && error.status < 500) {
+        pendingKeys.delete(signature)
+        sessionStorage.removeItem(storageKey)
+      }
+      throw error
+    }
+  }
+  const catalogs = async (): Promise<Catalogs> => mapCatalogs(await request('/catalogos/'))
+  const priorityId = async (name: string) => {
+    const catalog = await catalogs()
+    const priority = catalog.priorities.find((p) => p.name === name)
+    if (!priority)
+      throw new AppError('validation', 'Selecciona una prioridad vigente del catálogo.')
+    return priority.id
+  }
   return {
     source: 'api',
     auth: {
       async login(input) {
         if (input.kind !== 'credentials')
-          throw new AppError('forbidden', 'Las cuentas demo no están disponibles en modo API.')
-        const raw = await request('/auth/login/', {
-          method: 'POST',
-          body: JSON.stringify({ username: input.username, password: input.password }),
-        })
-        if (!raw || typeof raw !== 'object')
-          throw new AppError('network', 'Respuesta de autenticación incompatible.')
-        const data = raw as Record<string, unknown>
-        if (!data.user || typeof data.user !== 'object')
-          throw new AppError(
-            'not_implemented',
-            'Django entrega tokens, pero falta el contrato de usuario y rol. Se requiere login extendido o /auth/me/ antes de habilitar el portal API.',
-          )
-        const user = data.user as Record<string, unknown>
-        const role = normalizeRole(user.role ?? data.role)
-        const session: unknown = {
-          access: data.access,
-          refresh: data.refresh,
-          user: { ...user, role },
-          source: 'api',
-          expiresAt: data.expiresAt,
-        }
-        if (!validSession(session))
-          throw new AppError(
-            'unauthorized',
-            'La sesión recibida no contiene usuario, rol y vencimiento válidos.',
-          )
+          throw new AppError('validation', 'Ingresa tus credenciales.')
+        const session = mapSession(
+          await request('/auth/login/', {
+            method: 'POST',
+            body: JSON.stringify({ username: input.username, password: input.password }),
+          }),
+        )
         clearNfSession()
-        sessionStorage.setItem(API_SESSION_KEY, JSON.stringify(session))
+        persistSession(session)
         return session
       },
       async restore() {
-        const raw = sessionStorage.getItem(API_SESSION_KEY)
-        if (!raw) return null
-        let session: unknown
-        try {
-          session = JSON.parse(raw)
-        } catch {
-          throw new AppError('unauthorized', 'Sesión no válida.')
-        }
-        if (!validSession(session) || session.source !== 'api' || session.expiresAt <= Date.now())
-          throw new AppError('unauthorized', 'La sesión ha expirado.')
+        const current = savedSession()
+        if (!current) return null
+        const user = mapUser(await request('/auth/me/'))
+        const updated = savedSession()
+        if (!updated) return null
+        const session = { ...updated, user }
+        persistSession(session)
         return session
       },
+      async refresh() {
+        return await request.refresh()
+      },
       async logout() {
+        await request('/auth/logout/', { method: 'POST', body: '{}' })
         clearNfSession()
       },
-      changePassword: pending,
-      async demoUsers() {
-        return []
+      async changePassword(password, currentPassword = '', confirmation = password) {
+        const session = mapSession(
+          await request('/auth/password/', {
+            method: 'POST',
+            body: JSON.stringify({ password, currentPassword, confirmation }),
+          }),
+        )
+        persistSession(session)
+        return session
       },
     },
     stores: {
       async list(options) {
-        const data = await request('/tiendas/', { signal: options?.signal })
-        const rows = Array.isArray(data)
-          ? data
-          : data && typeof data === 'object' && 'results' in data
-            ? data.results
-            : null
-        if (!Array.isArray(rows)) throw new AppError('network', 'Formato de tiendas incompatible.')
-        return rows.map(mapStore)
+        return rows(await request('/tiendas/', { signal: options?.signal })).map(mapStore)
       },
-      get: pending,
+      async get(id, options) {
+        return mapStore(await request('/tiendas/' + id + '/', { signal: options?.signal }))
+      },
     },
-    checklists: { list: pending, get: pending, claim: pending, saveDraft: pending },
+    checklists: {
+      async generate() {
+        await mutate('/checklists/generar/', {}, 'POST', false)
+      },
+      async list(options) {
+        return rows(await request('/checklists/', { signal: options?.signal })).map(mapVisit)
+      },
+      async get(id, options) {
+        return mapVisit(await request('/visitas/' + id + '/', { signal: options?.signal }))
+      },
+      async claim(id) {
+        return mapVisit(await mutate('/visitas/pool/' + id + '/tomar/'))
+      },
+      async saveDraft(id, input) {
+        return mapVisit(
+          await mutate('/visitas/' + id + '/borrador/', {
+            ...input,
+            revision: input.revision ?? 0,
+          }),
+        )
+      },
+    },
     visits: {
-      list: pending,
-      get: pending,
-      start: pending,
-      complete: pending,
-      requestException: pending,
-      requestTimeException: pending,
-      reviewException: pending,
+      async list(options) {
+        return rows(await request('/visitas/programadas/', { signal: options?.signal })).map(
+          mapVisit,
+        )
+      },
+      async get(id, options) {
+        return mapVisit(await request('/visitas/' + id + '/', { signal: options?.signal }))
+      },
+      async start(id, location) {
+        return mapVisit(await mutate('/visitas/' + id + '/iniciar/', { location }))
+      },
+      async openForm(id) {
+        return mapVisit(await mutate('/visitas/' + id + '/formulario/'))
+      },
+      async recordEndGps(id, location) {
+        return mapVisit(await mutate('/visitas/' + id + '/ubicacion-cierre/', { location }))
+      },
+      async submitReview(id, input) {
+        return mapVisit(await mutate('/visitas/' + id + '/enviar-revision/', input))
+      },
+      async complete(id, location) {
+        return mapVisit(await mutate('/visitas/' + id + '/finalizar/', { location }))
+      },
+      async requestException(id, reason, failure) {
+        return mapVisit(
+          await mutate('/visitas/' + id + '/excepciones/', { type: 'location', reason, failure }),
+        )
+      },
+      async requestTimeException(id, reason) {
+        return mapVisit(
+          await mutate('/visitas/' + id + '/excepciones/', { type: 'time_limit', reason }),
+        )
+      },
+      async reviewException(id, approved, reason, exceptionId, versions) {
+        if (!exceptionId || !versions)
+          throw new AppError('validation', 'Selecciona la excepción que vas a revisar.')
+        return mapVisit(
+          await mutate('/visitas/' + id + '/revisar/', {
+            approved,
+            reason,
+            exceptionId,
+            ...versions,
+          }),
+        )
+      },
     },
-    tickets: { list: pending, get: pending, create: pending, schedule: pending },
-    users: { list: pending },
-    dashboard: { get: pending },
-    administration: { list: pending, save: pending },
-    evidence: { put: pending, get: pending, remove: pending },
+    tickets: {
+      catalogs,
+      async list(options) {
+        return rows(await request('/tickets/', { signal: options?.signal })).map(mapTicket)
+      },
+      async get(id, options) {
+        return mapTicket(await request('/tickets/' + id + '/', { signal: options?.signal }))
+      },
+      async create(input) {
+        const catalog = await catalogs()
+        const category = catalog.categories.find((c) => c.name === input.category)
+        const priority = catalog.priorities.find((p) => p.name === input.priority)
+        if (!category || !priority)
+          throw new AppError('validation', 'Selecciona categoría y prioridad del catálogo vigente.')
+        return mapTicket(
+          await mutate('/tickets/', {
+            storeId: input.storeId,
+            categoryId: category.id,
+            priorityId: priority.id,
+            description: input.description,
+            evidenceIds: input.evidenceIds,
+          }),
+        )
+      },
+      async schedule(id, technicianId, scheduledAt, priority, reason, revision) {
+        const raw = await mutate('/tickets/' + id + '/programar/', {
+          technicianId,
+          scheduledAt: new Date(scheduledAt).toISOString(),
+          priorityId: await priorityId(priority),
+          reason,
+          revision: revision ?? 0,
+        })
+        return mapTicket(raw)
+      },
+      async close(id) {
+        return mapTicket(await mutate('/tickets/' + id + '/cerrar/'))
+      },
+    },
+    users: {
+      async list(options) {
+        return rows(await request('/usuarios/', { signal: options?.signal })).map(mapUser)
+      },
+    },
+    dashboard: {
+      async get(options) {
+        const query = new URLSearchParams()
+        if (options?.period) query.set('period', options.period)
+        if (options?.clientId) query.set('clientId', String(options.clientId))
+        return mapDashboard(
+          await request('/dashboard/?' + query.toString(), { signal: options?.signal }),
+        )
+      },
+    },
+    reports: {
+      async list(period, clientId) {
+        return rows(
+          await request(
+            '/reportes/?' +
+              new URLSearchParams({
+                period,
+                ...(clientId ? { clientId: String(clientId) } : {}),
+              }).toString(),
+          ),
+        ).map(mapVisit)
+      },
+      async export(period, clientId) {
+        const data = await request(
+          '/reportes/exportar/?' +
+            new URLSearchParams({
+              period,
+              ...(clientId ? { clientId: String(clientId) } : {}),
+            }).toString(),
+          {},
+          'blob',
+        )
+        if (!(data instanceof Blob)) throw new AppError('network', 'Exportación incompatible.')
+        return data
+      },
+    },
+    administration: {
+      async list<K extends AdminKind>(
+        kind: K,
+        options?: { signal?: AbortSignal },
+      ): Promise<AdminEntities[K][]> {
+        return rows(await request('/admin/' + paths[kind] + '/', { signal: options?.signal })).map(
+          mappers[kind],
+        )
+      },
+      async save<K extends AdminKind>(
+        kind: K,
+        entity: AdminEntities[K],
+      ): Promise<AdminEntities[K]> {
+        const { id, ...fields } = entity
+        const body = 'endDate' in fields ? { ...fields, endDate: fields.endDate || null } : fields
+        const raw = await mutate(
+          '/admin/' + paths[kind] + '/' + (id ? id + '/' : ''),
+          body,
+          id ? 'PUT' : 'POST',
+        )
+        const current = savedSession()
+        if (kind === 'users' && id === current?.user.id)
+          persistSession({ ...current, user: mapUser(raw) })
+        return mappers[kind](raw)
+      },
+    },
+    evidence: {
+      async listTemporary() {
+        return rows(await request('/evidencias/')).map((raw) => mapEvidence(raw).id)
+      },
+      async put(evidence) {
+        const data = new FormData()
+        data.set('id', evidence.id)
+        data.set('foto', evidence.blob, evidence.name)
+        data.set('source', evidence.source)
+        if (evidence.capturedAt) data.set('capturedAt', evidence.capturedAt)
+        if (evidence.taskId !== undefined) data.set('taskId', String(evidence.taskId))
+        if (evidence.visitId !== undefined) data.set('visitId', String(evidence.visitId))
+        const meta = mapEvidence(await request('/evidencias/', { method: 'POST', body: data }))
+        if (meta.id !== evidence.id)
+          throw new AppError('network', 'El servidor devolvió otro identificador de evidencia.')
+      },
+      async get(id) {
+        const meta = mapEvidence(await request('/evidencias/' + id + '/'))
+        const blob = await request('/evidencias/' + id + '/archivo/', {}, 'blob')
+        if (!(blob instanceof Blob))
+          throw new AppError('network', 'La fotografía recibida es incompatible.')
+        return { ...meta, blob }
+      },
+      async remove(id) {
+        await request('/evidencias/' + id + '/', { method: 'DELETE' })
+      },
+    },
   }
 }
 export type ApiLoginContract = Session

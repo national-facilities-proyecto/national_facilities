@@ -1,35 +1,44 @@
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin
-
-from .models import (
-    Rol, Usuario, Cliente, Tienda, AsignacionTienda, PlantillaChecklist, ItemPlantilla,
-    Contrato, Visita, Checklist, RespuestaItem, Evidencia,
-    CategoriaProblema, NivelUrgencia, Ticket, ReasignacionTicket,
-)
+from django.core.exceptions import PermissionDenied
+from . import models
+from .permissions import rol_de
 
 
-class UsuarioAdmin(UserAdmin):
-    fieldsets = UserAdmin.fieldsets + (
-        ("Datos adicionales", {"fields": ("rol", "telefono")}),
-    )
-    add_fieldsets = UserAdmin.add_fieldsets + (
-        ("Datos adicionales", {"fields": ("rol", "telefono")}),
-    )
+class InspectionSite(admin.AdminSite):
+    def has_permission(self, request):
+        return (super().has_permission(request) and request.user.password_initialized
+                and rol_de(request.user) == "administrator")
+
+    def password_change(self, request, extra_context=None):
+        raise PermissionDenied("Cambia la contraseña desde el portal para validar y revocar las sesiones correctamente.")
 
 
-admin.site.register(Rol)
-admin.site.register(Usuario, UsuarioAdmin)
-admin.site.register(Cliente)
-admin.site.register(Tienda)
-admin.site.register(AsignacionTienda)
-admin.site.register(PlantillaChecklist)
-admin.site.register(ItemPlantilla)
-admin.site.register(Contrato)
-admin.site.register(Visita)
-admin.site.register(Checklist)
-admin.site.register(RespuestaItem)
-admin.site.register(Evidencia)
-admin.site.register(CategoriaProblema)
-admin.site.register(NivelUrgencia)
-admin.site.register(Ticket)
-admin.site.register(ReasignacionTicket)
+inspection_site = InspectionSite(name="admin")
+
+
+class InspectionAdmin(admin.ModelAdmin):
+    """El portal/API centraliza las escrituras y su auditoría; aquí se inspeccionan."""
+
+    def has_view_permission(self, request, obj=None):
+        return (request.user.is_active and request.user.is_staff
+                and request.user.password_initialized
+                and rol_de(request.user) == "administrator")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+for model in (
+    models.Rol, models.Usuario, models.Cliente, models.Tienda, models.AsignacionTienda,
+    models.PlantillaChecklist, models.ItemPlantilla, models.Contrato, models.Visita,
+    models.Checklist, models.RespuestaItem, models.Evidencia, models.CategoriaProblema,
+    models.NivelUrgencia, models.Ticket, models.ReasignacionTicket, models.Excepcion,
+    models.Evento, models.Operacion,
+):
+    inspection_site.register(model, InspectionAdmin)

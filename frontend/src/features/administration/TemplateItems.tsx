@@ -81,7 +81,7 @@ export function TemplateItems({
           setTasks((current) => [
             ...current,
             {
-              id: Math.max(0, ...current.map((task) => task.id)) + 1,
+              id: Math.min(0, ...current.map((task) => task.id)) - 1,
               title: '',
               active: true,
               photoRequired: true,

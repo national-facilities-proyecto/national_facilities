@@ -5,6 +5,9 @@
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+.integration/
+frontend/.npm-cache/
 backend/staticfiles/
 backend/media/
 backend/*.sqlite3

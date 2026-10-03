@@ -1,5 +1,7 @@
 # Refactorización frontend — registro de trabajo
 
+> Registro histórico de septiembre de 2026. La integración actual sí modifica backend, reemplaza el runtime demo y añade recuperación y API real. El estado vigente está en [validación](validation.md), [contratos](backend-contracts.md) y [matriz de integración](../../docs/integration/view-endpoint-matrix.md). Las afirmaciones y pruebas de este documento describen solo aquella fecha.
+
 Fecha de auditoría: 09/09/2026. Alcance: frontend, su documentación y workflow de validación. No se modificó `backend/`, no se hizo commit, push ni merge.
 
 ## Línea base

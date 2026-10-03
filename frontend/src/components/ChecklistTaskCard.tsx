@@ -11,6 +11,7 @@ export function ChecklistTaskCard({
   onCamera,
   onGallery,
   onRemove,
+  onNotApplicable,
 }: {
   task: ChecklistTask
   order: number
@@ -20,6 +21,7 @@ export function ChecklistTaskCard({
   onCamera(this: void): void
   onGallery?(this: void): void
   onRemove(this: void, id: string): void
+  onNotApplicable?(this: void): void
 }) {
   return (
     <article className="nf-task">
@@ -45,6 +47,15 @@ export function ChecklistTaskCard({
         >
           ! No conforme
         </Button>
+        {onNotApplicable && (
+          <Button
+            variant="secondary"
+            aria-pressed={answer?.result === 'no_aplica'}
+            onClick={onNotApplicable}
+          >
+            No aplica
+          </Button>
+        )}
       </div>
       {answer?.observation && (
         <p>

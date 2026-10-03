@@ -9,9 +9,10 @@ import {
 } from 'react-router-dom'
 import type { UserRole } from './types/models'
 import { useAuth } from './features/auth/AuthProvider'
-import { canAccess, roleHomes } from './features/auth/session'
+import { roleHomes } from './features/auth/session'
 import PortalLayout from './layouts/PortalLayout'
 import { LoadingState } from './components/ui'
+import { SessionRecovery } from './features/auth/SessionRecovery'
 import { ErrorBoundary } from './components/feedback/ErrorBoundary'
 const Login = lazy(async () => ({ default: (await import('./features/auth/LoginPage')).LoginPage }))
 const Password = lazy(() => import('./features/auth/PasswordPage'))
@@ -29,6 +30,7 @@ const Completed = lazy(() => import('./pages/TechnicalSupervisorCompletedPage'))
 const ReviewList = lazy(() => import('./pages/TechnicalSupervisorChecklistsPage'))
 const Review = lazy(() => import('./pages/TechnicalSupervisorChecklistDetailPage'))
 const Admin = lazy(() => import('./features/administration/AdministrationPage'))
+const Reports = lazy(() => import('./pages/ReportsPage'))
 function Root() {
   const location = useLocation()
   useEffect(() => {
@@ -43,24 +45,43 @@ function Root() {
   }, [location.pathname])
   return (
     <ErrorBoundary>
-      <Suspense fallback={<LoadingState />}>
+      <Suspense
+        fallback={
+          <LoadingState
+            variant="session"
+            title="Preparando tu portal"
+            description="Estamos cargando tu espacio de trabajo."
+          />
+        }
+      >
         <Outlet />
       </Suspense>
+      <SessionRecovery />
     </ErrorBoundary>
   )
 }
 export function RoleGuard({ allowed }: { allowed: UserRole[] }) {
   const { session, status } = useAuth()
-  if (status === 'initializing') return <LoadingState />
+  const location = useLocation()
+  if (status === 'initializing')
+    return (
+      <LoadingState
+        variant="session"
+        title="Recuperando tu sesión"
+        description="Estamos preparando tu acceso al portal."
+      />
+    )
   if (!session)
     return <Navigate to={status === 'expired' ? '/session-expired' : '/login'} replace />
-  if (!canAccess(session, allowed)) return <Navigate to="/403" replace />
+  if (!allowed.includes(session.user.role)) return <Navigate to="/403" replace />
+  if (!session.user.passwordInitialized && location.pathname !== '/profile/password')
+    return <Navigate to="/profile/password" replace />
   return <Outlet />
 }
 function Home() {
   const { session, status } = useAuth()
   return status === 'initializing' ? (
-    <LoadingState />
+    <LoadingState variant="session" title="Preparando tu portal" />
   ) : (
     <Navigate to={session ? roleHomes[session.user.role] : '/login'} replace />
   )
@@ -129,6 +150,7 @@ const router = createBrowserRouter([
                 element: <RoleGuard allowed={['account_supervisor']} />,
                 children: [
                   { path: '/technical-supervisor/visits', element: <Scheduling /> },
+                  { path: '/technical-supervisor/reports', element: <Reports /> },
                   { path: '/technical-supervisor/incidents/:id', element: <Incident /> },
                   { path: '/technical-supervisor/incidents/completed', element: <Completed /> },
                   { path: '/technical-supervisor/checklists', element: <ReviewList /> },

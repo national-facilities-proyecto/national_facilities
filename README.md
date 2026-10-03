@@ -1,146 +1,92 @@
-# National Facilities — Sistema de Gestión de Checklists, Rutas y Tickets
+# National Facilities — Checklists, rutas y tickets
 
-Proyecto del curso **Curso Integrador 2 — Software**.
-Sistema web para la gestión de visitas técnicas, checklists con evidencia verificable y tickets de atención para National Facilities.
+Proyecto del curso Curso Integrador 2 — Software. Portal de mantenimiento para cadenas de retail: técnicos, supervisores de tienda, supervisores de cuenta y administradores.
 
----
+React consume exclusivamente Django/DRF y PostgreSQL. Las visitas, respuestas, tickets, archivos, asignaciones y decisiones se guardan en el servidor. No hay modo demo, cuentas ficticias ni datos operativos locales en el funcionamiento normal. Los dobles permanecen únicamente en tests.
 
-## Problema que resuelve
+## Operación
 
-National Facilities brinda servicios de mantenimiento a cadenas de retail bajo contrato, entre ellas la cuenta MASS, sobre la cual se desarrolla este proyecto. La operación actual presenta tres problemas críticos:
+El técnico toma un checklist de la bolsa mensual o atiende un ticket programado. **Iniciar** valida asignación, estado y GPS y registra el inicio real del trabajo. Muestra tareas y tiempo transcurrido, sin abrir el formulario ni limitar el trabajo a cinco minutos.
 
-1. **Checklists sin evidencia verificable:** no existe forma de comprobar que el técnico visitó físicamente la tienda ni de garantizar que las fotografías correspondan a la visita reportada; se han detectado reportes con fotografías reutilizadas.
-2. **Solicitudes sin trazabilidad:** los supervisores de tienda reportan incidencias por WhatsApp o correo, canales donde los pedidos se pierden o no se atienden a tiempo.
-3. **Programación manual de rutas:** las rutas se elaboran en Excel y se distribuyen vía Power BI, un proceso lento, dependiente de personas y poco usable en campo.
+**Registrar resultados / resolución** registra la primera apertura y un único vencimiento a cinco minutos, tanto para checklist como para ticket. Las respuestas, observaciones, descripción y fotos se guardan en el servidor. Se admiten cámara y galería; la fecha de subida es del servidor y una fecha de captura no disponible queda nula.
 
-## Solución
+Cerrar la página, cambiar de dispositivo o volver a autenticarse recupera el estado confirmado y conserva el plazo original. Los cambios aún no confirmados permanecen en el editor mientras la página siga abierta; no se anuncian como guardados. Al vencer, el cierre normal se bloquea, se conserva el contenido y se permite justificar. Tiempo y GPS se revisan por separado. El cumplimiento exige una finalización aceptada.
 
-Aplicación web con cuatro módulos:
+Los tickets conservan reporte original, programación y sus cambios, trabajo técnico, evidencias y eventos. Las plantillas, datos de ubicación y radio se fijan en la visita para proteger el historial. Las escrituras operativas pasan por servicios transaccionales, restricciones e idempotencia.
 
-- **Checklist y evidencia:** bolsa de trabajo mensual compartida entre los técnicos de la cuenta. El checklist mensual no se programa ni se asigna: todos los técnicos ven las tiendas pendientes y la primera persona que toma una la retira para los demás. Incluye captura fotográfica en vivo (sin acceso a galería) y validación de proximidad geográfica al iniciar y al cerrar.
-- **Tickets ("prontos"):** el supervisor de tienda genera las solicitudes desde el sistema; el supervisor de cuenta las asigna a un técnico y programa su atención, con seguimiento de estado e historial de reasignaciones.
-- **Prontos asignados y mapa:** a diferencia del checklist, los prontos sí llevan técnico y fecha. El técnico los visualiza clasificados en atrasados, del día y futuros, y ve las ubicaciones en un mapa.
-- **Panel de trazabilidad:** indicadores de cumplimiento de checklist, mínimo de intervenciones mensuales, tickets atendidos y tiempos de respuesta, para el supervisor de cuenta.
+## Estado y decisiones pendientes
 
-## Roles del sistema
+La [matriz de vistas](docs/integration/view-endpoint-matrix.md) identifica cada conexión, permiso, validación y comprobación. Las visitas mensuales son independientes por tienda y pueden repetir técnico; un reclamo sin iniciar se libera automáticamente a las dos horas. Cada tienda requiere además dos atenciones de tickets al mes; el checklist se cuenta por separado. El administrador asigna las tiendas del técnico y solo se reasigna un ticket Pendiente. Contratos simultáneos del mismo cliente están prohibidos. El [registro de decisiones](docs/integration/decisions-pending.md) recoge las reglas confirmadas: SLA aplazado e importación de trabajos previos al lanzamiento fuera del alcance.
 
-| Rol | Descripción |
-|---|---|
-| Técnico de campo | Toma checklists de la bolsa compartida y atiende los prontos asignados |
-| Supervisor de cuenta | Asigna técnico y fecha a los prontos, valida excepciones de ubicación y da seguimiento |
-| Supervisor de tienda (cliente) | Genera tickets ("prontos") de atención para su local y consulta su estado |
-| Administrador | Gestiona usuarios, tiendas, contratos y catálogos por cliente |
+Los resultados y límites de verificación están en [validación](frontend/docs/validation.md). No equivalen a un despliegue validado en Google Cloud.
 
-La gerencia de operaciones no accede al sistema: recibe la información mediante el reporte del supervisor de cuenta.
+## Tecnología
 
-## Stack tecnológico
+| Capa                     | Implementación                                                                            |
+| ------------------------ | ----------------------------------------------------------------------------------------- |
+| Frontend                 | React, TypeScript estricto, Vite, Tailwind, Node 22.14                                    |
+| Backend                  | Python 3.13 probado, Django 5.2, DRF, JWT con renovación y revocación                     |
+| Persistencia             | PostgreSQL; Compose/CI usan 16, comprobación local con 18                                 |
+| Evidencias               | Archivos privados con acceso autorizado; volumen local duradero o Google Cloud Storage    |
+| Mapas                    | Leaflet + OpenFreeMap, carga diferida y error visible                                     |
+| Infraestructura prevista | Cloud Run + Cloud SQL + Cloud Storage, [ADR-007](docs/decisions/007-proveedor-de-nube.md) |
 
-| Capa | Tecnología |
-|---|---|
-| Frontend | React + TypeScript + Vite + Tailwind CSS |
-| Backend | Python 3.12 + Django 5 + Django REST Framework |
-| Base de datos | PostgreSQL 16 |
-| Mapas | Leaflet + OpenFreeMap (datos de OpenStreetMap) |
-| Contenedores | Docker + Docker Compose |
-| Infraestructura | Google Cloud — Cloud Run + Cloud SQL (PostgreSQL) + Cloud Storage |
-| Gestión | Jira (Scrum) · Diseño: Figma |
+El conjunto de dependencias Python se fija en `backend/requirements.lock.txt`; npm usa `frontend/package-lock.json`.
 
-Las decisiones técnicas y sus alternativas evaluadas están documentadas en [`docs/decisions`](docs/decisions/README.md). La elección del proveedor de nube se registró en el [ADR-007](docs/decisions/007-proveedor-de-nube.md).
+## Arranque con Docker Compose
 
-## Metodología
-
-Scrum, con sprints planificados en Jira. Cada historia de usuario se desarrolla en una rama propia y se integra a `main` mediante Pull Request revisado, conservando los commits originales de cada autor. Ver [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Puesta en marcha (desarrollo local)
-
-### Requisitos previos
-
-- Docker Desktop (con WSL2 habilitado en Windows)
-- Git
-
-No se requiere tener Python ni Node.js instalados localmente: todo corre dentro de contenedores.
-
-### Pasos
-
-1. Clona el repositorio y entra a la carpeta:
+Requiere Docker Desktop/Engine activo y Git. Desde la raíz, copia `.env.example` a `.env` (en PowerShell: `Copy-Item .env.example .env`), establece credenciales propias de PostgreSQL y una clave Django segura. No sobrescribas un archivo de configuración existente.
 
 ```bash
-git clone https://github.com/national-facilities-proyecto/national_facilities.git
-cd national_facilities
-```
-
-2. Copia el archivo de variables de entorno de ejemplo y ajusta los valores si lo deseas:
-
-```bash
-cp .env.example .env
-```
-
-3. Levanta los tres servicios (base de datos, backend y frontend):
-
-```bash
-docker compose up --build
-```
-
-4. Verifica que los tres contenedores estén corriendo:
-
-```bash
-docker compose ps
-```
-
-5. Aplica las migraciones de la base de datos:
-
-```bash
+docker compose up --build -d
 docker compose exec backend python manage.py migrate
+docker compose exec backend python manage.py bootstrap_catalogs
+docker compose exec -e NF_ADMIN_PASSWORD="TU_CLAVE_INICIAL_SEGURA" backend python manage.py bootstrap_admin --username admin --email admin@tu-dominio.com
+docker compose exec backend python manage.py check
 ```
 
-6. Crea un superusuario para acceder al panel de administración:
+Ingresa en http://localhost:5173 con ese usuario y cambia la contraseña inicial. Desde el portal crea clientes, tiendas con coordenadas reales, plantillas/ítems, contratos vigentes, usuarios y asignaciones. Un listado vacío es un estado válido hasta cargar estos datos. El bootstrap no carga tiendas, usuarios ficticios ni fixtures operativos, y no reemplaza credenciales existentes.
+
+API: http://localhost:8000/api/ · Salud: http://localhost:8000/api/health/. El administrador nativo Django sirve para inspección; las altas y modificaciones se gestionan en el portal/API con validación y auditoría. `createsuperuser` por sí solo no configura el rol ni sustituye el bootstrap.
+
+Los volúmenes `pgdata` y `evidence_data` conservan datos y archivos. No uses `docker compose down -v` sobre datos que deban conservarse. Compose es un entorno de desarrollo: no es la configuración productiva de Cloud Run.
+
+## Arranque nativo y pruebas
+
+Las instrucciones completas de PostgreSQL, migraciones, administración inicial, entorno aislado y navegador están en [arranque y pruebas](docs/integration/setup-and-tests.md). Incluyen PowerShell y el procedimiento CI con PostgreSQL 16.
 
 ```bash
-docker compose exec backend python manage.py createsuperuser
+# Con PostgreSQL y variables configuradas:
+python -m venv .venv
+# Activar el entorno según el sistema operativo.
+python -m pip install -r backend/requirements.txt
+python backend/manage.py migrate
+python backend/manage.py bootstrap_catalogs
+python backend/manage.py runserver 127.0.0.1:8000
+# Otra terminal:
+cd frontend
+npm ci
+npm run dev
 ```
 
-7. Carga los datos iniciales. **Este paso no es opcional:** sin él el sistema queda sin tiendas y la bolsa de checklists y el mapa aparecen vacíos.
+`frontend/.env.development` y `.env.production` usan API real. Cambia `VITE_API_URL` si el navegador llega al backend por otra URL; actualiza también CORS y hosts Django.
 
-```bash
-docker compose exec backend python manage.py loaddata catalogos_iniciales tiendas_mass
-```
+## Documentación y estructura
 
-`catalogos_iniciales` carga las categorías de problema, los niveles de urgencia y los ítems de checklist. `tiendas_mass` carga las tiendas de la cuenta MASS con sus coordenadas.
-
-### URLs locales
-
-- Frontend: http://localhost:5173/
-- Backend (API): http://localhost:8000/api/
-- Panel de administración: http://localhost:8000/admin/
-
-### Verificación
-
-El entorno se considera correctamente levantado cuando un integrante distinto de quien lo construyó completa los siete pasos anteriores desde cero, siguiendo únicamente este README, y obtiene el sistema operativo con tiendas visibles en el mapa.
-
-## Estructura del repositorio
-
-```
-├── backend/          # API REST (Django + DRF)
-│   └── core/
-│       └── fixtures/ # Datos iniciales (catálogos y tiendas MASS)
-├── frontend/         # SPA (React + Vite)
-├── docs/
-│   ├── decisions/    # ADR — Registro de decisiones de arquitectura
-│   ├── gestion/      # Artefactos de gestión del proyecto
-│   └── diseno/       # Wireframes y mockups exportados
-├── docker-compose.yml
-├── .env.example
-└── README.md
-```
+- [README frontend](frontend/README.md), [contratos HTTP](frontend/docs/backend-contracts.md) y [ejecución y recuperación](frontend/docs/visit-execution.md).
+- [Matriz de vistas](docs/integration/view-endpoint-matrix.md), [arranque/pruebas](docs/integration/setup-and-tests.md), [decisiones pendientes](docs/integration/decisions-pending.md).
+- `backend/core/`: modelos, migraciones, permisos, servicios y API; `backend/test_support/`: preparación exclusiva de pruebas aisladas.
+- `frontend/src/`: aplicación y adaptadores HTTP; `src/test/doubles/`: fixtures y repositorios exclusivos de tests; `frontend/e2e/`: recorridos con backend real.
+- [ADRs](docs/decisions/README.md) y [CONTRIBUTING](CONTRIBUTING.md). `docs/gestion/` no está presente en esta rama; sus documentos de la referencia indicada se consultaron como orientación, sin incorporarlos.
 
 ## Equipo
 
-| Integrante | Rol Scrum |
-|---|---|
-| Edu Joaquin Villasante | Product Owner |
-| Anthony Palomino | Scrum Master |
-| Rogelio Espinoza | Desarrollo / UX |
-| Fabrizio Alex | Desarrollo Frontend |
-| Bryan Cacsire | Desarrollo Backend / DevOps |
+| Integrante             | Rol Scrum                   |
+| ---------------------- | --------------------------- |
+| Edu Joaquin Villasante | Product Owner               |
+| Anthony Palomino       | Scrum Master                |
+| Rogelio Espinoza       | Desarrollo / UX             |
+| Fabrizio Alex          | Desarrollo Frontend         |
+| Bryan Cacsire          | Desarrollo Backend / DevOps |
 
-**Docente:** Ecmias Eduardo Fernández Gálvez
+Docente: Ecmias Eduardo Fernández Gálvez.

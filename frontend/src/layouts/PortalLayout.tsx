@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthProvider'
@@ -7,6 +7,7 @@ import { ProfileMenu } from '../components/ProfileMenu'
 import { Button } from '../components/ui'
 import { Modal } from '../components/ui/Modal'
 import { ErrorBoundary } from '../components/feedback/ErrorBoundary'
+import { PageLoadingState } from '../components/feedback/PageLoadingState'
 import logo from '../assets/national-facilities-logo.png'
 export default function PortalLayout() {
   const { session } = useAuth()
@@ -33,11 +34,15 @@ export default function PortalLayout() {
     </NavLink>
   ))
   return (
-    <div className={`nf-shell ${hasCollapsibleSidebar && !sidebarOpen ? 'nf-shell--sidebar-collapsed' : ''}`}>
+    <div
+      className={`nf-shell ${hasCollapsibleSidebar && !sidebarOpen ? 'nf-shell--sidebar-collapsed' : ''}`}
+    >
       <a className="nf-skip" href="#main-content">
         Saltar al contenido
       </a>
-      <aside className={`nf-sidebar ${hasCollapsibleSidebar && !sidebarOpen ? 'nf-sidebar--collapsed' : ''}`}>
+      <aside
+        className={`nf-sidebar ${hasCollapsibleSidebar && !sidebarOpen ? 'nf-sidebar--collapsed' : ''}`}
+      >
         <div className="nf-sidebar__header">
           <p>Portal de mantenimiento</p>
           {hasCollapsibleSidebar && (
@@ -78,7 +83,9 @@ export default function PortalLayout() {
         </header>
         <main id="main-content" tabIndex={-1} className="nf-content">
           <ErrorBoundary key={location.pathname}>
-            <Outlet />
+            <Suspense fallback={<PageLoadingState />}>
+              <Outlet />
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>

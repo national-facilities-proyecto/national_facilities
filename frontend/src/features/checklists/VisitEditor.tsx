@@ -1,21 +1,26 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useRef, useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
-import type { Store, Visit } from '../../types/models'
+import { registrationEditable, visitStatusLabels, type Store, type Visit } from '../../types/models'
 import { errorMessage } from '../../services/errors'
 import { ChecklistTaskCard } from '../../components/ChecklistTaskCard'
 import { ObservationDialog } from '../../components/ObservationDialog'
 import { CameraModal } from '../technician/CameraModal'
 import { EvidenceGallery } from '../../components/EvidenceGallery'
 import { Modal } from '../../components/ui/Modal'
-import { Alert, Button, Card, PageHeader, Textarea } from '../../components/ui'
+import { Alert, Badge, Button, Card, PageHeader, Textarea } from '../../components/ui'
 import { QueryState } from '../../components/feedback/QueryState'
 import { TicketReport } from '../tickets/TicketReport'
 import { useVisitEditor } from './useVisitEditor'
 import { ChecklistTimer } from './ChecklistTimer'
 import { validateFiles } from '../../services/evidence'
 import { distanceMeters } from '../geolocation/location'
+import { serverTime, formExpired } from './clock'
+import { PendingVisit } from './PendingVisit'
+import { VisitRecord } from './VisitRecord'
+import { useAuth } from '../auth/AuthProvider'
+import { ExceptionHistory } from './ExceptionHistory'
 
 export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'] }) {
   const repos = useRepositories()
@@ -26,7 +31,7 @@ export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'
           ? repos.checklists.get(id, { signal })
           : repos.visits.get(id, { signal }))
         const store = await repos.stores.get(visit.storeId, { signal })
-        return { visit, store }
+        return { visit, store: { ...store, ...visit.storeSnapshot } }
       },
       [id, origin, repos],
     ),
@@ -36,6 +41,8 @@ export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'
   return <Editor key={id} initial={query.data.visit} store={query.data.store} />
 }
 function Editor({ initial, store }: { initial: Visit; store: Store }) {
+  const auth = useAuth()
+  const expiryPrompted = useRef<string | undefined>(undefined)
   const galleryInput = useRef<HTMLInputElement>(null)
   const galleryTaskId = useRef<number | undefined>()
   const {
@@ -67,18 +74,102 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     issues,
     doneTasks,
     editable,
-  } = useVisitEditor(initial, store)
+    openForm,
+    conflict,
+    remote,
+    consultRemote,
+    acceptRemote,
+    reconcile,
+    pendingPhoto,
+    corrections,
+    setCorrections,
+    reviewInput,
+  } = useVisitEditor(initial)
+  const [elapsed, setElapsed] = useState(0)
+  const [expired, setExpired] = useState(false)
+  useEffect(() => {
+    const updateClock = () => {
+      setElapsed(
+        visit.startedAt
+          ? Math.max(0, Math.floor((serverTime(visit) - Date.parse(visit.startedAt)) / 1000))
+          : 0,
+      )
+      setExpired(formExpired(visit))
+    }
+    updateClock()
+    const timer = window.setInterval(updateClock, 1000)
+    return () => window.clearInterval(timer)
+  }, [visit])
+  useEffect(() => {
+    if (!expired || visit.status !== 'in_progress' || !visit.expiresAt) return
+    if (step.kind === 'time_exception') expiryPrompted.current = visit.expiresAt
+    if (
+      auth.status === 'authenticated' &&
+      step.kind === 'editing' &&
+      expiryPrompted.current !== visit.expiresAt
+    ) {
+      expiryPrompted.current = visit.expiresAt
+      setStep({ kind: 'time_exception' })
+    }
+  }, [auth.status, expired, visit.status, visit.expiresAt, step.kind, setStep])
+  if (visit.status === 'pending_approval' && !editable)
+    return (
+      <>
+        <Link className="nf-link" to={back}>
+          ← Volver al listado
+        </Link>
+        <PageHeader title={store.name} description={store.address} />
+        <PendingVisit initial={visit} />
+      </>
+    )
+  if (visit.status === 'in_progress' && !visit.formOpenedAt)
+    return (
+      <>
+        <Link className="nf-link" to={back}>
+          ← Volver al listado
+        </Link>
+        <PageHeader title={store.name} description={store.address} />
+        {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
+        <Card title="Trabajo en ejecución">
+          <Badge>{visitStatusLabels[visit.status]}</Badge>
+          <p>
+            Inicio real:{' '}
+            {visit.startedAt ? new Date(visit.startedAt).toLocaleString('es-PE') : 'No registrado'}
+          </p>
+          <p role="status">
+            Tiempo transcurrido: {Math.floor(elapsed / 60)} min {elapsed % 60} s.
+          </p>
+          <p>
+            Realiza las tareas y reúne las fotografías. El plazo del formulario comienza al abrirlo.
+          </p>
+          {visit.tasks.length > 0 && (
+            <ol>
+              {visit.tasks.map((task) => (
+                <li key={task.id}>{task.title}</li>
+              ))}
+            </ol>
+          )}
+          <Button disabled={saving} onClick={() => void openForm()}>
+            {saving
+              ? 'Abriendo…'
+              : visit.origin === 'checklist'
+                ? 'Registrar resultados'
+                : 'Registrar resolución'}
+          </Button>
+          {error && <Alert>{error}</Alert>}
+        </Card>
+      </>
+    )
   if (!editable && step.kind !== 'success')
     return (
       <>
         <PageHeader title={visit.status === 'claimed' ? 'Inicia la visita' : 'Visita registrada'} />
         <Alert success>
-          {visit.status === 'pending_approval'
-            ? 'Esta visita está pendiente de aprobación del supervisor.'
-            : visit.status === 'completed'
-              ? 'Esta visita ya fue completada.'
-              : 'Debes iniciar la visita con una ubicación reciente antes de ejecutar el trabajo.'}
+          {visit.status === 'completed'
+            ? 'Esta visita ya fue finalizada.'
+            : 'Debes iniciar la visita con una ubicación reciente antes de ejecutar el trabajo.'}
         </Alert>
+        {visit.status === 'completed' && <VisitRecord visit={visit} />}
         <Link
           className="nf-link"
           to={visit.origin === 'checklist' ? `/checklists/${visit.id}` : back}
@@ -102,7 +193,60 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         }
       />
       {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
-      {visit.origin === 'checklist' && <ChecklistTimer visit={visit} />}
+      <Badge>{visitStatusLabels[visit.status]}</Badge>
+      {visit.status === 'pending_approval' && (
+        <Card title="En revisión">
+          <p>
+            Completa o corrige este mismo formulario y envíalo al supervisor de National Facilities.
+            El vencimiento original se conserva.
+          </p>
+          {(visit.exceptions ?? []).map((item) => (
+            <div key={item.id}>
+              {item.approved === false && (
+                <Alert>Justificación rechazada: {item.reviewReason}</Alert>
+              )}
+              <Textarea
+                label={
+                  item.type === 'time_limit' ? 'Justificación de la demora' : 'Justificación GPS'
+                }
+                minLength={10}
+                maxLength={500}
+                value={corrections[item.type] ?? item.reason}
+                onChange={(event) =>
+                  setCorrections((current) => ({ ...current, [item.type]: event.target.value }))
+                }
+              />
+            </div>
+          ))}
+          {expired && !visit.exceptions?.some((item) => item.type === 'time_limit') && (
+            <Textarea
+              label="Justificación de la demora"
+              minLength={10}
+              maxLength={500}
+              value={corrections.time_limit ?? ''}
+              onChange={(event) =>
+                setCorrections((current) => ({ ...current, time_limit: event.target.value }))
+              }
+            />
+          )}
+        </Card>
+      )}
+      <ChecklistTimer visit={visit} />
+      {expired && visit.status === 'in_progress' && (
+        <Card title="Justificación requerida">
+          <p>
+            El trabajo sigue En proceso y el borrador está conservado. Explica la demora en el
+            registro del formulario; al enviar la justificación pasará a En revisión.
+          </p>
+          <Button
+            onClick={() => {
+              setStep({ kind: 'time_exception' })
+            }}
+          >
+            Justificar vencimiento
+          </Button>
+        </Card>
+      )}
       <input
         ref={galleryInput}
         className="sr-only"
@@ -129,7 +273,6 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               name: accepted.name,
               mimeType: accepted.type,
               size: accepted.size,
-              capturedAt: new Date().toISOString(),
               source: 'gallery',
             },
             taskId,
@@ -167,6 +310,9 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                     galleryInput.current?.click()
                   }}
                   onRemove={(id) => remove(id, task.id)}
+                  onNotApplicable={() =>
+                    patchAnswer(task.id, { result: 'no_aplica', observation: '' })
+                  }
                 />
               ))}
             </section>
@@ -211,7 +357,9 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                 void finish()
               }}
             >
-              Finalizar {visit.origin === 'checklist' ? 'checklist' : 'ticket'}
+              {visit.status === 'pending_approval'
+                ? 'Enviar para revisión'
+                : `Finalizar ${visit.origin === 'checklist' ? 'checklist' : 'ticket'}`}
             </Button>
             <Button
               variant="secondary"
@@ -225,14 +373,71 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           </div>
         </Card>
       </fieldset>
+      <ExceptionHistory visit={visit} />
+      {pendingPhoto && (
+        <Alert>
+          La fotografía {pendingPhoto.photo.name} sigue pendiente de confirmar. Conservamos la
+          selección en este editor.
+          <Button
+            disabled={saving || conflict}
+            onClick={() =>
+              void capture(pendingPhoto.photo, pendingPhoto.taskId).catch((cause) =>
+                setError(errorMessage(cause)),
+              )
+            }
+          >
+            Reintentar carga
+          </Button>
+        </Alert>
+      )}
+      {conflict && (
+        <Card title="Borrador modificado en otra sesión">
+          <p>
+            Tu contenido permanece en el editor. Consulta la versión actual antes de decidir qué
+            guardar.
+          </p>
+          <Button disabled={saving} onClick={() => void consultRemote()}>
+            Consultar versión del servidor
+          </Button>
+          {remote && (
+            <>
+              <p>
+                Versión del servidor: {remote.revision}. Estado: {remote.status}.
+              </p>
+              <p>Descripción guardada: {remote.workDescription || 'Sin descripción'}</p>
+              <ul>
+                {remote.answers.map((answer) => (
+                  <li key={answer.taskId}>
+                    {visit.tasks.find((task) => task.id === answer.taskId)?.title}:{' '}
+                    {answer.result ?? 'Pendiente'} · {answer.observation}
+                  </li>
+                ))}
+              </ul>
+              <Button onClick={acceptRemote}>Usar versión del servidor</Button>
+              {remote.status === 'in_progress' && !remote.submittedAt && (
+                <Button variant="secondary" onClick={reconcile}>
+                  Guardar mis respuestas sobre esta versión
+                </Button>
+              )}
+              <p>
+                Guardar tus respuestas reemplaza los resultados y observaciones mostrados. Las
+                fotografías confirmadas se conservan. Otro cambio concurrente producirá un nuevo
+                conflicto.
+              </p>
+            </>
+          )}
+        </Card>
+      )}
       <p role="status" aria-live="polite">
         {step.kind === 'validating'
           ? 'Solicitando ubicación nueva y validando…'
           : saving
             ? 'Guardando borrador…'
-            : dirty
-              ? 'Cambios pendientes de guardar.'
-              : 'Borrador guardado.'}
+            : error
+              ? 'No se confirmó el guardado. Conserva el editor y reintenta.'
+              : dirty
+                ? 'Cambios pendientes de guardar.'
+                : 'Borrador guardado.'}
       </p>
       {error && <Alert>{error}</Alert>}
       {blocker.state === 'blocked' ? (
@@ -250,6 +455,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             <>
               <p>Hay cambios pendientes. Espera a que se guarden antes de salir.</p>
               <Button
+                disabled={Boolean(pendingPhoto) || conflict}
                 onClick={() => {
                   void save()
                     .then(() => blocker.proceed())
@@ -348,12 +554,25 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               onClick={() => {
                 if (step.kind !== 'exception' || exceptionBusy) return
                 setExceptionBusy(true)
-                void repos.visits
-                  .requestException(visit.id, reason, step.failure)
+                void save()
+                  .then(() => {
+                    if (latest.current.status === 'pending_approval') {
+                      if (!repos.visits.submitReview) throw new Error('Falta envío para revisión.')
+                      return repos.visits.submitReview(
+                        visit.id,
+                        reviewInput(undefined, step.failure, reason),
+                      )
+                    }
+                    return repos.visits.requestException(visit.id, reason, step.failure)
+                  })
                   .then((next) => {
                     setVisit(next)
                     latest.current = next
-                    setStep({ kind: 'success', pending: true })
+                    setStep(
+                      registrationEditable(next)
+                        ? { kind: 'editing' }
+                        : { kind: 'success', pending: true },
+                    )
                   })
                   .catch((cause) => {
                     setError(errorMessage(cause))
@@ -366,12 +585,16 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             </Button>
           </Modal>
           <Modal
-            open={step.kind === 'time_exception'}
-            title="Tiempo máximo vencido"
+            open={step.kind === 'time_exception' && auth.status === 'authenticated'}
+            title="Justificación por demora"
             busy={exceptionBusy}
             onClose={() => setStep({ kind: 'editing' })}
           >
-            <Alert>El tiempo máximo para completar el checklist ha vencido.</Alert>
+            <Alert>Venció el plazo de cinco minutos para registrar el formulario.</Alert>
+            <p>
+              Explica por qué te demoraste o no pudiste completar el formulario. La justificación
+              será revisada por el supervisor de National Facilities. Se conserva el plazo original.
+            </p>
             <p>
               Inicio:{' '}
               {visit.startedAt
@@ -395,12 +618,16 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               onClick={() => {
                 if (step.kind !== 'time_exception' || exceptionBusy) return
                 setExceptionBusy(true)
-                void repos.visits
-                  .requestTimeException(visit.id, reason)
+                void save()
+                  .then(() => repos.visits.requestTimeException(visit.id, reason))
                   .then((next) => {
                     setVisit(next)
                     latest.current = next
-                    setStep({ kind: 'success', pending: true })
+                    setStep(
+                      registrationEditable(next)
+                        ? { kind: 'editing' }
+                        : { kind: 'success', pending: true },
+                    )
                   })
                   .catch((cause) => {
                     setError(errorMessage(cause))
@@ -409,21 +636,17 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                   .finally(() => setExceptionBusy(false))
               }}
             >
-              Enviar para revisión
+              {issues.length ? 'Guardar justificación y continuar' : 'Enviar para revisión'}
             </Button>
           </Modal>
           <Modal
             open={step.kind === 'success'}
-            title={
-              step.kind === 'success' && step.pending
-                ? 'Pendiente de validación'
-                : 'Trabajo completado'
-            }
+            title={step.kind === 'success' && step.pending ? 'En revisión' : 'Trabajo finalizado'}
             onClose={() => void navigate(back)}
           >
             <p>
               {step.kind === 'success' && step.pending
-                ? 'La excepción se envió al supervisor de cuenta.'
+                ? 'La justificación se envió al supervisor de National Facilities.'
                 : 'El trabajo se registró correctamente.'}
             </p>
             <Button onClick={() => void navigate(back)}>Volver al listado</Button>

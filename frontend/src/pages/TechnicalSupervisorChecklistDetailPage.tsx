@@ -9,10 +9,13 @@ import { EvidenceGallery } from '../components/EvidenceGallery'
 import { displayDate } from '../utils/dates'
 import { visitStatusLabels } from '../types/models'
 import { errorMessage } from '../services/errors'
+import { ExceptionHistory } from '../features/checklists/ExceptionHistory'
+import { ClaimHistory } from '../features/checklists/ClaimHistory'
 export default function TechnicalSupervisorChecklistDetailPage() {
   const { id } = useParams()
   const repos = useRepositories()
   const [decision, setDecision] = useState<'approve' | 'reject' | null>(null)
+  const [exceptionId, setExceptionId] = useState<number>()
   const [reason, setReason] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -21,7 +24,7 @@ export default function TechnicalSupervisorChecklistDetailPage() {
       async (signal) => {
         const visit = await repos.checklists.get(Number(id), { signal })
         const store = await repos.stores.get(visit.storeId, { signal })
-        return { visit, store }
+        return { visit, store: { ...store, ...visit.storeSnapshot } }
       },
       [id, repos],
     ),
@@ -42,45 +45,62 @@ export default function TechnicalSupervisorChecklistDetailPage() {
         <Badge>{visitStatusLabels[visit.status]}</Badge>
         <p>Inicio: {displayDate(visit.startedAt)}</p>
         <p>Cierre: {displayDate(visit.completedAt)}</p>
-        {visit.exception ? (
-          <Alert success>
-            Excepción: {visit.exception.reason}
-            {visit.exception.approved !== undefined && (
-              <p>
-                {visit.exception.approved ? 'Aprobada' : 'Rechazada'} ·{' '}
-                {visit.exception.reviewReason} · {displayDate(visit.exception.reviewedAt)}
-              </p>
-            )}
+        <p>Primera apertura: {displayDate(visit.formOpenedAt)}</p>
+        <p>Vencimiento: {displayDate(visit.expiresAt)}</p>
+        <p>Envío: {displayDate(visit.submittedAt)}</p>
+        <p>
+          Intervención: {visit.totalSeconds ?? 'No registrado'} s · Previo a formulario:{' '}
+          {visit.executionSeconds ?? 'No registrado'} s · Registro:{' '}
+          {visit.registrationSeconds ?? 'No registrado'} s
+        </p>
+        <p>
+          {visit.endLocation
+            ? 'Proximidad validada por el servidor.'
+            : 'Sin lectura GPS de cierre registrada.'}
+        </p>
+        {(visit.exceptions ?? []).map((item) => (
+          <Alert key={item.id} success>
+            {item.type === 'time_limit' ? 'Tiempo' : 'GPS'}: {item.reason} · Autor:{' '}
+            {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Solicitud:{' '}
+            {displayDate(item.requestedAt)}
+            <p>
+              {item.approved === undefined ? 'Pendiente' : item.approved ? 'Aprobada' : 'Rechazada'}{' '}
+              · {item.reviewReason} · {displayDate(item.reviewedAt)}
+            </p>
           </Alert>
-        ) : (
-          <p>
-            {visit.endLocation
-              ? 'Proximidad validada en demostración.'
-              : 'Ubicación de cierre pendiente.'}
-          </p>
-        )}
-        {visit.status === 'pending_approval' && (
-          <div className="nf-actions">
-            <Button
-              onClick={() => {
-                setDecision('approve')
-                setReason('')
-              }}
-            >
-              Aprobar excepción
-            </Button>
-            <Button
-              variant="danger"
-              onClick={() => {
-                setDecision('reject')
-                setReason('')
-              }}
-            >
-              Rechazar excepción
-            </Button>
-          </div>
-        )}
+        ))}
+        {visit.status === 'pending_approval' &&
+          (visit.exceptions ?? [])
+            .filter((item) => item.approved === undefined)
+            .map((item) => (
+              <div className="nf-actions" key={item.id}>
+                <p>
+                  {item.type === 'time_limit' ? 'Tiempo' : 'GPS'}: {item.reason}
+                </p>
+                <Button
+                  onClick={() => {
+                    setExceptionId(item.id)
+                    setDecision('approve')
+                    setReason('')
+                  }}
+                >
+                  Aprobar excepción
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    setExceptionId(item.id)
+                    setDecision('reject')
+                    setReason('')
+                  }}
+                >
+                  Rechazar excepción
+                </Button>
+              </div>
+            ))}
       </Card>
+      <ExceptionHistory visit={visit} />
+      <ClaimHistory visit={visit} />
       {visit.tasks.map((task) => {
         const answer = visit.answers.find((item) => item.taskId === task.id)
         return (
@@ -90,7 +110,9 @@ export default function TechnicalSupervisorChecklistDetailPage() {
                 ? 'Conforme'
                 : answer?.result === 'no_conforme'
                   ? 'No conforme'
-                  : 'Pendiente'}
+                  : answer?.result === 'no_aplica'
+                    ? 'No aplica'
+                    : 'Pendiente'}
             </Badge>
             <p>{answer?.observation}</p>
             <EvidenceGallery ids={answer?.evidenceIds ?? []} />
@@ -105,26 +127,42 @@ export default function TechnicalSupervisorChecklistDetailPage() {
       )}
       <Modal
         open={decision !== null}
-        title={decision === 'approve' ? 'Aprobar excepción GPS' : 'Rechazar excepción GPS'}
+        title={decision === 'approve' ? 'Aprobar excepción' : 'Rechazar excepción'}
         busy={busy}
         onClose={() => setDecision(null)}
       >
         <Textarea
-          label={
-            decision === 'reject' ? 'Motivo de rechazo' : 'Observación de aprobación (opcional)'
-          }
+          label={decision === 'reject' ? 'Motivo de rechazo' : 'Motivo de aprobación'}
           value={reason}
           onChange={(event) => setReason(event.target.value)}
         />
-        {error && <Alert>{error}</Alert>}
+        {error && (
+          <Alert>
+            {error}
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDecision(null)
+                setError('')
+                query.reload()
+              }}
+            >
+              Actualizar revisión
+            </Button>
+          </Alert>
+        )}
         <Button
-          disabled={busy || (decision === 'reject' && reason.trim().length < 10)}
+          disabled={busy || reason.trim().length < 10}
           onClick={() => {
             if (!decision || busy) return
             setBusy(true)
             setError('')
             void repos.visits
-              .reviewException(visit.id, decision === 'approve', reason)
+              .reviewException(visit.id, decision === 'approve', reason, exceptionId, {
+                revision: visit.revision ?? 0,
+                exceptionRevision:
+                  visit.exceptions?.find((item) => item.id === exceptionId)?.revision ?? 0,
+              })
               .then(() => {
                 setDecision(null)
                 query.reload()

@@ -4,12 +4,13 @@ import type { Session } from '../../types/models'
 import type { LoginInput } from '../../services/repositories/contracts'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { clearNfSession } from './session'
+import { savedSession } from '../../services/http/client'
 type AuthState = {
   session: Session | null
   status: 'initializing' | 'anonymous' | 'authenticated' | 'expired'
   login(input: LoginInput): Promise<Session>
   logout(this: void): Promise<void>
-  changePassword(password: string): Promise<void>
+  changePassword(password: string, currentPassword?: string, confirmation?: string): Promise<void>
 }
 const AuthContext = createContext<AuthState | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -39,24 +40,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const expire = () => {
       clearNfSession()
-      setSession(null)
       setStatus('expired')
     }
     const logout = () => {
       setSession(null)
       setStatus('anonymous')
     }
+    const renewed = () => {
+      const next = savedSession()
+      if (next) setSession(next)
+    }
     window.addEventListener('nf:expired', expire)
     window.addEventListener('nf:logout', logout)
+    window.addEventListener('nf:session', renewed)
     const timer = session
-      ? setTimeout(expire, Math.max(0, session.expiresAt - Date.now()))
+      ? setTimeout(
+          () => {
+            if (auth.refresh)
+              void auth
+                .refresh()
+                .then((next) => {
+                  if (next) setSession(next)
+                })
+                .catch(() => undefined)
+            else expire()
+          },
+          Math.max(1000, session.expiresAt - Date.now() - 30000),
+        )
       : undefined
     return () => {
       clearTimeout(timer)
       window.removeEventListener('nf:expired', expire)
       window.removeEventListener('nf:logout', logout)
+      window.removeEventListener('nf:session', renewed)
     }
-  }, [session])
+  }, [session, auth])
   const value: AuthState = {
     session,
     status,
@@ -71,8 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(null)
       setStatus('anonymous')
     },
-    async changePassword(password) {
-      const next = await auth.changePassword(password)
+    async changePassword(password, currentPassword, confirmation) {
+      const next = await auth.changePassword(password, currentPassword, confirmation)
       setSession(next)
     },
   }
