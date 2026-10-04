@@ -19,6 +19,7 @@ class Rol(models.Model):
 class Usuario(AbstractUser):
     rol = models.ForeignKey(Rol, on_delete=models.PROTECT, null=True, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
+
     password_initialized = models.BooleanField(default=False)
     auth_version = models.PositiveIntegerField(default=1)
 
@@ -90,6 +91,7 @@ class ItemPlantilla(models.Model):
     descripcion = models.CharField(max_length=200)
     orden = models.PositiveIntegerField(default=0)
     activo = models.BooleanField(default=True)  # soft-deactivate, nunca se borra
+
     foto_obligatoria = models.BooleanField(default=True)
 
     class Meta:
@@ -182,15 +184,30 @@ class Visita(models.Model):
     distancia_medida_metros = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     proximidad_validada = models.BooleanField(default=False)
 
+    latitud_inicio = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitud_inicio = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    distancia_inicio_metros = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    proximidad_inicio_validada = models.BooleanField(default=False)
+
+    excepcion_tiempo = models.BooleanField(default=False)
+    justificacion_excepcion_tiempo = models.TextField(blank=True)
+    excepcion_tiempo_aprobada = models.BooleanField(null=True, blank=True)
+    excepcion_tiempo_revisada_por = models.ForeignKey(
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name="excepciones_tiempo_revisadas"
+    )
+    comentario_revision_tiempo = models.TextField(blank=True)
+
     # Excepción por ubicación no disponible (permiso denegado o sin señal
     # GPS). El técnico puede cerrar igual dejando esta justificación; la
     # visita queda en estado "pendiente_validacion" hasta que el
     # supervisor de cuenta la revise y la apruebe o rechace.
     excepcion_ubicacion = models.BooleanField(default=False)
     justificacion_excepcion = models.TextField(blank=True)
+    descripcion_fallo_ubicacion = models.TextField(blank=True)
     excepcion_revisada_por = models.ForeignKey(
         Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="excepciones_revisadas"
     )
+    comentario_revision_ubicacion = models.TextField(blank=True)
     excepcion_aprobada = models.BooleanField(null=True, blank=True)  # None = pendiente
 
     class Meta:
@@ -242,7 +259,7 @@ class Evidencia(models.Model):
     checklist = models.ForeignKey(Checklist, on_delete=models.PROTECT, related_name="evidencias", null=True, blank=True)
     visita = models.ForeignKey(Visita, on_delete=models.PROTECT, related_name="archivos", null=True, blank=True)
     ticket = models.ForeignKey("Ticket", on_delete=models.PROTECT, related_name="archivos", null=True, blank=True)
-    item = models.ForeignKey(ItemPlantilla, on_delete=models.PROTECT, null=True, blank=True)
+    item = models.ForeignKey(ItemPlantilla, on_delete=models.PROTECT, related_name="evidencias", null=True, blank=True)
     autor = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=True, blank=True)
     client_id = models.UUIDField(default=uuid.uuid4, unique=True)
     nombre = models.CharField(max_length=200, blank=True)
@@ -302,12 +319,18 @@ class Ticket(models.Model):
         Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="tickets_asignados"
     )
     fecha_programada = models.DateTimeField(null=True, blank=True)
+    asignado_en = models.DateTimeField(null=True, blank=True)
     descripcion = models.TextField()
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="abierto")
     creado_en = models.DateTimeField(auto_now_add=True)
     resuelto_en = models.DateTimeField(null=True, blank=True)
     cerrado_en = models.DateTimeField(null=True, blank=True)
     revision = models.PositiveIntegerField(default=0)
+
+    @property
+    def evidencias(self):
+        # Compatibilidad con main: ambas rutas usan la misma relación.
+        return self.archivos
 
     def __str__(self):
         return f"Ticket #{self.pk} - {self.categoria.nombre}"

@@ -18,7 +18,7 @@ def audit_existing(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0002_visita_origen_visita_ticket_origen_and_more'),
+        ('core', '0004_ticket_asignado_en_usuario_password_inicializada_and_more'),
     ]
 
     operations = [
@@ -87,10 +87,10 @@ class Migration(migrations.Migration):
             name='eliminada_en',
             field=models.DateTimeField(blank=True, null=True),
         ),
-        migrations.AddField(
+        migrations.AlterField(
             model_name='evidencia',
             name='item',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, to='core.itemplantilla'),
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='evidencias', to='core.itemplantilla'),
         ),
         migrations.AddField(
             model_name='evidencia',
@@ -117,7 +117,7 @@ class Migration(migrations.Migration):
             name='tamano',
             field=models.PositiveIntegerField(default=0),
         ),
-        migrations.AddField(
+        migrations.AlterField(
             model_name='evidencia',
             name='ticket',
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='archivos', to='core.ticket'),

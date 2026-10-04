@@ -4,12 +4,44 @@ from django.db import transaction
 from django.db.models import Q
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla,
-                     Usuario, Rol, AsignacionTienda, Visita, Ticket, Evidencia)
-from .permissions import rol_de, ROLES
+                     Usuario, Rol, AsignacionTienda, Visita, Ticket, Evidencia,
+                     CategoriaProblema, NivelUrgencia)
+from .permissions import ROLES
 from .auth_views import identity
-from .services import Conflict, evidence_ids
+from .services import evidence_ids
 from .workflow import VISIT_WORK_STATUS, TICKET_WORK_STATUS
+
+
+# Una sola representación de identidad para ambos flujos de autenticación.
+construir_datos_usuario = identity
+
+
+class NfTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token["version"] = user.auth_version
+        return token
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        data["user"] = construir_datos_usuario(self.user)
+        return data
+
+
+class EvidenciaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Evidencia
+        fields = ["id", "checklist", "ticket", "item", "foto", "descripcion", "subida_en"]
+        read_only_fields = ["subida_en"]
+
+    def validate_checklist(self, checklist):
+        usuario = self.context["request"].user
+        if checklist and checklist.visita.tecnico != usuario:
+            raise serializers.ValidationError("No puedes subir evidencia a un checklist que no es tuyo.")
+        return checklist
 
 
 class ClienteSerializer(serializers.ModelSerializer):
@@ -141,6 +173,24 @@ class ItemPlantillaSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "photoRequired", "active", "order"]
 
 
+ChecklistTaskSerializer = ItemPlantillaSerializer
+
+
+RESULTADO_A_FRONTEND = {"ok": "conforme", "observado": "no_conforme", "no_aplica": "no_aplica", "": None}
+RESULTADO_DESDE_FRONTEND = {"conforme": "ok", "no_conforme": "observado", "no_aplica": "no_aplica"}
+
+
+def answer_data(answer):
+    return {"taskId": answer.item_id, "result": RESULTADO_A_FRONTEND.get(answer.resultado),
+            "observation": answer.observacion,
+            "evidenceIds": evidence_ids(answer.checklist.visita, answer.item_id)}
+
+
+class AnswerSerializer(serializers.BaseSerializer):
+    def to_representation(self, instance):
+        return answer_data(instance)
+
+
 class PlantillaChecklistSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="nombre", max_length=150)
     active = serializers.BooleanField(source="activa")
@@ -244,14 +294,21 @@ def exception_data(exc):
             "reviewReason": exc.motivo_decision}
 
 
+def legacy_location(latitude, longitude, captured_at):
+    if latitude is None or longitude is None:
+        return None
+    return {"latitude": float(latitude), "longitude": float(longitude), "accuracy": 0,
+            "capturedAt": captured_at.timestamp() * 1000 if captured_at else None}
+
+
 def visit_data(visit):
     from .claims import CLAIM_DURATION
     from django.utils import timezone
     checklist = getattr(visit, "checklist", None)
     tasks = checklist.tareas_snapshot if checklist else []
-    answers = [{"taskId": a.item_id, "result": {"ok": "conforme", "observado": "no_conforme", "no_aplica": "no_aplica", "": None}.get(a.resultado),
-                "observation": a.observacion, "evidenceIds": evidence_ids(visit, a.item_id)}
-               for a in checklist.respuestas.all()] if checklist else []
+    if checklist and not tasks and checklist.plantilla_version is None:
+        tasks = ItemPlantillaSerializer(checklist.plantilla.items.filter(activo=True), many=True).data
+    answers = [answer_data(a) for a in checklist.respuestas.all()] if checklist else []
     # Evidencia confirmada se recupera incluso si el último guardado del editor falló.
     for task in tasks:
         if not any(a["taskId"] == task["id"] for a in answers):
@@ -259,6 +316,22 @@ def visit_data(visit):
     status = {"en_curso": "in_progress", "completada": "completed", "pendiente_validacion": "pending_approval",
               "no_realizada": "cancelled"}.get(visit.estado, "claimed" if visit.tecnico_id else "available")
     exceptions = [exception_data(e) for e in visit.excepciones.order_by("pk")]
+    location_exception = None
+    if visit.excepcion_ubicacion:
+        location_exception = {"type": "location", "reason": visit.justificacion_excepcion,
+                              "failure": visit.descripcion_fallo_ubicacion,
+                              "requestedAt": iso(visit.completado_en), "reviewedAt": None,
+                              "reviewerId": visit.excepcion_revisada_por_id,
+                              "approved": visit.excepcion_aprobada,
+                              "reviewReason": visit.comentario_revision_ubicacion or None}
+    time_exception_status = None
+    if visit.excepcion_tiempo:
+        time_exception_status = ("pending" if visit.excepcion_tiempo_aprobada is None
+                                 else "approved" if visit.excepcion_tiempo_aprobada else "rejected")
+    radius = visit.radio_metros
+    if radius is None:
+        contract = visit.contrato or visit.tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
+        radius = contract.radio_validacion_metros if contract else 100
     def duration(end, start):
         return (end-start).total_seconds() if end and start else None
     return {"id": visit.pk, "storeId": visit.tienda_id, "technicianId": visit.tecnico_id, "ticketId": visit.ticket_origen_id,
@@ -266,8 +339,9 @@ def visit_data(visit):
             "quotaCount": Visita.objects.filter(tienda_id=visit.tienda_id, origen="checklist", periodo=visit.periodo).count() if visit.origen == "checklist" and visit.periodo else None,
             "origin": visit.origen, "scheduledAt": iso(visit.fecha_programada), "status": status,
             "workStatus": VISIT_WORK_STATUS[visit.estado], "tasks": tasks,
-            "answers": answers, "workDescription": visit.descripcion_trabajo, "evidenceIds": evidence_ids(visit),
-            "startLocation": visit.ubicacion_inicio, "endLocation": visit.ubicacion_cierre,
+            "answers": answers, "workDescription": visit.descripcion_trabajo or (checklist.reporte_general if checklist else ""), "evidenceIds": evidence_ids(visit),
+            "startLocation": visit.ubicacion_inicio or legacy_location(visit.latitud_inicio, visit.longitud_inicio, visit.iniciado_en),
+            "endLocation": visit.ubicacion_cierre or legacy_location(visit.latitud_cierre, visit.longitud_cierre, visit.completado_en),
             "startedAt": iso(visit.iniciado_en), "formOpenedAt": iso(visit.formulario_abierto_en),
             "claimedAt": iso(visit.reclamada_en), "claimExpiresAt": iso(visit.reclamo_vence_en),
             "claimHistory": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
@@ -276,10 +350,11 @@ def visit_data(visit):
                 "expiresAt": e.datos.get("expiresAt", iso(e.fecha + CLAIM_DURATION)), "text": e.texto}
                 for e in visit.eventos.filter(tipo__in=["claim", "claim_release"]).order_by("pk")],
             "expiresAt": iso(visit.formulario_vence_en), "submittedAt": iso(visit.enviado_en), "completedAt": iso(visit.completado_en),
-            "revision": visit.borrador_revision, "radiusMeters": visit.radio_metros, "storeSnapshot": visit.tienda_snapshot or None,
+            "revision": visit.borrador_revision, "radiusMeters": radius, "storeSnapshot": visit.tienda_snapshot or None,
             "serverNow": iso(timezone.now()), "timeLimitSeconds": 300 if visit.formulario_abierto_en else None,
-            "timeLimitExceeded": bool(visit.formulario_vence_en and timezone.now() >= visit.formulario_vence_en and not visit.completado_en),
-            "exceptions": exceptions, "exception": exceptions[-1] if exceptions else None,
+            "timeLimitExceeded": bool(visit.excepcion_tiempo or (visit.formulario_vence_en and timezone.now() >= visit.formulario_vence_en and not visit.completado_en)),
+            "timeExceptionReason": visit.justificacion_excepcion_tiempo, "timeExceptionStatus": time_exception_status,
+            "exceptions": exceptions, "exception": exceptions[-1] if exceptions else location_exception,
             "exceptionHistory": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
                 "kind": e.tipo, "exception": e.datos["exception"]}
                 for e in visit.eventos.order_by("pk") if "exception" in e.datos],
@@ -311,3 +386,46 @@ def evidence_data(evidence):
             "visitId": evidence.visita_id, "ticketId": evidence.ticket_id, "authorId": evidence.autor_id,
             "name": evidence.nombre, "mimeType": evidence.mime_type, "size": evidence.tamano,
             "capturedAt": iso(evidence.capturada_en), "uploadedAt": iso(evidence.subida_en), "source": evidence.origen}
+
+
+class VisitaDetailSerializer(serializers.BaseSerializer):
+    def to_representation(self, instance):
+        return visit_data(instance)
+
+
+VisitaSerializer = VisitaDetailSerializer
+
+
+class TicketSerializer(serializers.BaseSerializer):
+    def to_representation(self, instance):
+        return ticket_data(instance)
+
+
+class TicketCreateSerializer(serializers.Serializer):
+    category = serializers.CharField()
+    priority = serializers.CharField()
+    description = serializers.CharField()
+    evidenceIds = serializers.ListField(child=serializers.CharField(), required=False, default=list)
+    storeId = serializers.IntegerField()
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        categoria = CategoriaProblema.objects.get(nombre=validated_data["category"])
+        urgencia = NivelUrgencia.objects.get(nombre=validated_data["priority"])
+        tienda = Tienda.objects.get(pk=validated_data["storeId"])
+        ticket = Ticket.objects.create(
+            tienda=tienda, categoria=categoria, urgencia=urgencia,
+            descripcion=validated_data["description"], reportado_por=request.user,
+        )
+        Evidencia.objects.filter(
+            pk__in=validated_data.get("evidenceIds", []), checklist__isnull=True, ticket__isnull=True
+        ).update(ticket=ticket)
+        return ticket
+
+
+class ReporteVisitaSerializer(VisitaDetailSerializer):
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["storeName"] = instance.tienda.nombre
+        data["technicianName"] = (instance.tecnico.get_full_name() or instance.tecnico.username) if instance.tecnico else None
+        return data

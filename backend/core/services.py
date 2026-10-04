@@ -7,7 +7,7 @@ from django.db.models import Q
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
-from .models import Visita, Ticket, Operacion, Evento, Evidencia
+from .models import Visita, Ticket, Operacion, Evento, Evidencia, Tienda, Contrato, Checklist, PlantillaChecklist
 from .permissions import rol_de, tiendas_visibles_para
 
 
@@ -347,8 +347,13 @@ def start_visit(user, pk, data):
     if visit.origen == "checklist" and visit.iniciado_en >= visit.reclamo_vence_en:
         raise Conflict("La reserva venció antes de aceptar el inicio. Actualiza la bolsa.")
     visit.ubicacion_inicio = location
+    visit.latitud_inicio = location["latitude"]
+    visit.longitud_inicio = location["longitude"]
+    visit.distancia_inicio_metros = location["distanceMeters"]
+    visit.proximidad_inicio_validada = True
     visit.estado = "en_curso"
-    visit.save(update_fields=["iniciado_en", "ubicacion_inicio", "estado"])
+    visit.save(update_fields=["iniciado_en", "ubicacion_inicio", "latitud_inicio", "longitud_inicio",
+                              "distancia_inicio_metros", "proximidad_inicio_validada", "estado"])
     if visit.ticket_origen_id:
         ticket = Ticket.objects.select_for_update().get(pk=visit.ticket_origen_id)
         ticket.estado = "en_proceso"
@@ -470,3 +475,46 @@ def complete_visit(user, pk, data):
         ticket.save(update_fields=["estado", "resuelto_en"])
     event(user, visit, "complete", "Resultados enviados y finalización aceptada", {"location": location})
     return visit
+
+
+@transaction.atomic
+def asegurar_bolsa_mes_actual(user=None):
+    """Publica la bolsa mensual con cuotas y snapshots, sin alterar visitas existentes.
+
+    Conserva la llamada sin argumentos del comando de main. Si se proporciona
+    un usuario, limita la generación a sus tiendas visibles.
+    """
+    from .claims import release_expired_claims
+    from .generation import applicable_contract, snapshot
+    from .serializers import ItemPlantillaSerializer
+
+    today = timezone.localdate()
+    period = today.replace(day=1)
+    contracts = Contrato.objects.filter(activo=True, fecha_inicio__lte=today).filter(
+        Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=today))
+    stores = tiendas_visibles_para(user) if user is not None else Tienda.objects.all()
+    stores = stores.filter(activo=True, cliente_id__in=contracts.values("cliente_id"))
+    created_count = 0
+    for store in stores.order_by("pk").select_for_update(of=("self",)):
+        published = list(Visita.objects.filter(tienda=store, origen="checklist", periodo=period).order_by("cuota"))
+        if published:
+            if [visit.cuota for visit in published] != list(range(1, len(published) + 1)):
+                raise Conflict("Las visitas mensuales publicadas tienen cuotas inconsistentes; requieren revisión.")
+            continue
+        contract = applicable_contract(store, today)
+        template = PlantillaChecklist.objects.select_for_update().get(pk=contract.plantilla_checklist_id)
+        tasks = list(ItemPlantillaSerializer(template.items.filter(activo=True).order_by("orden", "pk"), many=True).data)
+        if not template.activa or not tasks:
+            raise Conflict("El contrato necesita una plantilla activa con tareas.")
+        for quota in range(1, contract.frecuencia_visitas_mensual + 1):
+            visit, created = Visita.objects.get_or_create(
+                tienda=store, origen="checklist", periodo=period, cuota=quota,
+                defaults={"fecha_programada": timezone.now(), "estado": "programada"})
+            if created:
+                snapshot(visit, contract)
+                visit.save()
+                Checklist.objects.create(visita=visit, plantilla=template,
+                                         plantilla_version=template.version, tareas_snapshot=tasks)
+                created_count += 1
+    release_expired_claims(tiendas_visibles_para(user) if user is not None else None)
+    return created_count

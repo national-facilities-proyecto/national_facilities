@@ -41,6 +41,12 @@ class EsAdministrador(TienePermisoDeRol):
 class EsSupervisorCuenta(TienePermisoDeRol):
     roles_permitidos = ("account_supervisor",)
 
+class EsSupervisorDeTienda(TienePermisoDeRol):
+    roles_permitidos = ("SupervisorTienda",)
+
+
+class EsSupervisorDeCuenta(TienePermisoDeRol):
+    roles_permitidos = ("SupervisorCuenta",)
 
 def tiendas_visibles_para(usuario):
     from .models import Tienda, AsignacionTienda

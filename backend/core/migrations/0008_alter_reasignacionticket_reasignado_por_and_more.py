@@ -24,7 +24,7 @@ def audit_timestamps(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0005_alter_ticket_estado'),
+        ('core', '0007_alter_ticket_estado'),
     ]
 
     operations = [

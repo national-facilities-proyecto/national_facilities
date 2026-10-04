@@ -14,7 +14,7 @@ def identify_files(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0003_evento_excepcion_operacion_and_more'),
+        ('core', '0005_evento_excepcion_operacion_and_more'),
     ]
 
     operations = [

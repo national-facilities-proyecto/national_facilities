@@ -10,14 +10,17 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework import serializers
 from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla, Usuario,
-                     Visita, CategoriaProblema, NivelUrgencia, Rol, Evento, Excepcion, Ticket)
+                     CategoriaProblema, NivelUrgencia, Rol, Evento, Ticket)
 from .permissions import tiendas_visibles_para, EsTecnico, EsAdministrador, EsSupervisorCuenta, rol_de
 from .serializers import (TiendaSerializer, ClienteSerializer, ContratoSerializer,
                           PlantillaChecklistSerializer, ItemPlantillaSerializer, UsuarioSerializer,
-                          visit_data, ticket_data)
-from .auth_views import identity
-from .services import (idempotent, visible_visits, visible_tickets, claim_visit, start_visit,
-                       open_form, save_draft, complete_visit, locked_visit, Conflict, event, validate_content, record_end_gps, finalize_reviewed_visit)
+                          visit_data)
+from .auth_views import identity, PasswordView as CambiarPasswordView
+from .evidence_views import EvidenceUploadView as EvidenciaListCreateView, EvidenceDetailView, visible_evidence
+from .ticket_views import TicketListCreateView, TicketDetailView, ScheduleView as TicketScheduleView
+from .report_views import DashboardView, ExportView as ReporteVisitasExportView, ReportListView as ReporteVisitasListView
+from .services import (idempotent, visible_visits, claim_visit, start_visit,
+                       open_form, save_draft, complete_visit, locked_visit, Conflict, event, validate_content, record_end_gps, finalize_reviewed_visit, asegurar_bolsa_mes_actual)
 from .generation import generate_month
 from .claims import release_expired_claims
 from .input_serializers import ExceptionInputSerializer, ReviewInputSerializer
@@ -93,7 +96,7 @@ class ScheduledVisitListView(VisitListView):
 class VisitPoolListView(VisitListView):
     permission_classes = [EsTecnico]
     def get(self, request):
-        release_expired_claims(tiendas_visibles_para(request.user))
+        asegurar_bolsa_mes_actual(request.user)
         return Response([visit_data(v) for v in visible_visits(request.user).filter(origen="checklist", tecnico__isnull=True, estado="programada")])
 
 
@@ -154,13 +157,24 @@ class VisitActionView(APIView):
 
 class ExceptionRequestView(APIView):
     permission_classes = [EsTecnico]
+    exception_type = None
     def post(self, request, pk):
         def work():
             from django.utils import timezone
             visit = locked_visit(request.user, pk)
             if not visit.iniciado_en or not visit.formulario_abierto_en or visit.estado not in ("en_curso", "pendiente_validacion"):
                 raise Conflict("No hay un formulario en ejecución o pendiente.")
-            serializer = ExceptionInputSerializer(data=request.data)
+            payload = request.data.copy()
+            exception_type = self.exception_type
+            if exception_type is None:
+                # Los alias de urls.py conservan el tipo indicado por su URL.
+                endpoint = request.path.rstrip("/").rsplit("/", 1)[-1]
+                exception_type = {"excepcion-ubicacion": "location", "excepcion-tiempo": "time_limit"}.get(endpoint)
+            if exception_type:
+                if payload.get("type") not in (None, exception_type):
+                    raise ValidationError({"type": "El tipo de excepción no corresponde a esta ruta."})
+                payload["type"] = exception_type
+            serializer = ExceptionInputSerializer(data=payload)
             serializer.is_valid(raise_exception=True)
             data = serializer.validated_data
             if data["type"] == "location":
@@ -304,3 +318,80 @@ class ItemPlantillaViewSet(AdminViewSet):
 class UsuarioViewSet(AdminViewSet):
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
+
+
+class TecnicoListView(ListAPIView):
+    serializer_class = UsuarioSerializer
+    permission_classes = [EsSupervisorCuenta]
+
+    def get_queryset(self):
+        stores = tiendas_visibles_para(self.request.user)
+        candidates = Usuario.objects.filter(is_active=True, tiendas_asignadas__activo=True,
+                                            tiendas_asignadas__tienda__in=stores).select_related("rol").distinct()
+        return [user for user in candidates if rol_de(user) == "technician"]
+
+
+class EvidenciaDetailView(EvidenceDetailView):
+    """El ID numérico de main usa la misma lectura y eliminación protegida del PR."""
+    def client_id(self, request, pk):
+        return get_object_or_404(visible_evidence(request.user), pk=pk).client_id
+
+    def get(self, request, pk):
+        return super().get(request, self.client_id(request, pk))
+
+    def delete(self, request, pk):
+        return super().delete(request, self.client_id(request, pk))
+
+
+class VisitaNoRealizadaInput(serializers.Serializer):
+    reason = serializers.CharField(min_length=10, max_length=500)
+
+
+class VisitaNoRealizadaView(APIView):
+    permission_classes = [EsTecnico]
+
+    def post(self, request, pk):
+        release_expired_claims(tiendas_visibles_para(request.user))
+        def work():
+            visit = locked_visit(request.user, pk)
+            if visit.estado != "programada" or visit.iniciado_en or visit.formulario_abierto_en or visit.enviado_en or visit.completado_en:
+                raise Conflict("Solo una visita pendiente sin iniciar puede marcarse como no realizada.")
+            serializer = VisitaNoRealizadaInput(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            visit.estado = "no_realizada"
+            visit.justificacion = serializer.validated_data["reason"]
+            visit.save(update_fields=["estado", "justificacion"])
+            event(request.user, visit, "not_performed", "Visita no realizada", {"reason": visit.justificacion})
+            return visit_data(visit)
+        return Response(idempotent(request, work))
+
+
+# Nombres de main que comparten la implementación del flujo vigente.
+VisitaPoolListView = VisitPoolListView
+VisitaProgramadasListView = ScheduledVisitListView
+VisitaDetailView = VisitDetailView
+VisitaReviewExceptionView = ExceptionReviewView
+
+
+class VisitaTomarView(VisitActionView):
+    action = "claim"
+
+
+class ChecklistSaveDraftView(VisitActionView):
+    action = "draft"
+
+
+class VisitaStartView(VisitActionView):
+    action = "start"
+
+
+class VisitaCompleteView(VisitActionView):
+    action = "complete"
+
+
+class VisitaLocationExceptionView(ExceptionRequestView):
+    exception_type = "location"
+
+
+class VisitaTimeExceptionView(ExceptionRequestView):
+    exception_type = "time_limit"

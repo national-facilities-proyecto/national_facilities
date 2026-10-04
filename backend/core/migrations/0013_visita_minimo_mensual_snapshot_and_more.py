@@ -26,7 +26,7 @@ def audit_contracts(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0010_alter_contrato_minimo_intervenciones_mensual_and_more'),
+        ('core', '0012_alter_contrato_minimo_intervenciones_mensual_and_more'),
     ]
 
     operations = [

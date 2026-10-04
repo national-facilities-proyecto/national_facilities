@@ -23,7 +23,7 @@ def recover_recorded_claims(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0008_excepcion_revision_alter_ticket_estado_and_more'),
+        ('core', '0010_excepcion_revision_alter_ticket_estado_and_more'),
     ]
 
     operations = [

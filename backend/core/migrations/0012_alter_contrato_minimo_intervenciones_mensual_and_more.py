@@ -15,7 +15,7 @@ def audit_minimum(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0009_visita_reclamada_en_visita_reclamo_vence_en_and_more'),
+        ('core', '0011_visita_reclamada_en_visita_reclamo_vence_en_and_more'),
     ]
 
     operations = [
