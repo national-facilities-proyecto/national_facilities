@@ -362,10 +362,23 @@ def start_visit(user, pk, data):
     return visit
 
 
-def open_form(user, pk):
+def open_form(user, pk, data=None):
     visit = locked_visit(user, pk)
     require_execution(visit)
     if not visit.formulario_abierto_en:
+        if visit.origen == "checklist" and not (data or {}).get("location") and (data or {}).get("failure") in ("denied", "timeout", "unavailable"):
+            event(user, visit, "end_gps_unavailable", "GPS no disponible al terminar el recorrido; el envío requiere GPS o revisión",
+                  {"failure": data["failure"]})
+        elif visit.origen == "checklist":
+            location = validate_gps((data or {}).get("location"), visit)
+            visit.ubicacion_cierre = location
+            visit.latitud_cierre = location["latitude"]
+            visit.longitud_cierre = location["longitude"]
+            visit.distancia_medida_metros = location["distanceMeters"]
+            visit.proximidad_validada = True
+            visit.save(update_fields=["ubicacion_cierre", "latitud_cierre", "longitud_cierre",
+                                      "distancia_medida_metros", "proximidad_validada"])
+            event(user, visit, "end_gps", "Lectura GPS al terminar el recorrido del checklist", {"location": location})
         visit.formulario_abierto_en = timezone.now()
         visit.formulario_vence_en = visit.formulario_abierto_en + timedelta(minutes=5)
         visit.save(update_fields=["formulario_abierto_en", "formulario_vence_en"])

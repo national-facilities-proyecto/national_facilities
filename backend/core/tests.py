@@ -85,7 +85,7 @@ class IntegrationTests(TestCase):
         return self.post(f"visitas/{visit.pk}/iniciar/", {"location": self.gps()})
 
     def open(self, visit):
-        return self.post(f"visitas/{visit.pk}/formulario/")
+        return self.post(f"visitas/{visit.pk}/formulario/", {"location": self.gps()})
 
     def upload(self, visit, evidence_id=None):
         data = {"id": evidence_id or str(uuid.uuid4()), "foto": image_file(), "source": "gallery",
@@ -748,7 +748,7 @@ class IntegrationTests(TestCase):
         for origin in ("checklist", "ticket"):
             visit = self.visit(origin)
             self.start(visit)
-            self.open(visit)
+            self.post(f"visitas/{visit.pk}/formulario/", {"failure": "unavailable"})
             self.draft(visit)
             gps = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "location", "failure": "denied", "reason": "GPS permission unavailable on device"})
             self.assertEqual(gps.status_code, 200)
@@ -778,7 +778,7 @@ class IntegrationTests(TestCase):
     def test_time_approval_then_real_gps_can_finish(self):
         visit = self.visit()
         self.start(visit)
-        self.open(visit)
+        self.post(f"visitas/{visit.pk}/formulario/", {"failure": "unavailable"})
         self.draft(visit)
         opened = timezone.now()-timedelta(minutes=6)
         Visita.objects.filter(pk=visit.pk).update(iniciado_en=opened-timedelta(minutes=8), formulario_abierto_en=opened, formulario_vence_en=opened+timedelta(minutes=5))
@@ -831,6 +831,74 @@ class IntegrationTests(TestCase):
         self.assertEqual(self.client.get("/api/reportes/", {"period": period[:-2]+"20"}).status_code, 400)
         self.login_as("outsider")
         self.assertEqual(self.client.get("/api/reportes/", {"clientId": self.store.cliente_id}).status_code, 403)
+
+
+    def test_checklist_walkthrough_has_no_form_deadline_and_opens_after_gps(self):
+        visit = self.visit()
+        self.assertEqual(self.start(visit).status_code, 200)
+        visit.refresh_from_db()
+        self.assertEqual(visit.estado, "en_curso")
+        self.assertIsNone(visit.formulario_abierto_en)
+        self.assertIsNone(visit.formulario_vence_en)
+        self.assertIsNone(visit.completado_en)
+        self.assertEqual(visit.checklist.tareas_snapshot[0]["id"], self.item.pk)
+        Visita.objects.filter(pk=visit.pk).update(iniciado_en=timezone.now()-timedelta(minutes=30))
+        opened = self.open(visit)
+        self.assertEqual(opened.status_code, 200, opened.data)
+        visit.refresh_from_db()
+        self.assertEqual(visit.formulario_vence_en-visit.formulario_abierto_en, timedelta(minutes=5))
+        self.assertGreater(visit.formulario_abierto_en-visit.iniciado_en, timedelta(minutes=29))
+        self.assertTrue(visit.ubicacion_cierre["validated"])
+        self.assertTrue(visit.eventos.filter(tipo="end_gps").exists())
+        self.assertIsNone(visit.enviado_en)
+        self.assertIsNone(visit.completado_en)
+        deadline = visit.formulario_vence_en
+        self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/").status_code, 200)
+        visit.refresh_from_db()
+        self.assertEqual(visit.formulario_vence_en, deadline)
+        captured = timezone.now()-timedelta(minutes=20)
+        response = self.client.post("/api/evidencias/", {
+            "id": str(uuid.uuid4()), "foto": image_file(), "source": "camera",
+            "capturedAt": captured.isoformat(), "visitId": visit.pk, "taskId": self.item.pk,
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Evidencia.objects.get(visita=visit).capturada_en, captured)
+
+    def test_checklist_invalid_close_gps_does_not_open_form(self):
+        visit = self.visit()
+        self.start(visit)
+        gps = {**self.gps(), "latitude": 0, "longitude": 0}
+        response = self.post(f"visitas/{visit.pk}/formulario/", {"location": gps})
+        self.assertEqual(response.status_code, 400)
+        visit.refresh_from_db()
+        self.assertIsNone(visit.formulario_abierto_en)
+        self.assertIsNone(visit.formulario_vence_en)
+        self.assertIsNone(visit.ubicacion_cierre)
+
+    def test_checklist_unavailable_gps_keeps_existing_exception_path(self):
+        visit = self.visit()
+        self.start(visit)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/", {"failure": "denied"}).status_code, 200)
+        visit.refresh_from_db()
+        self.assertIsNone(visit.ubicacion_cierre)
+        self.assertIsNone(visit.completado_en)
+        self.assertTrue(visit.eventos.filter(tipo="end_gps_unavailable").exists())
+        self.draft(visit)
+        response = self.post(f"visitas/{visit.pk}/excepciones/", {
+            "type": "location", "failure": "denied", "reason": "GPS permission unavailable after finishing the walkthrough.",
+        })
+        self.assertEqual(response.status_code, 200, response.data)
+        visit.refresh_from_db()
+        self.assertEqual(visit.estado, "pendiente_validacion")
+        self.assertIsNone(visit.completado_en)
+
+    def test_ticket_form_opening_does_not_require_checklist_close_gps(self):
+        visit = self.visit("ticket")
+        self.start(visit)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/").status_code, 200)
+        visit.refresh_from_db()
+        self.assertIsNone(visit.ubicacion_cierre)
+        self.assertEqual(visit.formulario_vence_en-visit.formulario_abierto_en, timedelta(minutes=5))
 
 
 class ConcurrencyTests(TransactionTestCase):
@@ -892,7 +960,7 @@ class ConcurrencyTests(TransactionTestCase):
         visit.iniciado_en = timezone.now()-timedelta(minutes=10)
         visit.estado = "en_curso"
         visit.save()
-        results = self.parallel(lambda client, name: client.post(f"/api/visitas/{visit.pk}/formulario/", {}, format="json",
+        results = self.parallel(lambda client, name: client.post(f"/api/visitas/{visit.pk}/formulario/", {"location": {"latitude": float(self.store.latitud), "longitude": float(self.store.longitud), "accuracy": 8, "capturedAt": timezone.now().timestamp()*1000}}, format="json",
             HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4())).data, ["tech", "tech"])
         self.assertEqual(results[0]["expiresAt"], results[1]["expiresAt"])
         visit.refresh_from_db()

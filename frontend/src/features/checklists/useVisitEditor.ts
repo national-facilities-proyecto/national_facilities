@@ -38,6 +38,7 @@ export function useVisitEditor(initial: Visit) {
   const [conflict, setConflict] = useState(false)
   const [remote, setRemote] = useState<Visit>()
   const [pendingPhoto, setPendingPhoto] = useState<{ photo: Evidence; taskId?: number }>()
+  const [openingFailure, setOpeningFailure] = useState<string>()
   const version = useRef(0)
   const latest = useRef(visit)
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
@@ -319,16 +320,18 @@ export function useVisitEditor(initial: Visit) {
     }
     return { revision: confirmedRevision.current, location: coordinates, exceptions }
   }
-  const openForm = async () => {
+  const openForm = async (failure?: string) => {
     setError('')
     setSaving(true)
     try {
       if (!repos.visits.openForm) throw new Error('Falta apertura de formulario.')
-      const next = await repos.visits.openForm(visit.id)
+      const coordinates = visit.origin === 'checklist' && !failure ? await location.request() : undefined
+      const next = await repos.visits.openForm(visit.id, coordinates, failure)
       latest.current = next
       confirmedRevision.current = next.revision ?? 0
       setVisit(next)
     } catch (cause) {
+      setOpeningFailure(cause instanceof LocationError ? cause.reason : undefined)
       setError(errorMessage(cause))
     } finally {
       setSaving(false)
@@ -365,6 +368,7 @@ export function useVisitEditor(initial: Visit) {
     doneTasks,
     editable,
     openForm,
+    openingFailure,
     conflict,
     remote,
     consultRemote,

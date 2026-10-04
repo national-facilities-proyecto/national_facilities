@@ -51,7 +51,7 @@ export interface VisitRepository {
   list(options?: RequestOptions): Promise<Visit[]>
   get(id: number, options?: RequestOptions): Promise<Visit>
   start(id: number, location: Coordinates): Promise<Visit>
-  openForm?(id: number): Promise<Visit>
+  openForm?(id: number, location?: Coordinates, failure?: string): Promise<Visit>
   recordEndGps?(id: number, location: Coordinates): Promise<Visit>
   submitReview?(id: number, input: import('../../types/models').ReviewSubmission): Promise<Visit>
   complete(id: number, location: Coordinates): Promise<Visit>

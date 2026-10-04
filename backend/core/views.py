@@ -139,7 +139,7 @@ class VisitActionView(APIView):
             elif self.action == "start":
                 visit = start_visit(request.user, pk, request.data)
             elif self.action == "open_form":
-                visit = open_form(request.user, pk)
+                visit = open_form(request.user, pk, request.data)
             elif self.action == "draft":
                 visit = save_draft(request.user, pk, request.data)
             elif self.action == "complete":

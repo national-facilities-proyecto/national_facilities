@@ -58,11 +58,17 @@ export function createVisitsRepository(): NonNullable<Repositories['visits']> {
         return visit
       })
     },
-    async openForm(id) {
+    async openForm(id, location, failure) {
       return mutate((db) => {
         const visit = getVisit(db, id, true)
         required(visit.status === 'in_progress', 'Inicia primero el trabajo.')
         if (!visit.formOpenedAt) {
+          if (visit.origin === 'checklist' && !location)
+            required(['denied', 'timeout', 'unavailable'].includes(failure ?? ''), 'Solicita GPS o declara su indisponibilidad.')
+          if (visit.origin === 'checklist' && location) {
+            validateLocation(location, db.stores.find((item) => item.id === visit.storeId)!, visit.radiusMeters ?? 100)
+            visit.endLocation = location
+          }
           visit.formOpenedAt = new Date().toISOString()
           visit.expiresAt = new Date(Date.parse(visit.formOpenedAt) + 300000).toISOString()
           visit.timeLimitSeconds = 300

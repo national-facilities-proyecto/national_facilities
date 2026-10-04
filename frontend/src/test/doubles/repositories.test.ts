@@ -16,7 +16,7 @@ beforeEach(() => {
 async function login(id = 1) {
   return repos.auth.login({ kind: 'demo', userId: id })
 }
-async function start(id = 1) {
+async function start(id = 1, gpsAvailable = true) {
   await login()
   const visit = await repos.checklists.claim(id)
   const store = await repos.stores.get(visit.storeId)
@@ -27,11 +27,11 @@ async function start(id = 1) {
     capturedAt: Date.now(),
   }
   await repos.visits.start(id, coordinates)
-  await repos.visits.openForm?.(id)
+  await repos.visits.openForm?.(id, gpsAvailable ? coordinates : undefined, gpsAvailable ? undefined : 'unavailable')
   return { visit, coordinates }
 }
-async function completeDraft(id = 1) {
-  const { visit, coordinates } = await start(id)
+async function completeDraft(id = 1, gpsAvailable = true) {
+  const { visit, coordinates } = await start(id, gpsAvailable)
   await repos.checklists.saveDraft(id, {
     answers: visit.tasks.map((task) => ({
       taskId: task.id,
@@ -90,7 +90,7 @@ it('bloquea inicio con ubicación fuera de radio e ID inexistente', async () => 
   await expect(repos.visits.get(999)).rejects.toMatchObject({ code: 'not_found' })
 })
 it('excepción solo por GPS no disponible, con rechazo y aprobación auditados', async () => {
-  await completeDraft()
+  await completeDraft(1, false)
   await expect(
     repos.visits.requestException(1, 'GPS falla al cerrar.', 'outside'),
   ).rejects.toMatchObject({ code: 'validation' })
@@ -139,7 +139,7 @@ it('creación, programación, reasignación y resolución se ven entre roles', a
   const store = await repos.stores.get(1)
   const coordinates = { ...store, accuracy: 8, capturedAt: Date.now() }
   await repos.visits.start(visit.id, coordinates)
-  await repos.visits.openForm?.(visit.id)
+  await repos.visits.openForm?.(visit.id, coordinates)
   await repos.checklists.saveDraft(visit.id, {
     answers: [],
     workDescription: 'Se reparó la válvula y verificó la presión.',

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { registrationEditable, visitStatusLabels, type Store, type Visit } from '../../types/models'
-import { errorMessage } from '../../services/errors'
+import { AppError, errorMessage } from '../../services/errors'
 import { ChecklistTaskCard } from '../../components/ChecklistTaskCard'
 import { ObservationDialog } from '../../components/ObservationDialog'
 import { CameraModal } from '../technician/CameraModal'
@@ -21,6 +21,7 @@ import { PendingVisit } from './PendingVisit'
 import { VisitRecord } from './VisitRecord'
 import { useAuth } from '../auth/AuthProvider'
 import { ExceptionHistory } from './ExceptionHistory'
+import { ChecklistPhotos } from './ChecklistPhotos'
 
 export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'] }) {
   const repos = useRepositories()
@@ -75,6 +76,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     doneTasks,
     editable,
     openForm,
+    openingFailure,
     conflict,
     remote,
     consultRemote,
@@ -131,7 +133,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         <PageHeader title={store.name} description={store.address} />
         {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
         <Card title="Trabajo en ejecución">
-          <Badge>{visitStatusLabels[visit.status]}</Badge>
+          <Badge>{visit.origin === 'checklist' ? 'En curso' : visitStatusLabels[visit.status]}</Badge>
           <p>
             Inicio real:{' '}
             {visit.startedAt ? new Date(visit.startedAt).toLocaleString('es-PE') : 'No registrado'}
@@ -149,14 +151,25 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               ))}
             </ol>
           )}
+          {visit.origin === 'checklist' && auth.session && (
+            <ChecklistPhotos scope={`${repos.source}:${auth.session.user.id}:${visit.id}`} tasks={visit.tasks} />
+          )}
           <Button disabled={saving} onClick={() => void openForm()}>
             {saving
               ? 'Abriendo…'
               : visit.origin === 'checklist'
-                ? 'Registrar resultados'
+                ? 'Finalizar checklist'
                 : 'Registrar resolución'}
           </Button>
           {error && <Alert>{error}</Alert>}
+          {visit.origin === 'checklist' && openingFailure && ['denied', 'timeout', 'unavailable'].includes(openingFailure) && (
+            <>
+              <p>El envío requerirá GPS válido o una justificación de ubicación revisada por el supervisor.</p>
+              <Button variant="secondary" disabled={saving} onClick={() => void openForm(openingFailure)}>
+                Continuar al formulario sin GPS
+              </Button>
+            </>
+          )}
         </Card>
       </>
     )
@@ -193,7 +206,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         }
       />
       {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
-      <Badge>{visitStatusLabels[visit.status]}</Badge>
+      <Badge>{visit.origin === 'checklist' && visit.status === 'in_progress' ? 'En curso' : visitStatusLabels[visit.status]}</Badge>
       {visit.status === 'pending_approval' && (
         <Card title="En revisión">
           <p>
@@ -285,6 +298,15 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
       >
         {visit.origin === 'checklist' ? (
           <>
+            {auth.session && (
+              <ChecklistPhotos scope={`${repos.source}:${auth.session.user.id}:${visit.id}`} tasks={visit.tasks}
+                onAssociate={async (photo, taskId) => {
+                  const count = visit.answers.find((answer) => answer.taskId === taskId)?.evidenceIds.length ?? 0
+                  const validation = validateFiles([new File([photo.blob], photo.name, { type: photo.mimeType })], count)
+                  if (validation.errors.length) throw new AppError('validation', validation.errors.join(' '))
+                  await capture(photo, taskId)
+                }} />
+            )}
             <div className="nf-progress" role="status">
               <span>
                 {doneTasks} de {visit.tasks.length} tareas completadas
@@ -316,6 +338,8 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                 />
               ))}
             </section>
+            <Textarea label="Reporte general del checklist" rows={4} value={visit.workDescription}
+              onChange={(event) => update({ workDescription: event.target.value })} />
           </>
         ) : (
           <Card title="Resolución del trabajo">

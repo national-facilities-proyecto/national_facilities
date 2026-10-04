@@ -186,8 +186,8 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async start(id, location) {
         return mapVisit(await mutate('/visitas/' + id + '/iniciar/', { location }))
       },
-      async openForm(id) {
-        return mapVisit(await mutate('/visitas/' + id + '/formulario/'))
+      async openForm(id, location, failure) {
+        return mapVisit(await mutate('/visitas/' + id + '/formulario/', location ? { location } : { failure }))
       },
       async recordEndGps(id, location) {
         return mapVisit(await mutate('/visitas/' + id + '/ubicacion-cierre/', { location }))

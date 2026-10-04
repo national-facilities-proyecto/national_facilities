@@ -83,7 +83,7 @@ export function VisitStart({
       )}
       <p>
         El inicio registra la ejecución. El formulario y sus cinco minutos se abrirán cuando pulses
-        Registrar resultados.
+        {visit.origin === 'checklist' ? 'Finalizar checklist.' : 'Registrar resolución.'}
       </p>
       {visit.origin === 'checklist' && (
         <p>
@@ -123,7 +123,7 @@ export function VisitStart({
           }
           onClick={confirm}
         >
-          Confirmar inicio
+          {visit.origin === 'checklist' ? 'Iniciar checklist' : 'Confirmar inicio'}
         </Button>
       </div>
     </Card>

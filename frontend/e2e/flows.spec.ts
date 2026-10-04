@@ -52,13 +52,13 @@ async function setup(request: APIRequestContext, origin: 'checklist' | 'ticket')
 async function start(page: Page, id: number, path: string) {
   await page.goto(path + id)
   await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirmar inicio', exact: true }).click()
+  await page.getByRole('button', { name: path === '/checklists/' ? 'Iniciar checklist' : 'Confirmar inicio', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
 }
 async function form(page: Page, origin: 'checklist' | 'ticket') {
   await page
     .getByRole('button', {
-      name: origin === 'checklist' ? 'Registrar resultados' : 'Registrar resolución',
+      name: origin === 'checklist' ? 'Finalizar checklist' : 'Registrar resolución',
       exact: true,
     })
     .click()
@@ -151,7 +151,12 @@ for (const origin of ['checklist', 'ticket'] as const) {
         .fill('Recovered after device power loss and session expiration.')
       await editor.getByRole('button', { name: 'Enviar para revisión', exact: true }).click()
       await expect(editor.getByRole('heading', { name: 'En revisión' })).toBeVisible()
-      await editor.getByRole('button', { name: 'Registrar GPS de cierre', exact: true }).click()
+      if (origin === 'ticket') {
+        await editor.getByRole('button', { name: 'Registrar GPS de cierre', exact: true }).click()
+      } else {
+        const recorded = object(await call(request, `/visitas/${data.id}/`, renewed))
+        expect(object(recorded.endLocation).validated).toBe(true)
+      }
       await expect(
         editor.getByRole('button', { name: 'Registrar GPS de cierre', exact: true }),
       ).not.toBeVisible()
@@ -187,7 +192,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await start(page, data.id, data.path)
       await page
         .getByRole('button', {
-          name: origin === 'checklist' ? 'Registrar resultados' : 'Registrar resolución',
+          name: origin === 'checklist' ? 'Finalizar checklist' : 'Registrar resolución',
           exact: true,
         })
         .click()
