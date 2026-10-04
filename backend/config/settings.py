@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_extensions",
     "core",
@@ -91,18 +92,26 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_ROOT = config("MEDIA_ROOT", default=str(BASE_DIR / "media"))
+if config("GS_BUCKET_NAME", default=""):
+    STORAGES = {
+        "default": {"BACKEND": "storages.backends.gcloud.GoogleCloudStorage", "OPTIONS": {"bucket_name": config("GS_BUCKET_NAME"), "default_acl": None, "querystring_auth": True}},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CORS_ALLOWED_ORIGINS = config("CORS_ALLOWED_ORIGINS", default="").split(",")
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = [*default_headers, "idempotency-key"]
 
 REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "core.api_errors.api_exception_handler",
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "core.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "core.permissions.OperacionAutorizada",
     ],
 }
 
@@ -111,4 +120,6 @@ from datetime import timedelta
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
 }

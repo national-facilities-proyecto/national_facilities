@@ -1,45 +1,34 @@
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
+from django.db.models import Q
 from rest_framework import serializers
-
-from .models import (
-    Evidencia, Tienda, Visita, Cliente, Contrato,
-    PlantillaChecklist, ItemPlantilla, Usuario,
-    Checklist, RespuestaItem, Ticket, CategoriaProblema, NivelUrgencia,
-)
-
+from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla,
+                     Usuario, Rol, AsignacionTienda, Visita, Ticket, Evidencia,
+                     CategoriaProblema, NivelUrgencia)
+from .permissions import ROLES
+from .auth_views import identity
+from .services import evidence_ids
+from .workflow import VISIT_WORK_STATUS, TICKET_WORK_STATUS
 
-ROL_A_SLUG = {
-    "Tecnico": "technician",
-    "SupervisorTienda": "store_supervisor",
-    "SupervisorCuenta": "account_supervisor",
-    "Administrador": "administrator",
-}
 
-def construir_datos_usuario(usuario):
-    rol_slug = ROL_A_SLUG.get(usuario.rol.nombre) if usuario.rol else None
-    return {
-        "id": usuario.id,
-        "name": usuario.get_full_name() or usuario.username,
-        "email": usuario.email,
-        "role": rol_slug,
-        "storeIds": list(
-            usuario.tiendas_asignadas.filter(activo=True).values_list("tienda_id", flat=True)
-        ),
-        "active": usuario.is_active,
-        "passwordInitialized": usuario.password_inicializada,
-    }
+# Una sola representación de identidad para ambos flujos de autenticación.
+construir_datos_usuario = identity
 
 
 class NfTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token["version"] = user.auth_version
+        return token
+
     def validate(self, attrs):
         data = super().validate(attrs)
         data["user"] = construir_datos_usuario(self.user)
         return data
-
-class TiendaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Tienda
-        fields = ["id", "nombre", "direccion", "latitud", "longitud", "cliente"]
 
 
 class EvidenciaSerializer(serializers.ModelSerializer):
@@ -55,266 +44,361 @@ class EvidenciaSerializer(serializers.ModelSerializer):
         return checklist
 
 
-class VisitaSerializer(serializers.ModelSerializer):
-    tienda = TiendaSerializer(read_only=True)
-
-    class Meta:
-        model = Visita
-        fields = [
-            "id", "tienda", "origen", "tecnico", "ticket_origen",
-            "fecha_programada", "estado", "justificacion",
-        ]
-        read_only_fields = fields
-
-
 class ClienteSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="razon_social", max_length=200)
+    taxId = serializers.CharField(source="ruc", max_length=20, validators=[UniqueValidator(queryset=Cliente.objects.all())])
+    email = serializers.EmailField(source="contacto_email", allow_blank=True)
     class Meta:
         model = Cliente
-        fields = ["id", "razon_social", "ruc", "contacto_nombre", "contacto_email"]
+        fields = ["id", "name", "taxId", "email"]
+        extra_kwargs = {"id": {"read_only": True}}
 
 
-class TiendaAdminSerializer(serializers.ModelSerializer):
+class TiendaSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="nombre", max_length=150)
+    address = serializers.CharField(source="direccion", max_length=250)
+    latitude = serializers.DecimalField(source="latitud", max_digits=9, decimal_places=6, min_value=-90, max_value=90)
+    longitude = serializers.DecimalField(source="longitud", max_digits=9, decimal_places=6, min_value=-180, max_value=180)
+    clientId = serializers.PrimaryKeyRelatedField(source="cliente", queryset=Cliente.objects.all())
+    contact = serializers.CharField(source="contacto", max_length=200, allow_blank=True)
+    active = serializers.BooleanField(source="activo")
     class Meta:
         model = Tienda
-        fields = ["id", "cliente", "nombre", "direccion", "latitud", "longitud"]
+        fields = ["id", "name", "address", "latitude", "longitude", "clientId", "contact", "active"]
+
+    def validate(self, attrs):
+        if self.instance and "cliente" in attrs and attrs["cliente"].pk != self.instance.cliente_id:
+            if self.instance.visitas.exists() or self.instance.tickets.exists():
+                raise serializers.ValidationError({"clientId": "No puede cambiarse el cliente de una tienda con historial."})
+        return attrs
 
 
-class ContratoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Contrato
-        fields = [
-            "id", "cliente", "plantilla_checklist", "frecuencia_visitas_mensual",
-            "minimo_intervenciones_mensual", "radio_validacion_metros",
-            "fecha_inicio", "fecha_fin", "activo",
-        ]
+TiendaAdminSerializer = TiendaSerializer
 
 
-class PlantillaChecklistSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PlantillaChecklist
-        fields = ["id", "nombre", "version", "activa"]
+class RoleField(serializers.Field):
+    def to_representation(self, value):
+        return ROLES.get(value.nombre.lower())
 
-
-class ItemPlantillaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ItemPlantilla
-        fields = ["id", "plantilla", "descripcion", "orden", "activo"]
+    def to_internal_value(self, value):
+        if value not in ("technician", "store_supervisor", "account_supervisor", "administrator"):
+            raise serializers.ValidationError("Rol inválido.")
+        names = {"technician": "Tecnico", "store_supervisor": "Supervisor de tienda",
+                 "account_supervisor": "Supervisor de cuenta", "administrator": "Administrador"}
+        return Rol.objects.get_or_create(nombre=names[value])[0]
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False)
-
+    name = serializers.CharField(source="first_name", max_length=150)
+    role = RoleField(source="rol")
+    active = serializers.BooleanField(source="is_active")
+    passwordInitialized = serializers.BooleanField(source="password_initialized", read_only=True)
+    storeIds = serializers.PrimaryKeyRelatedField(many=True, queryset=Tienda.objects.all(), write_only=True)
+    password = serializers.CharField(write_only=True, required=False, min_length=8, trim_whitespace=False)
     class Meta:
         model = Usuario
-        fields = [
-            "id", "username", "email", "first_name", "last_name",
-            "telefono", "rol", "is_active", "password_inicializada", "password",
-        ]
+        fields = ["id", "username", "name", "email", "role", "active", "passwordInitialized", "storeIds", "password"]
+        extra_kwargs = {"username": {"required": True}, "email": {"required": True}}
 
+    def to_representation(self, instance):
+        return identity(instance)
+
+    def validate(self, attrs):
+        user = self.instance or Usuario()
+        if not self.instance and not attrs.get("password"):
+            raise serializers.ValidationError({"password": "Contraseña inicial obligatoria."})
+        if self.instance and self.instance.pk == self.context["request"].user.pk:
+            if attrs.get("is_active") is False or ("rol" in attrs and attrs["rol"].nombre != self.instance.rol.nombre):
+                raise serializers.ValidationError({"role": "No puedes desactivar tu cuenta o quitarte el rol administrador."})
+        ids = attrs.get("storeIds", [a.tienda for a in user.tiendas_asignadas.filter(activo=True).select_related("tienda")] if user.pk else [])
+        role = attrs.get("rol", user.rol if user.pk else None)
+        if role and ROLES.get(role.nombre.lower()) == "store_supervisor" and len(ids) != 1:
+            raise serializers.ValidationError({"storeIds": "Asigna exactamente una tienda al supervisor de tienda."})
+        if len({store.pk for store in ids}) != len(ids) and "storeIds" in attrs:
+            raise serializers.ValidationError({"storeIds": "No repitas tiendas."})
+        password = attrs.get("password")
+        if password:
+            for field in ("username", "first_name", "email"):
+                setattr(user, field, attrs.get(field, getattr(user, field)))
+            try:
+                validate_password(password, user)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"password": exc.messages})
+        return attrs
+
+    @transaction.atomic
     def create(self, validated_data):
-        password = validated_data.pop("password", None)
-        if not password:
-            raise serializers.ValidationError({"password": "La contraseña es obligatoria al crear un usuario."})
-        usuario = Usuario(**validated_data)
-        usuario.set_password(password)
-        usuario.save()
-        return usuario
+        stores = validated_data.pop("storeIds", [])
+        password = validated_data.pop("password")
+        user = Usuario(**validated_data)
+        user.set_password(password)
+        user.save()
+        self.assign(user, stores)
+        return user
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        stores = validated_data.pop("storeIds", None)
         password = validated_data.pop("password", None)
-        for campo, valor in validated_data.items():
-            setattr(instance, campo, valor)
+        old_role = instance.rol_id
+        old_active = instance.is_active
+        stores_changed = stores is not None and set(s.pk for s in stores) != set(instance.tiendas_asignadas.filter(activo=True).values_list("tienda_id", flat=True))
+        for key, value in validated_data.items():
+            setattr(instance, key, value)
         if password:
             instance.set_password(password)
+            instance.password_initialized = False
+        if password or instance.rol_id != old_role or instance.is_active != old_active or stores_changed:
+            instance.auth_version += 1
         instance.save()
+        if stores is not None:
+            self.assign(instance, stores)
         return instance
 
-RESULTADO_A_FRONTEND = {"ok": "conforme", "observado": "no_conforme", "no_aplica": "no_conforme"}
-RESULTADO_DESDE_FRONTEND = {"conforme": "ok", "no_conforme": "observado"}
+    def assign(self, user, stores):
+        ids = [s.pk for s in stores]
+        user.tiendas_asignadas.exclude(tienda_id__in=ids).update(activo=False)
+        for store in stores:
+            AsignacionTienda.objects.update_or_create(usuario=user, tienda=store, defaults={"activo": True})
 
 
-class ChecklistTaskSerializer(serializers.ModelSerializer):
-    title = serializers.CharField(source="descripcion")
-    photoRequired = serializers.BooleanField(source="foto_requerida")
+class ItemPlantillaSerializer(serializers.ModelSerializer):
+    title = serializers.CharField(source="descripcion", max_length=200)
+    photoRequired = serializers.BooleanField(source="foto_obligatoria")
     active = serializers.BooleanField(source="activo")
-    order = serializers.IntegerField(source="orden")
-
+    order = serializers.IntegerField(source="orden", min_value=0)
+    id = serializers.IntegerField(required=False)
     class Meta:
         model = ItemPlantilla
         fields = ["id", "title", "photoRequired", "active", "order"]
 
 
-class AnswerSerializer(serializers.ModelSerializer):
-    taskId = serializers.IntegerField(source="item_id")
-    result = serializers.SerializerMethodField()
-    observation = serializers.CharField(source="observacion")
-    evidenceIds = serializers.SerializerMethodField()
+ChecklistTaskSerializer = ItemPlantillaSerializer
 
+
+RESULTADO_A_FRONTEND = {"ok": "conforme", "observado": "no_conforme", "no_aplica": "no_aplica", "": None}
+RESULTADO_DESDE_FRONTEND = {"conforme": "ok", "no_conforme": "observado", "no_aplica": "no_aplica"}
+
+
+def answer_data(answer):
+    return {"taskId": answer.item_id, "result": RESULTADO_A_FRONTEND.get(answer.resultado),
+            "observation": answer.observacion,
+            "evidenceIds": evidence_ids(answer.checklist.visita, answer.item_id)}
+
+
+class AnswerSerializer(serializers.BaseSerializer):
+    def to_representation(self, instance):
+        return answer_data(instance)
+
+
+class PlantillaChecklistSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="nombre", max_length=150)
+    active = serializers.BooleanField(source="activa")
+    tasks = ItemPlantillaSerializer(source="items", many=True)
+    version = serializers.IntegerField(min_value=1)
     class Meta:
-        model = RespuestaItem
-        fields = ["taskId", "result", "observation", "evidenceIds"]
+        model = PlantillaChecklist
+        fields = ["id", "name", "version", "active", "tasks"]
 
-    def get_result(self, obj):
-        return RESULTADO_A_FRONTEND.get(obj.resultado)
+    def validate_tasks(self, tasks):
+        if not tasks or not any(t.get("activo", True) for t in tasks):
+            raise serializers.ValidationError("Debe haber al menos una tarea activa.")
+        ids = [t["id"] for t in tasks if t.get("id", 0) > 0]
+        if len(set(ids)) != len(ids):
+            raise serializers.ValidationError("Ítems repetidos.")
+        if self.instance and set(ids) - set(self.instance.items.values_list("id", flat=True)):
+            raise serializers.ValidationError("Un ítem pertenece a otra plantilla.")
+        if not self.instance and ids:
+            raise serializers.ValidationError("Los ítems nuevos deben usar ID temporal negativo o cero.")
+        return tasks
 
-    def get_evidenceIds(self, obj):
-        return [str(e.id) for e in Evidencia.objects.filter(checklist=obj.checklist, item=obj.item)]
+    def write_items(self, template, tasks):
+        kept = []
+        for task in tasks:
+            pk = task.pop("id", 0)
+            if pk > 0:
+                item = template.items.get(pk=pk)
+                for key, value in task.items():
+                    setattr(item, key, value)
+                item.save()
+            else:
+                item = ItemPlantilla.objects.create(plantilla=template, **task)
+            kept.append(item.pk)
+        template.items.exclude(pk__in=kept).update(activo=False)
+
+    @transaction.atomic
+    def create(self, validated_data):
+        tasks = validated_data.pop("items")
+        template = PlantillaChecklist.objects.create(**validated_data)
+        self.write_items(template, tasks)
+        return template
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        tasks = validated_data.pop("items", None)
+        if tasks is not None:
+            validated_data["version"] = max(instance.version + 1, validated_data.get("version", instance.version))
+        for key, value in validated_data.items():
+            setattr(instance, key, value)
+        instance.save()
+        if tasks is not None:
+            self.write_items(instance, tasks)
+        return instance
 
 
-class VisitaDetailSerializer(serializers.ModelSerializer):
-    storeId = serializers.IntegerField(source="tienda_id")
-    technicianId = serializers.IntegerField(source="tecnico_id", allow_null=True)
-    ticketId = serializers.IntegerField(source="ticket_origen_id", allow_null=True)
-    origin = serializers.CharField(source="origen")
-    scheduledAt = serializers.DateTimeField(source="fecha_programada")
-    status = serializers.SerializerMethodField()
-    tasks = serializers.SerializerMethodField()
-    answers = serializers.SerializerMethodField()
-    workDescription = serializers.SerializerMethodField()
-    evidenceIds = serializers.SerializerMethodField()
-    startLocation = serializers.SerializerMethodField()
-    endLocation = serializers.SerializerMethodField()
-    startedAt = serializers.DateTimeField(source="iniciada_en", allow_null=True)
-    completedAt = serializers.DateTimeField(source="completada_en", allow_null=True)
-    expiresAt = serializers.SerializerMethodField()
-    timeLimitSeconds = serializers.SerializerMethodField()
-    timeLimitExceeded = serializers.BooleanField(source="excepcion_tiempo")
-    timeExceptionReason = serializers.CharField(source="justificacion_excepcion_tiempo")
-    timeExceptionStatus = serializers.SerializerMethodField()
-    exception = serializers.SerializerMethodField()
-    radiusMeters = serializers.SerializerMethodField()
-
+class ContratoSerializer(serializers.ModelSerializer):
+    clientId = serializers.PrimaryKeyRelatedField(source="cliente", queryset=Cliente.objects.all())
+    templateId = serializers.PrimaryKeyRelatedField(source="plantilla_checklist", queryset=PlantillaChecklist.objects.all())
+    startDate = serializers.DateField(source="fecha_inicio")
+    endDate = serializers.DateField(source="fecha_fin", allow_null=True)
+    monthlyVisits = serializers.IntegerField(source="frecuencia_visitas_mensual", min_value=1, max_value=2147483647)
+    monthlyInterventions = serializers.IntegerField(source="minimo_intervenciones_mensual", min_value=2, max_value=2147483647)
+    radiusMeters = serializers.IntegerField(source="radio_validacion_metros", min_value=1, max_value=10000)
+    active = serializers.BooleanField(source="activo")
     class Meta:
-        model = Visita
-        fields = [
-            "id", "storeId", "technicianId", "ticketId", "origin", "scheduledAt", "status",
-            "tasks", "answers", "workDescription", "evidenceIds",
-            "startLocation", "endLocation", "startedAt", "completedAt", "expiresAt",
-            "timeLimitSeconds", "timeLimitExceeded", "timeExceptionReason", "timeExceptionStatus",
-            "exception", "radiusMeters",
-        ]
+        model = Contrato
+        fields = ["id", "clientId", "templateId", "startDate", "endDate", "monthlyVisits", "monthlyInterventions", "radiusMeters", "active"]
 
-    def get_status(self, obj):
-        if obj.tecnico_id is None:
-            return "available"
-        if obj.estado == "completada":
-            return "completed"
-        if obj.estado == "pendiente_validacion":
-            return "pending_approval"
-        if obj.iniciada_en is None:
-            return "claimed"
-        return "in_progress"
-
-    def get_tasks(self, obj):
-        checklist = getattr(obj, "checklist", None)
-        if not checklist:
-            return []
-        items = checklist.plantilla.items.filter(activo=True)
-        return ChecklistTaskSerializer(items, many=True).data
-
-    def get_answers(self, obj):
-        checklist = getattr(obj, "checklist", None)
-        if not checklist:
-            return []
-        return AnswerSerializer(checklist.respuestas.all(), many=True).data
-
-    def get_workDescription(self, obj):
-        checklist = getattr(obj, "checklist", None)
-        return checklist.reporte_general if checklist else ""
-
-    def get_evidenceIds(self, obj):
-        ids = []
-        checklist = getattr(obj, "checklist", None)
-        if checklist:
-            ids += [str(e.id) for e in checklist.evidencias.all()]
-        if obj.ticket_origen:
-            ids += [str(e.id) for e in obj.ticket_origen.evidencias.all()]
-        return ids
-
-    def get_startLocation(self, obj):
-        if obj.latitud_inicio is None:
-            return None
-        return {
-            "latitude": float(obj.latitud_inicio),
-            "longitude": float(obj.longitud_inicio),
-            "accuracy": 0,
-            "capturedAt": obj.iniciada_en.timestamp() * 1000 if obj.iniciada_en else None,
-        }
-
-    def get_endLocation(self, obj):
-        if obj.latitud_cierre is None:
-            return None
-        return {
-            "latitude": float(obj.latitud_cierre),
-            "longitude": float(obj.longitud_cierre),
-            "accuracy": 0,
-            "capturedAt": obj.completada_en.timestamp() * 1000 if obj.completada_en else None,
-        }
-
-    def get_expiresAt(self, obj):
-        if obj.iniciada_en is None:
-            return None
-        from datetime import timedelta
-        return obj.iniciada_en + timedelta(seconds=300)
-
-    def get_timeLimitSeconds(self, obj):
-        return 300
-
-    def get_timeExceptionStatus(self, obj):
-        if not obj.excepcion_tiempo:
-            return None
-        if obj.excepcion_tiempo_aprobada is None:
-            return "pending"
-        return "approved" if obj.excepcion_tiempo_aprobada else "rejected"
-
-    def get_exception(self, obj):
-        if not obj.excepcion_ubicacion:
-            return None
-        return {
-            "type": "location",
-            "reason": obj.justificacion_excepcion,
-            "failure": obj.descripcion_fallo_ubicacion,
-            "requestedAt": obj.completada_en.isoformat() if obj.completada_en else None,
-            "reviewedAt": None,
-            "reviewerId": obj.excepcion_revisada_por_id,
-            "approved": obj.excepcion_aprobada,
-            "reviewReason": obj.comentario_revision_ubicacion or None,
-        }
-
-    def get_radiusMeters(self, obj):
-        contrato = obj.tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
-        return contrato.radio_validacion_metros if contrato else 100
+    def validate(self, attrs):
+        def val(name):
+            return attrs.get(name, getattr(self.instance, name, None))
+        start, end = val("fecha_inicio"), val("fecha_fin")
+        if end and end < start:
+            raise serializers.ValidationError({"endDate": "La fecha final no puede ser anterior al inicio."})
+        if val("plantilla_checklist") and not val("plantilla_checklist").activa:
+            raise serializers.ValidationError({"templateId": "La plantilla está inactiva."})
+        if self.instance and self.instance.visita_set.exists():
+            for key in ("cliente", "plantilla_checklist"):
+                if key in attrs and attrs[key].pk != getattr(self.instance, key+"_id"):
+                    raise serializers.ValidationError({"contract": "Conserva cliente y plantilla del contrato con historial; crea un contrato nuevo."})
+        if val("activo") and val("cliente"):
+            overlaps = Contrato.objects.filter(cliente=val("cliente"), activo=True).filter(
+                Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=start))
+            if end:
+                overlaps = overlaps.filter(fecha_inicio__lte=end)
+            if self.instance:
+                overlaps = overlaps.exclude(pk=self.instance.pk)
+            if overlaps.exists():
+                raise serializers.ValidationError({"startDate": "Existe otro contrato activo del cliente para esas fechas. Ajusta su vigencia antes de crear o activar otro."})
+        return attrs
 
 
-class TicketSerializer(serializers.ModelSerializer):
-    storeId = serializers.IntegerField(source="tienda_id")
-    reporterId = serializers.IntegerField(source="reportado_por_id")
-    category = serializers.CharField(source="categoria.nombre", read_only=True)
-    priority = serializers.CharField(source="urgencia.nombre", read_only=True)
-    description = serializers.CharField(source="descripcion")
-    createdAt = serializers.DateTimeField(source="creado_en")
-    technicianId = serializers.IntegerField(source="tecnico_asignado_id", allow_null=True)
-    scheduledAt = serializers.DateTimeField(source="fecha_programada", allow_null=True)
-    resolvedAt = serializers.DateTimeField(source="resuelto_en", allow_null=True)
-    evidenceIds = serializers.SerializerMethodField()
+def iso(value):
+    return value.isoformat() if value else None
 
-    status = serializers.SerializerMethodField()
 
-    class Meta:
-        model = Ticket
-        fields = [
-            "id", "storeId", "reporterId", "category", "priority", "description",
-            "status", "createdAt", "technicianId", "scheduledAt", "resolvedAt", "evidenceIds",
-        ]
+def exception_data(exc):
+    return {"id": exc.pk, "revision": exc.revision, "type": exc.tipo, "reason": exc.motivo, "failure": exc.fallo, "authorId": exc.autor_id,
+            "requestedAt": iso(exc.solicitada_en), "reviewedAt": iso(exc.revisada_en),
+            "reviewerId": exc.revisor_id, "approved": None if exc.decision == "pending" else exc.decision == "approved",
+            "reviewReason": exc.motivo_decision}
 
-    def get_status(self, obj):
-        return {
-            "abierto": "open", "programado": "scheduled", "en_proceso": "in_progress",
-            "resuelto": "resolved", "cerrado": "closed",
-        }.get(obj.estado)
-    
-    def get_evidenceIds(self, obj):
-        return [str(e.id) for e in obj.evidencias.all()]
+
+def legacy_location(latitude, longitude, captured_at):
+    if latitude is None or longitude is None:
+        return None
+    return {"latitude": float(latitude), "longitude": float(longitude), "accuracy": 0,
+            "capturedAt": captured_at.timestamp() * 1000 if captured_at else None}
+
+
+def visit_data(visit):
+    from .claims import CLAIM_DURATION
+    from django.utils import timezone
+    checklist = getattr(visit, "checklist", None)
+    tasks = checklist.tareas_snapshot if checklist else []
+    if checklist and not tasks and checklist.plantilla_version is None:
+        tasks = ItemPlantillaSerializer(checklist.plantilla.items.filter(activo=True), many=True).data
+    answers = [answer_data(a) for a in checklist.respuestas.all()] if checklist else []
+    # Evidencia confirmada se recupera incluso si el último guardado del editor falló.
+    for task in tasks:
+        if not any(a["taskId"] == task["id"] for a in answers):
+            answers.append({"taskId": task["id"], "result": None, "observation": "", "evidenceIds": evidence_ids(visit, task["id"])})
+    status = {"en_curso": "in_progress", "completada": "completed", "pendiente_validacion": "pending_approval",
+              "no_realizada": "cancelled"}.get(visit.estado, "claimed" if visit.tecnico_id else "available")
+    exceptions = [exception_data(e) for e in visit.excepciones.order_by("pk")]
+    location_exception = None
+    if visit.excepcion_ubicacion:
+        location_exception = {"type": "location", "reason": visit.justificacion_excepcion,
+                              "failure": visit.descripcion_fallo_ubicacion,
+                              "requestedAt": iso(visit.completado_en), "reviewedAt": None,
+                              "reviewerId": visit.excepcion_revisada_por_id,
+                              "approved": visit.excepcion_aprobada,
+                              "reviewReason": visit.comentario_revision_ubicacion or None}
+    time_exception_status = None
+    if visit.excepcion_tiempo:
+        time_exception_status = ("pending" if visit.excepcion_tiempo_aprobada is None
+                                 else "approved" if visit.excepcion_tiempo_aprobada else "rejected")
+    radius = visit.radio_metros
+    if radius is None:
+        contract = visit.contrato or visit.tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
+        radius = contract.radio_validacion_metros if contract else 100
+    def duration(end, start):
+        return (end-start).total_seconds() if end and start else None
+    return {"id": visit.pk, "storeId": visit.tienda_id, "technicianId": visit.tecnico_id, "ticketId": visit.ticket_origen_id,
+            "period": iso(visit.periodo), "quota": visit.cuota if visit.origen == "checklist" and visit.periodo else None,
+            "quotaCount": Visita.objects.filter(tienda_id=visit.tienda_id, origen="checklist", periodo=visit.periodo).count() if visit.origen == "checklist" and visit.periodo else None,
+            "origin": visit.origen, "scheduledAt": iso(visit.fecha_programada), "status": status,
+            "workStatus": VISIT_WORK_STATUS[visit.estado], "tasks": tasks,
+            "answers": answers, "workDescription": visit.descripcion_trabajo or (checklist.reporte_general if checklist else ""), "evidenceIds": evidence_ids(visit),
+            "startLocation": visit.ubicacion_inicio or legacy_location(visit.latitud_inicio, visit.longitud_inicio, visit.iniciado_en),
+            "endLocation": visit.ubicacion_cierre or legacy_location(visit.latitud_cierre, visit.longitud_cierre, visit.completado_en),
+            "startedAt": iso(visit.iniciado_en), "formOpenedAt": iso(visit.formulario_abierto_en),
+            "claimedAt": iso(visit.reclamada_en), "claimExpiresAt": iso(visit.reclamo_vence_en),
+            "claimHistory": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
+                "kind": e.tipo, "technicianId": e.datos.get("technicianId", e.actor_id),
+                "claimedAt": e.datos.get("claimedAt", iso(e.fecha)),
+                "expiresAt": e.datos.get("expiresAt", iso(e.fecha + CLAIM_DURATION)), "text": e.texto}
+                for e in visit.eventos.filter(tipo__in=["claim", "claim_release"]).order_by("pk")],
+            "expiresAt": iso(visit.formulario_vence_en), "submittedAt": iso(visit.enviado_en), "completedAt": iso(visit.completado_en),
+            "revision": visit.borrador_revision, "radiusMeters": radius, "storeSnapshot": visit.tienda_snapshot or None,
+            "serverNow": iso(timezone.now()), "timeLimitSeconds": 300 if visit.formulario_abierto_en else None,
+            "timeLimitExceeded": bool(visit.excepcion_tiempo or (visit.formulario_vence_en and timezone.now() >= visit.formulario_vence_en and not visit.completado_en)),
+            "timeExceptionReason": visit.justificacion_excepcion_tiempo, "timeExceptionStatus": time_exception_status,
+            "exceptions": exceptions, "exception": exceptions[-1] if exceptions else location_exception,
+            "exceptionHistory": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
+                "kind": e.tipo, "exception": e.datos["exception"]}
+                for e in visit.eventos.order_by("pk") if "exception" in e.datos],
+            "totalSeconds": duration(visit.enviado_en, visit.iniciado_en),
+            "executionSeconds": duration(visit.formulario_abierto_en, visit.iniciado_en),
+            "registrationSeconds": duration(visit.enviado_en, visit.formulario_abierto_en),
+            "legacy": not bool(visit.tienda_snapshot), "active": visit.vigente}
+
+
+def ticket_data(ticket):
+    visit = ticket.visitas_generadas.filter(vigente=True).first()
+    return {"id": ticket.pk, "storeId": ticket.tienda_id, "reporterId": ticket.reportado_por_id,
+            "category": ticket.categoria.nombre, "categoryId": ticket.categoria_id,
+            "priority": ticket.urgencia.nombre, "priorityId": ticket.urgencia_id,
+            "description": ticket.descripcion,
+            "workStatus": TICKET_WORK_STATUS[ticket.estado],
+            "status": {"abierto": "open", "programado": "scheduled", "en_proceso": "in_progress", "pendiente_validacion": "pending_approval", "resuelto": "resolved", "cerrado": "closed"}[ticket.estado],
+            "createdAt": iso(ticket.creado_en), "technicianId": ticket.tecnico_asignado_id,
+            "scheduledAt": iso(ticket.fecha_programada), "resolvedAt": iso(ticket.resuelto_en), "closedAt": iso(ticket.cerrado_en),
+            "resolution": visit.descripcion_trabajo if visit else "", "visitId": visit.pk if visit else None,
+            "revision": ticket.revision,
+            "evidenceIds": [str(e.client_id) for e in ticket.archivos.filter(eliminada_en__isnull=True)],
+            "technicalEvidenceIds": evidence_ids(visit) if visit else [],
+            "history": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id, "text": e.texto, "data": e.datos} for e in ticket.eventos.order_by("pk")]}
+
+
+def evidence_data(evidence):
+    return {"id": str(evidence.client_id), "serverId": evidence.pk, "taskId": evidence.item_id,
+            "visitId": evidence.visita_id, "ticketId": evidence.ticket_id, "authorId": evidence.autor_id,
+            "name": evidence.nombre, "mimeType": evidence.mime_type, "size": evidence.tamano,
+            "capturedAt": iso(evidence.capturada_en), "uploadedAt": iso(evidence.subida_en), "source": evidence.origen}
+
+
+class VisitaDetailSerializer(serializers.BaseSerializer):
+    def to_representation(self, instance):
+        return visit_data(instance)
+
+
+VisitaSerializer = VisitaDetailSerializer
+
+
+class TicketSerializer(serializers.BaseSerializer):
+    def to_representation(self, instance):
+        return ticket_data(instance)
 
 
 class TicketCreateSerializer(serializers.Serializer):
@@ -338,14 +422,10 @@ class TicketCreateSerializer(serializers.Serializer):
         ).update(ticket=ticket)
         return ticket
 
+
 class ReporteVisitaSerializer(VisitaDetailSerializer):
-    storeName = serializers.CharField(source="tienda.nombre", read_only=True)
-    technicianName = serializers.SerializerMethodField()
-
-    class Meta(VisitaDetailSerializer.Meta):
-        fields = VisitaDetailSerializer.Meta.fields + ["storeName", "technicianName"]
-
-    def get_technicianName(self, obj):
-        if not obj.tecnico:
-            return None
-        return obj.tecnico.get_full_name() or obj.tecnico.username
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data["storeName"] = instance.tienda.nombre
+        data["technicianName"] = (instance.tecnico.get_full_name() or instance.tecnico.username) if instance.tecnico else None
+        return data

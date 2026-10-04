@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { Alert, Button, Input, Select } from '../../components/ui'
 import { Modal } from '../../components/ui/Modal'
-import type { AdminEntities, AdminKind, ChecklistTask, UserRole } from '../../types/models'
+import type { AdminEntities, AdminKind, ChecklistTask } from '../../types/models'
 import { localDate } from '../../utils/dates'
-import { errorMessage, required } from '../../services/errors'
+import { normalizeRole } from '../auth/session'
+import { AppError, errorMessage, required } from '../../services/errors'
 import { titles, getAdminFields, type Entity } from './fields'
 import { TemplateItems } from './TemplateItems'
+import { pastedCoordinatePair, storeCoordinate } from './storeCoordinates'
 
 export function AdminForm({
   kind,
@@ -53,7 +55,13 @@ export function AdminForm({
   )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({})
   const [confirm, setConfirm] = useState(false)
+  const [coordinatePreview, setCoordinatePreview] = useState<{
+    latitude: number
+    longitude: number
+  }>()
+  const coordinateHelpId = useId()
   const fields = getAdminFields(clients, templates)
   const build = (): Entity => {
     const id = original?.id ?? 0
@@ -62,6 +70,9 @@ export function AdminForm({
     for (const field of fields[kind])
       required(field.optional || text(field.name), `Completa ${field.label}.`)
     if (kind === 'users') {
+      required(original || text('password'), 'La contraseña inicial es obligatoria.')
+      const role = normalizeRole(text('role'))
+      required(role, 'Selecciona un rol válido.')
       required(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text('email')), 'El correo no es válido.')
       required(
         text('role') !== 'store_supervisor' || storeIds.length === 1,
@@ -71,7 +82,9 @@ export function AdminForm({
         id,
         name: text('name'),
         email: text('email'),
-        role: text('role') as UserRole,
+        role,
+        username: text('username'),
+        ...(text('password') ? { password: values.password } : {}),
         storeIds,
         active,
         passwordInitialized:
@@ -79,32 +92,34 @@ export function AdminForm({
       }
     }
     if (kind === 'stores') {
-      required(
-        Number.isFinite(num('latitude')) &&
-          Math.abs(num('latitude')) <= 90 &&
-          Number.isFinite(num('longitude')) &&
-          Math.abs(num('longitude')) <= 180,
-        'Introduce coordenadas válidas.',
-      )
       return {
         id,
         name: text('name'),
         address: text('address'),
         contact: text('contact'),
         clientId: num('clientId'),
-        latitude: num('latitude'),
-        longitude: num('longitude'),
+        latitude: storeCoordinate(text('latitude'), 'latitude'),
+        longitude: storeCoordinate(text('longitude'), 'longitude'),
         active,
       }
     }
     if (kind === 'clients')
-      return { id, name: text('name'), taxId: text('taxId'), email: text('email') }
+      return {
+        id,
+        name: text('name'),
+        taxId: text('taxId'),
+        email: text('email'),
+      }
     if (kind === 'contracts') {
       required(
         ['monthlyVisits', 'monthlyInterventions', 'radiusMeters'].every(
           (key) => Number.isInteger(num(key)) && num(key) > 0,
         ),
         'Frecuencias y radio deben ser enteros mayores que cero.',
+      )
+      required(
+        num('monthlyInterventions') >= 2,
+        'Cada tienda requiere al menos dos intervenciones mensuales.',
       )
       required(
         !text('endDate') || text('endDate') >= text('startDate'),
@@ -147,7 +162,13 @@ export function AdminForm({
     >
       {confirm ? (
         <>
-          <p>Confirma los cambios en este registro de demostración.</p>
+          <p>Confirma los cambios que se guardarán en el servidor.</p>
+          {kind === 'stores' && coordinatePreview && (
+            <p>
+              Ubicación que se guardará: latitud {coordinatePreview.latitude.toFixed(6)}, longitud{' '}
+              {coordinatePreview.longitude.toFixed(6)}.
+            </p>
+          )}
           <div className="nf-actions">
             <Button
               disabled={busy}
@@ -161,11 +182,13 @@ export function AdminForm({
                     .then(onClose)
                     .catch((cause) => {
                       setError(errorMessage(cause))
+                      setFieldErrors(cause instanceof AppError ? cause.fields : {})
                       setConfirm(false)
                     })
                     .finally(() => setBusy(false))
                 } catch (cause) {
                   setError(errorMessage(cause))
+                  setFieldErrors(cause instanceof AppError ? cause.fields : {})
                   setConfirm(false)
                   setBusy(false)
                 }
@@ -184,11 +207,18 @@ export function AdminForm({
           onSubmit={(event) => {
             event.preventDefault()
             setError('')
+            setFieldErrors({})
             try {
-              build()
+              const entity = build()
+              setCoordinatePreview(
+                'latitude' in entity
+                  ? { latitude: entity.latitude, longitude: entity.longitude }
+                  : undefined,
+              )
               setConfirm(true)
             } catch (cause) {
               setError(errorMessage(cause))
+              setFieldErrors(cause instanceof AppError ? cause.fields : {})
             }
           }}
         >
@@ -198,6 +228,7 @@ export function AdminForm({
                 <Select
                   key={field.name}
                   label={field.label}
+                  errors={fieldErrors[field.name]}
                   required={!field.optional}
                   value={values[field.name] ?? ''}
                   onChange={(event) =>
@@ -215,17 +246,44 @@ export function AdminForm({
                 <Input
                   key={field.name}
                   label={field.label}
+                  errors={fieldErrors[field.name]}
                   type={field.type ?? 'text'}
+                  inputMode={field.inputMode}
+                  placeholder={field.placeholder}
+                  aria-describedby={
+                    kind === 'stores' && (field.name === 'latitude' || field.name === 'longitude')
+                      ? coordinateHelpId
+                      : undefined
+                  }
                   step={field.type === 'number' ? 'any' : undefined}
                   required={!field.optional}
                   value={values[field.name] ?? ''}
                   onChange={(event) =>
                     setValues((current) => ({ ...current, [field.name]: event.target.value }))
                   }
+                  onPaste={(event) => {
+                    if (
+                      kind !== 'stores' ||
+                      (field.name !== 'latitude' && field.name !== 'longitude')
+                    )
+                      return
+                    const pair = pastedCoordinatePair(event.clipboardData.getData('text'))
+                    if (!pair) return
+                    event.preventDefault()
+                    setValues((current) => ({ ...current, ...pair }))
+                  }}
                 />
               ),
             )}
           </div>
+          {kind === 'stores' && (
+            <p id={coordinateHelpId}>
+              Latitud entre −90 y 90; longitud entre −180 y 180. Puedes pegar el par completo en
+              cualquiera de los dos campos o escribir cada valor por separado, con punto o coma
+              decimal. Las coordenadas se redondean a seis decimales al guardar; revisa la ubicación
+              antes de confirmar.
+            </p>
+          )}
           {kind !== 'clients' && (
             <label className="nf-check">
               <input

@@ -94,16 +94,16 @@
   .nf-badge {
     @apply inline-block rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand-950;
   }
-  .nf-badge--open {
+  .nf-badge--pending {
     @apply bg-amber-100 text-amber-900;
   }
-  .nf-badge--scheduled {
+  .nf-badge--in_progress {
     @apply bg-sky-100 text-sky-900;
   }
-  .nf-badge--pending_approval {
+  .nf-badge--in_review {
     @apply bg-violet-100 text-violet-900;
   }
-  .nf-badge--completed {
+  .nf-badge--finished {
     @apply bg-emerald-100 text-emerald-900;
   }
   .nf-table {

@@ -18,40 +18,77 @@ export function Button({
 }
 export function Input({
   label,
+  errors,
   ...props
-}: InputHTMLAttributes<HTMLInputElement> & { label: string }) {
+}: InputHTMLAttributes<HTMLInputElement> & { label: string; errors?: string[] }) {
   const id = useId()
+  const describedBy =
+    [props['aria-describedby'], errors?.length ? `${id}-error` : undefined]
+      .filter(Boolean)
+      .join(' ') || undefined
   return (
     <div className="nf-field">
       <label htmlFor={id}>{label}</label>
-      <input id={id} {...props} />
+      <input
+        id={id}
+        {...props}
+        aria-invalid={errors?.length ? true : props['aria-invalid']}
+        aria-describedby={describedBy}
+      />
+      {errors?.length ? (
+        <small id={`${id}-error`} role="alert">
+          {errors.join(' ')}
+        </small>
+      ) : null}
     </div>
   )
 }
 export function Select({
   label,
+  errors,
   children,
   ...props
-}: SelectHTMLAttributes<HTMLSelectElement> & { label: string }) {
+}: SelectHTMLAttributes<HTMLSelectElement> & { label: string; errors?: string[] }) {
   const id = useId()
   return (
     <div className="nf-field">
       <label htmlFor={id}>{label}</label>
-      <select id={id} {...props}>
+      <select
+        id={id}
+        {...props}
+        aria-invalid={errors?.length ? true : props['aria-invalid']}
+        aria-describedby={errors?.length ? `${id}-error` : props['aria-describedby']}
+      >
         {children}
       </select>
+      {errors?.length ? (
+        <small id={`${id}-error`} role="alert">
+          {errors.join(' ')}
+        </small>
+      ) : null}
     </div>
   )
 }
 export function Textarea({
   label,
+  errors,
   ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string }) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; errors?: string[] }) {
   const id = useId()
   return (
     <div className="nf-field">
       <label htmlFor={id}>{label}</label>
-      <textarea id={id} {...props} />
+      <textarea
+        id={id}
+        {...props}
+        aria-invalid={errors?.length ? true : props['aria-invalid']}
+        aria-describedby={errors?.length ? `${id}-error` : props['aria-describedby']}
+      />
+      {errors?.length ? (
+        <small id={`${id}-error`} role="alert">
+          {errors.join(' ')}
+        </small>
+      ) : null}
     </div>
   )
 }
@@ -104,13 +141,7 @@ export function EmptyState({
     </div>
   )
 }
-export function LoadingState() {
-  return (
-    <div className="nf-empty" role="status" aria-live="polite">
-      Cargando información…
-    </div>
-  )
-}
+export { LoadingState } from '../feedback/LoadingState'
 export function DataList({ children, label }: { children: ReactNode; label: string }) {
   return (
     <section className="nf-list" aria-label={label}>
@@ -154,7 +185,7 @@ export function ResponsiveTable<T>({
           </tbody>
         </table>
       </div>
-      <div className="nf-list lg:hidden" aria-label={caption}>
+      <div className="nf-list lg:hidden" role="region" aria-label={caption}>
         {rows.map((row) => (
           <article className="nf-card" key={rowKey(row)}>
             <dl className="nf-details">

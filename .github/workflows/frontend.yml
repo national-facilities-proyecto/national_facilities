@@ -1,19 +1,56 @@
-name: Frontend
+name: Django React PostgreSQL
 on:
   push:
-    paths: ['frontend/**', '.github/workflows/frontend.yml']
+    paths: ['frontend/**', 'backend/**', '.github/workflows/frontend.yml']
   pull_request:
-    paths: ['frontend/**', '.github/workflows/frontend.yml']
+    paths: ['frontend/**', 'backend/**', '.github/workflows/frontend.yml']
 permissions:
   contents: read
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: nf_integration
+          POSTGRES_USER: nf_test
+          POSTGRES_PASSWORD: integration-only
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nf_test -d nf_integration"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_DB: nf_integration
+      POSTGRES_USER: nf_test
+      POSTGRES_PASSWORD: integration-only
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: '55432'
+      NF_TEST_PYTHON: ${{ github.workspace }}/.venv/bin/python
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m venv ../.venv
+      - run: ../.venv/bin/python -m pip install -r ../backend/requirements.txt
+      - run: ../.venv/bin/python ../backend/manage.py check --settings=config.test_settings
+      - run: ../.venv/bin/python ../backend/manage.py makemigrations --check --settings=config.test_settings
+      - run: ../.venv/bin/python ../backend/manage.py test core --settings=config.test_settings --noinput
+      - run: ../.venv/bin/python ../backend/manage.py migrate --settings=config.test_settings
+      - run: ../.venv/bin/python ../backend/test_support/seed.py
+      - run: |
+          mkdir -p ../.integration
+          nohup ../.venv/bin/python -u ../backend/manage.py runserver 127.0.0.1:8000 --settings=config.test_settings --noreload > ../.integration/backend.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/api/health/; then exit 0; fi
+            sleep 1
+          done
+          cat ../.integration/backend.log
+          exit 1
       - uses: actions/setup-node@v4
         with:
           node-version: '22.14.0'
@@ -26,8 +63,6 @@ jobs:
       - run: npm test
       - run: npm run test:coverage
       - run: npm run build
-        env:
-          VITE_DATA_SOURCE: mock
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - run: npm run build:api
@@ -40,3 +75,4 @@ jobs:
             frontend/coverage
             frontend/playwright-report
             frontend/test-results
+            .integration/backend.log

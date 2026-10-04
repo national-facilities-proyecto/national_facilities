@@ -9,6 +9,7 @@ export const navigation: Record<UserRole, { to: string; label: string }[]> = {
     { to: '/supervisor/tickets', label: 'Mis incidencias' },
   ],
   account_supervisor: [
+    { to: '/technical-supervisor/reports', label: 'Indicadores y reportes' },
     { to: '/technical-supervisor/visits', label: 'Programación de visitas' },
     { to: '/technical-supervisor/incidents/completed', label: 'Incidencias' },
     { to: '/technical-supervisor/checklists', label: 'Checklists' },

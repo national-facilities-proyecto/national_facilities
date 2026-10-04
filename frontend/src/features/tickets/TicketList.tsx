@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
+import { QueryFeedback } from '../../components/feedback/QueryFeedback'
 import {
   Badge,
   Button,
@@ -13,23 +14,7 @@ import {
   Select,
 } from '../../components/ui'
 import { displayDate, inDateRange } from '../../utils/dates'
-import { ticketStatusLabels, type TicketStatus } from '../../types/models'
-
-type StoreSupervisorStatus = 'open' | 'scheduled' | 'pending_approval' | 'completed'
-
-function storeSupervisorStatus(ticket: { status: TicketStatus }): StoreSupervisorStatus {
-  if (ticket.status === 'open') return 'open'
-  if (ticket.status === 'pending_approval') return 'pending_approval'
-  if (['resolved', 'closed'].includes(ticket.status)) return 'completed'
-  return 'scheduled'
-}
-
-const storeSupervisorStatusLabels: Record<StoreSupervisorStatus, string> = {
-  open: 'Abierto',
-  scheduled: 'Programado',
-  pending_approval: 'Por aprobar',
-  completed: 'Completado',
-}
+import { ticketStatusLabels, ticketWorkStatus, workStatusOptions } from '../../types/models'
 
 export function TicketList({
   account = false,
@@ -46,16 +31,18 @@ export function TicketList({
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const isStoreSupervisorView = !account && !pending
-  const usesSimplifiedStatuses = !pending
   const query = useQuery(
     useCallback(
       async (signal) => {
-        const [tickets, stores, users] = await Promise.all([
+        const [tickets, stores, users, catalogs] = await Promise.all([
           repos.tickets.list({ signal }),
           repos.stores.list({ signal }),
           repos.users.list({ signal }),
+          repos.tickets.catalogs
+            ? repos.tickets.catalogs()
+            : Promise.reject(new Error('Catálogos no disponibles.')),
         ])
-        return { tickets, stores, users }
+        return { tickets, stores, users, catalogs }
       },
       [repos],
     ),
@@ -66,11 +53,7 @@ export function TicketList({
   const rows = query.data.tickets.filter(
     (ticket) =>
       (!pending || ticket.status === 'open') &&
-      (pending ||
-        !status ||
-        (usesSimplifiedStatuses
-          ? storeSupervisorStatus(ticket) === status
-          : ticket.status === status)) &&
+      (pending || !status || ticketWorkStatus(ticket.status) === status) &&
       (isStoreSupervisorView || !priority || ticket.priority === priority) &&
       (!category || ticket.category === category) &&
       (!storeId || ticket.storeId === Number(storeId)) &&
@@ -86,19 +69,19 @@ export function TicketList({
             : 'Consulta la asignación, programación y resolución de cada reporte.'
         }
       />
+      <QueryFeedback query={query} />
       <Card>
         <div className="nf-filters">
           {!pending && (
-            <Select label="Estado" value={status} onChange={(event) => setStatus(event.target.value)}>
+            <Select
+              label="Estado"
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+            >
               <option value="">Todos</option>
-              {(usesSimplifiedStatuses
-                ? (Object.keys(storeSupervisorStatusLabels) as StoreSupervisorStatus[])
-                : (Object.keys(ticketStatusLabels) as TicketStatus[])
-              ).map((value) => (
+              {workStatusOptions.map(({ value, label }) => (
                 <option key={value} value={value}>
-                  {usesSimplifiedStatuses
-                    ? storeSupervisorStatusLabels[value as StoreSupervisorStatus]
-                    : ticketStatusLabels[value as TicketStatus]}
+                  {label}
                 </option>
               ))}
             </Select>
@@ -109,7 +92,7 @@ export function TicketList({
             onChange={(event) => setCategory(event.target.value)}
           >
             <option value="">Todas</option>
-            {['Climatización', 'Eléctrico', 'Plomería', 'Refrigeración'].map((value) => (
+            {query.data.catalogs.categories.map(({ name: value }) => (
               <option key={value}>{value}</option>
             ))}
           </Select>
@@ -143,7 +126,11 @@ export function TicketList({
           )}
           {pending && (
             <>
-              <Select label="Tienda" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+              <Select
+                label="Tienda"
+                value={storeId}
+                onChange={(event) => setStoreId(event.target.value)}
+              >
                 <option value="">Todas</option>
                 {stores.map((store) => (
                   <option key={store.id} value={store.id}>
@@ -157,7 +144,7 @@ export function TicketList({
                 onChange={(event) => setPriority(event.target.value)}
               >
                 <option value="">Todas</option>
-                {['Alta', 'Media', 'Baja'].map((value) => (
+                {query.data.catalogs.priorities.map(({ name: value }) => (
                   <option key={value}>{value}</option>
                 ))}
               </Select>
@@ -175,7 +162,11 @@ export function TicketList({
           )}
           {!isStoreSupervisorView && !pending && (
             <>
-              <Select label="Tienda" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+              <Select
+                label="Tienda"
+                value={storeId}
+                onChange={(event) => setStoreId(event.target.value)}
+              >
                 <option value="">Todas</option>
                 {stores.map((store) => (
                   <option key={store.id} value={store.id}>
@@ -189,7 +180,7 @@ export function TicketList({
                 onChange={(event) => setPriority(event.target.value)}
               >
                 <option value="">Todas</option>
-                {['Alta', 'Media', 'Baja'].map((value) => (
+                {query.data.catalogs.priorities.map(({ name: value }) => (
                   <option key={value}>{value}</option>
                 ))}
               </Select>
@@ -256,16 +247,8 @@ export function TicketList({
             label: 'Estado y prioridad',
             render: (ticket) => (
               <>
-                <Badge
-                  className={
-                    usesSimplifiedStatuses
-                      ? `nf-badge--${storeSupervisorStatus(ticket)}`
-                      : undefined
-                  }
-                >
-                  {usesSimplifiedStatuses
-                    ? storeSupervisorStatusLabels[storeSupervisorStatus(ticket)]
-                    : ticketStatusLabels[ticket.status]}
+                <Badge className={`nf-badge--${ticketWorkStatus(ticket.status)}`}>
+                  {ticketStatusLabels[ticket.status]}
                 </Badge>
                 <p>{ticket.priority}</p>
               </>

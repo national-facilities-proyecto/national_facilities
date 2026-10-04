@@ -12,9 +12,11 @@ export type Entity = AdminEntities[AdminKind]
 type Field = {
   name: string
   label: string
-  type?: 'text' | 'email' | 'number' | 'date'
+  type?: 'text' | 'email' | 'number' | 'date' | 'password'
   options?: { value: string; label: string }[]
   optional?: boolean
+  inputMode?: 'decimal'
+  placeholder?: string
 }
 export function getAdminFields(
   clients: AdminEntities['clients'][],
@@ -22,6 +24,13 @@ export function getAdminFields(
 ) {
   const fields: Record<AdminKind, Field[]> = {
     users: [
+      { name: 'username', label: 'Usuario de acceso' },
+      {
+        name: 'password',
+        label: 'Contraseña inicial (obligatoria al crear)',
+        type: 'password',
+        optional: true,
+      },
       { name: 'name', label: 'Nombre completo' },
       { name: 'email', label: 'Correo', type: 'email' },
       {
@@ -34,8 +43,8 @@ export function getAdminFields(
       { name: 'name', label: 'Nombre de tienda' },
       { name: 'address', label: 'Dirección' },
       { name: 'contact', label: 'Contacto' },
-      { name: 'latitude', label: 'Latitud', type: 'number' },
-      { name: 'longitude', label: 'Longitud', type: 'number' },
+      { name: 'latitude', label: 'Latitud', inputMode: 'decimal', placeholder: '-12.127876' },
+      { name: 'longitude', label: 'Longitud', inputMode: 'decimal', placeholder: '-76.988939' },
       {
         name: 'clientId',
         label: 'Cliente',
@@ -64,7 +73,11 @@ export function getAdminFields(
       { name: 'startDate', label: 'Fecha de inicio', type: 'date' },
       { name: 'endDate', label: 'Fecha de fin (opcional)', type: 'date', optional: true },
       { name: 'monthlyVisits', label: 'Visitas mensuales', type: 'number' },
-      { name: 'monthlyInterventions', label: 'Intervenciones mínimas mensuales', type: 'number' },
+      {
+        name: 'monthlyInterventions',
+        label: 'Intervenciones mínimas mensuales por tienda',
+        type: 'number',
+      },
       { name: 'radiusMeters', label: 'Radio GPS (metros)', type: 'number' },
     ],
     templates: [

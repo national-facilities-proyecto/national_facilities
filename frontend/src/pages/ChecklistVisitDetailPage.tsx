@@ -7,6 +7,9 @@ import { Alert, Badge, Card } from '../components/ui'
 import { visitStatusLabels } from '../types/models'
 import { LazyMap } from '../features/technician/LazyMap'
 import { VisitStart } from '../features/checklists/VisitStart'
+import { formExpired } from '../features/checklists/clock'
+import { VisitRecord } from '../features/checklists/VisitRecord'
+import { ClaimHistory } from '../features/checklists/ClaimHistory'
 export default function ChecklistVisitDetailPage() {
   const { id } = useParams()
   const repos = useRepositories()
@@ -15,7 +18,7 @@ export default function ChecklistVisitDetailPage() {
       async (signal) => {
         const visit = await repos.checklists.get(Number(id), { signal })
         const store = await repos.stores.get(visit.storeId, { signal })
-        return { visit, store }
+        return { visit, store: { ...store, ...visit.storeSnapshot } }
       },
       [id, repos],
     ),
@@ -34,6 +37,13 @@ export default function ChecklistVisitDetailPage() {
           <h1>{store.name}</h1>
           <p>{store.address}</p>
           <Badge>{visitStatusLabels[visit.status]}</Badge>
+          {visit.quota && (
+            <p>
+              Visita mensual {visit.quota}
+              {visit.quotaCount ? ` de ${visit.quotaCount}` : ''}
+            </p>
+          )}
+          <p>El checklist puede realizarse cualquier día de su mes.</p>
           <p>Contacto: {store.contact}</p>
           <a
             className="nf-button nf-button--primary nf-directions"
@@ -46,19 +56,32 @@ export default function ChecklistVisitDetailPage() {
         </Card>
         <LazyMap stores={[store]} />
       </div>
-      {visit.status === 'available' && (
-        <VisitStart visit={visit} store={store} claimBeforeStart />
-      )}
+      {visit.status === 'available' && <VisitStart visit={visit} store={store} claimBeforeStart />}
+      <ClaimHistory visit={visit} />
       {visit.status === 'claimed' && <VisitStart visit={visit} store={store} />}
       {visit.status === 'in_progress' && (
         <Link className="nf-link" to={`/checklists/${visit.id}/start`}>
-          Continuar checklist
+          {!visit.formOpenedAt
+            ? 'Retomar ejecución'
+            : formExpired(visit)
+              ? 'Ver registro pendiente'
+              : 'Continuar formulario'}
         </Link>
       )}
       {visit.status === 'pending_approval' && (
-        <Alert success>Excepción enviada para revisión.</Alert>
+        <Alert success>
+          Excepción enviada para revisión.{' '}
+          <Link className="nf-link" to={`/checklists/${visit.id}/start`}>
+            Ver registro pendiente
+          </Link>
+        </Alert>
       )}
-      {visit.status === 'completed' && <Alert success>Checklist completado.</Alert>}
+      {visit.status === 'completed' && (
+        <>
+          <Alert success>Checklist completado.</Alert>
+          <VisitRecord visit={visit} />
+        </>
+      )}
       {visit.exception?.approved === false && (
         <Alert>Excepción rechazada: {visit.exception.reviewReason}</Alert>
       )}

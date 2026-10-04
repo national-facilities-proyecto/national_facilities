@@ -1,607 +1,397 @@
-import csv
-
 from django.db import transaction
-from django.db.models import Avg, Count, Q, F, ExpressionWrapper, DurationField
-from django.http import HttpResponse
-from django.utils import timezone
-from rest_framework import status
-from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveAPIView, RetrieveDestroyAPIView
+from django.db.models import Q
+from django.db.models.deletion import ProtectedError
+from django.shortcuts import get_object_or_404
+from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
-from rest_framework_simplejwt.tokens import RefreshToken
-
-from .geo import distancia_metros
-from .services import asegurar_bolsa_mes_actual
-
-from .models import (
-    Evidencia, Visita, Cliente, Tienda, Contrato,
-    PlantillaChecklist, ItemPlantilla, Usuario,
-    Checklist, RespuestaItem, Ticket, ReasignacionTicket, NivelUrgencia,
-)
-from .permissions import (
-    tiendas_visibles_para, EsTecnico, EsAdministrador,
-    EsSupervisorDeTienda, EsSupervisorDeCuenta,
-)
-from .serializers import (
-    TiendaSerializer, EvidenciaSerializer, VisitaSerializer, VisitaDetailSerializer,
-    ClienteSerializer, TiendaAdminSerializer, ContratoSerializer,
-    PlantillaChecklistSerializer, ItemPlantillaSerializer, UsuarioSerializer,
-    TicketSerializer, TicketCreateSerializer, RESULTADO_DESDE_FRONTEND,
-    ReporteVisitaSerializer, construir_datos_usuario,
-)
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.permissions import AllowAny
+from rest_framework import serializers
+from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla, Usuario,
+                     CategoriaProblema, NivelUrgencia, Rol, Evento, Ticket)
+from .permissions import tiendas_visibles_para, EsTecnico, EsAdministrador, EsSupervisorCuenta, rol_de
+from .serializers import (TiendaSerializer, ClienteSerializer, ContratoSerializer,
+                          PlantillaChecklistSerializer, ItemPlantillaSerializer, UsuarioSerializer,
+                          visit_data)
+from .auth_views import identity, PasswordView as CambiarPasswordView
+from .evidence_views import EvidenceUploadView as EvidenciaListCreateView, EvidenceDetailView, visible_evidence
+from .ticket_views import TicketListCreateView, TicketDetailView, ScheduleView as TicketScheduleView
+from .report_views import DashboardView, ExportView as ReporteVisitasExportView, ReportListView as ReporteVisitasListView
+from .services import (idempotent, visible_visits, claim_visit, start_visit,
+                       open_form, save_draft, complete_visit, locked_visit, Conflict, event, validate_content, record_end_gps, finalize_reviewed_visit, asegurar_bolsa_mes_actual)
+from .generation import generate_month
+from .claims import release_expired_claims
+from .input_serializers import ExceptionInputSerializer, ReviewInputSerializer
 
 
 class TiendaListView(ListAPIView):
     serializer_class = TiendaSerializer
-
     def get_queryset(self):
         return tiendas_visibles_para(self.request.user)
 
 
-class EvidenciaListCreateView(ListCreateAPIView):
-    serializer_class = EvidenciaSerializer
+class HealthView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
+    def get(self, request):
+        from django.db import connection, DatabaseError
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+        except DatabaseError:
+            return Response({"status": "unavailable"}, status=503)
+        return Response({"status": "ok"})
+
+
+class TiendaDetailView(RetrieveAPIView):
+    serializer_class = TiendaSerializer
     def get_queryset(self):
-        return Evidencia.objects.filter(checklist__visita__tecnico=self.request.user)
+        return tiendas_visibles_para(self.request.user)
 
 
-class VisitaPoolListView(ListAPIView):
-    """Bolsa compartida de checklist mensual: visible para cualquier tecnico."""
-    serializer_class = VisitaSerializer
+class UsersView(APIView):
+    def get(self, request):
+        role = rol_de(request.user)
+        if role == "administrator":
+            users = Usuario.objects.all()
+        else:
+            stores = tiendas_visibles_para(request.user)
+            users = Usuario.objects.filter(Q(pk=request.user.pk) | Q(tiendas_asignadas__tienda__in=stores, tiendas_asignadas__activo=True)).distinct()
+        allowed = set(tiendas_visibles_para(request.user).values_list("pk", flat=True))
+        return Response([{**identity(u), "storeIds": [pk for pk in identity(u)["storeIds"] if pk in allowed]}
+                         for u in users if rol_de(u)])
+
+
+class CatalogsView(APIView):
+    def get(self, request):
+        return Response({
+            "categories": [{"id": c.pk, "name": c.nombre} for c in CategoriaProblema.objects.filter(activo=True)],
+            "priorities": [{"id": c.pk, "name": c.nombre, "firstResponseHours": c.sla_primera_respuesta_horas,
+                            "resolutionHours": c.sla_resolucion_horas} for c in NivelUrgencia.objects.all()],
+            "roles": [{"id": r.pk, "name": r.nombre} for r in Rol.objects.all()],
+        })
+
+
+class VisitListView(APIView):
+    origin = None
+    def get(self, request):
+        visits = visible_visits(request.user).order_by("-fecha_programada", "pk")
+        release_expired_claims(tiendas_visibles_para(request.user))
+        if self.origin:
+            visits = visits.filter(origen=self.origin)
+        return Response([visit_data(v) for v in visits])
+
+
+class ChecklistListView(VisitListView):
+    origin = "checklist"
+
+
+class ScheduledVisitListView(VisitListView):
+    origin = "ticket"
+
+
+class VisitPoolListView(VisitListView):
     permission_classes = [EsTecnico]
+    def get(self, request):
+        asegurar_bolsa_mes_actual(request.user)
+        return Response([visit_data(v) for v in visible_visits(request.user).filter(origen="checklist", tecnico__isnull=True, estado="programada")])
 
-def get_queryset(self):
-        asegurar_bolsa_mes_actual()
-        return Visita.objects.filter(origen="checklist", tecnico__isnull=True)
 
-class VisitaTomarView(APIView):
-    """El tecnico reclama una visita de la bolsa compartida."""
+class GenerateMonthInput(serializers.Serializer):
+    period = serializers.DateField(required=False)
+
+    def validate_period(self, value):
+        from django.utils import timezone
+        if value != timezone.localdate().replace(day=1):
+            raise ValidationError("La bolsa operativa se genera para el primer día del mes actual.")
+        return value
+
+
+class GenerateMonthView(APIView):
     permission_classes = [EsTecnico]
+    def post(self, request):
+        def work():
+            serializer = GenerateMonthInput(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            return {"visitIds": generate_month(request.user, serializer.validated_data.get("period"))}
+        return Response(idempotent(request, work))
 
+
+class VisitDetailView(APIView):
+    def get(self, request, pk):
+        release_expired_claims(tiendas_visibles_para(request.user))
+        return Response(visit_data(get_object_or_404(visible_visits(request.user), pk=pk)))
+
+
+class VisitActionView(APIView):
+    permission_classes = [EsTecnico]
+    action = ""
     def post(self, request, pk):
-        with transaction.atomic():
-            try:
-                visita = Visita.objects.select_for_update().get(pk=pk, origen="checklist")
-            except Visita.DoesNotExist:
-                return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        # Fuera de la transacción idempotente: un inicio rechazado no revierte la liberación.
+        if self.action in ("claim", "start"):
+            release_expired_claims(tiendas_visibles_para(request.user))
+        def work():
+            if self.action == "claim":
+                visit = claim_visit(request.user, pk)
+            elif self.action == "start":
+                visit = start_visit(request.user, pk, request.data)
+            elif self.action == "open_form":
+                visit = open_form(request.user, pk, request.data)
+            elif self.action == "draft":
+                visit = save_draft(request.user, pk, request.data)
+            elif self.action == "complete":
+                visit = complete_visit(request.user, pk, request.data)
+            elif self.action == "end_gps":
+                visit = record_end_gps(request.user, pk, request.data)
+            elif self.action == "submit_review":
+                from .services import submit_review
+                visit = submit_review(request.user, pk, request.data)
+            else:
+                raise ValidationError("Acción inválida.")
+            return visit_data(visit)
+        return Response(idempotent(request, work))
 
-            if visita.tecnico is not None:
-                return Response(
-                    {"detail": "Esta visita ya fue tomada por otro tecnico."},
-                    status=status.HTTP_409_CONFLICT,
-                )
 
-            visita.tecnico = request.user
-            visita.estado = "en_curso"
-            visita.save()
-
-        return Response(VisitaSerializer(visita).data)
-
-
-class VisitaProgramadasListView(ListAPIView):
-    """Visitas generadas desde un ticket, asignadas especificamente a este tecnico."""
-    serializer_class = VisitaSerializer
+class ExceptionRequestView(APIView):
     permission_classes = [EsTecnico]
+    exception_type = None
+    def post(self, request, pk):
+        def work():
+            from django.utils import timezone
+            visit = locked_visit(request.user, pk)
+            if not visit.iniciado_en or not visit.formulario_abierto_en or visit.estado not in ("en_curso", "pendiente_validacion"):
+                raise Conflict("No hay un formulario en ejecución o pendiente.")
+            payload = request.data.copy()
+            exception_type = self.exception_type
+            if exception_type is None:
+                # Los alias de urls.py conservan el tipo indicado por su URL.
+                endpoint = request.path.rstrip("/").rsplit("/", 1)[-1]
+                exception_type = {"excepcion-ubicacion": "location", "excepcion-tiempo": "time_limit"}.get(endpoint)
+            if exception_type:
+                if payload.get("type") not in (None, exception_type):
+                    raise ValidationError({"type": "El tipo de excepción no corresponde a esta ruta."})
+                payload["type"] = exception_type
+            serializer = ExceptionInputSerializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            if data["type"] == "location":
+                validate_content(visit)
+            from .services import request_or_correct_exception
+            request_or_correct_exception(request.user, visit, data)
+            visit.estado = "pendiente_validacion"
+            newly_submitted = False
+            if not visit.enviado_en:
+                try:
+                    validate_content(visit)
+                    visit.enviado_en = timezone.now()
+                    newly_submitted = True
+                except ValidationError:
+                    pass  # Un borrador incompleto sigue pendiente; no inventa un envío aceptado.
+            visit.save(update_fields=["estado", "enviado_en"])
+            if newly_submitted:
+                event(request.user, visit, "review_submission", "Registro completo enviado para revisión",
+                      {"draftRevision": visit.borrador_revision, "submittedAt": visit.enviado_en.isoformat()})
+            if visit.ticket_origen_id:
+                Ticket.objects.filter(pk=visit.ticket_origen_id).update(estado="pendiente_validacion")
+            return visit_data(visit)
+        return Response(idempotent(request, work))
 
-    def get_queryset(self):
-        return Visita.objects.filter(origen="ticket", tecnico=self.request.user)
+
+class ExceptionReviewView(APIView):
+    permission_classes = [EsSupervisorCuenta]
+    def post(self, request, pk):
+        def work():
+            from django.utils import timezone
+            visit = locked_visit(request.user, pk, owner=False)
+            serializer = ReviewInputSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            exception = get_object_or_404(visit.excepciones.select_for_update(), pk=data["exceptionId"])
+            if data["revision"] != visit.borrador_revision or data["exceptionRevision"] != exception.revision:
+                raise Conflict("El contenido o la justificación cambió. Recarga antes de tomar una decisión.")
+            decision = "approved" if data["approved"] else "rejected"
+            if exception.decision != "pending":
+                if exception.decision != decision or exception.motivo_decision != data["reason"]:
+                    raise Conflict("La excepción ya tiene una decisión registrada.")
+                return visit_data(visit)
+            if data["approved"]:
+                validate_content(visit)
+                if not visit.enviado_en:
+                    raise ValidationError({"content": "El técnico todavía debe enviar el registro completo para revisión."})
+            exception.decision = decision
+            exception.revisor = request.user
+            exception.motivo_decision = data["reason"]
+            exception.revisada_en = timezone.now()
+            exception.save()
+            from .services import audit_exception
+            audit_exception(request.user, visit, exception, "review", "Justificación "+exception.tipo+": "+decision)
+            finalize_reviewed_visit(request.user, visit)
+            return visit_data(visit)
+        return Response(idempotent(request, work))
 
 
-class ClienteViewSet(ModelViewSet):
+class AdminViewSet(ModelViewSet):
+    permission_classes = [EsAdministrador]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def create(self, request, *args, **kwargs):
+        def work():
+            self.lock_parent(request.data)
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            self.audit(request.user, "admin_create", serializer.instance.pk, None, serializer.data)
+            return serializer.data
+        return Response(idempotent(request, work), status=201)
+
+    def update(self, request, *args, **kwargs):
+        def work():
+            instance = get_object_or_404(self.get_queryset().select_for_update(), pk=kwargs["pk"])
+            previous = self.get_serializer(instance).data
+            self.lock_parent(request.data)
+            serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get("partial", False))
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            self.audit(request.user, "admin_update", instance.pk, previous, serializer.data)
+            return serializer.data
+        return Response(idempotent(request, work))
+
+    def lock_parent(self, data):
+        if self.queryset.model == Contrato and data.get("clientId"):
+            get_object_or_404(Cliente.objects.select_for_update(), pk=data["clientId"])
+
+    def audit(self, actor, kind, pk, previous, current):
+        from rest_framework.renderers import JSONRenderer
+        import json
+        data = {"entity": self.queryset.model.__name__, "id": pk, "previous": previous, "next": current}
+        Evento.objects.create(actor=actor, tipo=kind, texto="Administración: "+self.queryset.model.__name__,
+                              datos=json.loads(JSONRenderer().render(data)))
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        instance = get_object_or_404(self.get_queryset().select_for_update(), pk=kwargs["pk"])
+        previous = self.get_serializer(instance).data
+        pk = instance.pk
+        if isinstance(instance, Usuario) and instance.pk == request.user.pk:
+            raise Conflict("No puedes eliminar tu propia cuenta.")
+        if isinstance(instance, ItemPlantilla):
+            instance.activo = False
+            instance.save(update_fields=["activo"])
+        else:
+            try:
+                instance.delete()
+            except ProtectedError:
+                raise Conflict("El registro tiene historial protegido; desactívalo para conservar la trazabilidad.")
+        self.audit(request.user, "admin_delete", pk, previous, None)
+        return Response(status=204)
+
+
+class ClienteViewSet(AdminViewSet):
     queryset = Cliente.objects.all()
     serializer_class = ClienteSerializer
-    permission_classes = [EsAdministrador]
 
 
-class TiendaAdminViewSet(ModelViewSet):
+class TiendaAdminViewSet(AdminViewSet):
     queryset = Tienda.objects.all()
-    serializer_class = TiendaAdminSerializer
-    permission_classes = [EsAdministrador]
+    serializer_class = TiendaSerializer
 
 
-class ContratoViewSet(ModelViewSet):
+class ContratoViewSet(AdminViewSet):
     queryset = Contrato.objects.all()
     serializer_class = ContratoSerializer
-    permission_classes = [EsAdministrador]
 
 
-class PlantillaChecklistViewSet(ModelViewSet):
+class PlantillaChecklistViewSet(AdminViewSet):
     queryset = PlantillaChecklist.objects.all()
     serializer_class = PlantillaChecklistSerializer
-    permission_classes = [EsAdministrador]
 
 
-class ItemPlantillaViewSet(ModelViewSet):
+class ItemPlantillaViewSet(AdminViewSet):
     queryset = ItemPlantilla.objects.all()
     serializer_class = ItemPlantillaSerializer
-    permission_classes = [EsAdministrador]
-    http_method_names = ["get", "post", "put", "patch", "head", "options"]  # nunca se borra
+    http_method_names = ["get", "head", "options"]
 
 
-class UsuarioViewSet(ModelViewSet):
+class UsuarioViewSet(AdminViewSet):
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
-    permission_classes = [EsAdministrador]
-
-class ChecklistSaveDraftView(APIView):
-    permission_classes = [EsTecnico]
-
-    def post(self, request, pk):
-        try:
-            visita = Visita.objects.get(pk=pk, origen="checklist", tecnico=request.user)
-        except Visita.DoesNotExist:
-            return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-        contrato = visita.tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
-        if contrato is None:
-            return Response({"detail": "La tienda no tiene un contrato activo."}, status=status.HTTP_400_BAD_REQUEST)
-
-        checklist, _ = Checklist.objects.get_or_create(
-            visita=visita, defaults={"plantilla": contrato.plantilla_checklist}
-        )
-        checklist.reporte_general = request.data.get("workDescription", "")
-        checklist.save()
-
-        for respuesta in request.data.get("answers", []):
-            resultado = RESULTADO_DESDE_FRONTEND.get(respuesta.get("result"))
-            RespuestaItem.objects.update_or_create(
-                checklist=checklist,
-                item_id=respuesta.get("taskId"),
-                defaults={"resultado": resultado, "observacion": respuesta.get("observation", "")},
-            )
-
-        return Response(VisitaDetailSerializer(visita).data)
-
-
-class VisitaStartView(APIView):
-    permission_classes = [EsTecnico]
-
-    def post(self, request, pk):
-        try:
-            visita = Visita.objects.get(pk=pk, tecnico=request.user)
-        except Visita.DoesNotExist:
-            return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-        lat, lon = request.data.get("latitude"), request.data.get("longitude")
-        if lat is None or lon is None:
-            return Response({"detail": "Falta la ubicacion."}, status=status.HTTP_400_BAD_REQUEST)
-
-        contrato = visita.tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
-        radio = contrato.radio_validacion_metros if contrato else 100
-        distancia = distancia_metros(lat, lon, visita.tienda.latitud, visita.tienda.longitud)
-
-        visita.iniciada_en = timezone.now()
-        visita.latitud_inicio = lat
-        visita.longitud_inicio = lon
-        visita.distancia_inicio_metros = distancia
-        visita.proximidad_inicio_validada = distancia <= radio
-        visita.estado = "en_curso"
-        visita.save()
-
-        return Response(VisitaDetailSerializer(visita).data)
-
-
-class VisitaCompleteView(APIView):
-    permission_classes = [EsTecnico]
-
-    def post(self, request, pk):
-        try:
-            visita = Visita.objects.get(pk=pk, tecnico=request.user)
-        except Visita.DoesNotExist:
-            return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-        lat, lon = request.data.get("latitude"), request.data.get("longitude")
-        if lat is None or lon is None:
-            return Response({"detail": "Falta la ubicacion."}, status=status.HTTP_400_BAD_REQUEST)
-
-        contrato = visita.tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
-        radio = contrato.radio_validacion_metros if contrato else 100
-        distancia = distancia_metros(lat, lon, visita.tienda.latitud, visita.tienda.longitud)
-        validada = distancia <= radio
-
-        visita.latitud_cierre = lat
-        visita.longitud_cierre = lon
-        visita.distancia_medida_metros = distancia
-        visita.proximidad_validada = validada
-        visita.completada_en = timezone.now()
-
-        if visita.iniciada_en and (visita.completada_en - visita.iniciada_en).total_seconds() > 300:
-            visita.excepcion_tiempo = True
-
-        visita.estado = "completada" if validada else "pendiente_validacion"
-        visita.save()
-
-        if visita.origen == "ticket" and visita.ticket_origen:
-            ticket = visita.ticket_origen
-            ticket.estado = "resuelto"
-            ticket.resuelto_en = timezone.now()
-            ticket.save()
-
-        return Response(VisitaDetailSerializer(visita).data)
-
-
-class VisitaLocationExceptionView(APIView):
-    permission_classes = [EsTecnico]
-
-    def post(self, request, pk):
-        try:
-            visita = Visita.objects.get(pk=pk, tecnico=request.user)
-        except Visita.DoesNotExist:
-            return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-        visita.excepcion_ubicacion = True
-        visita.justificacion_excepcion = request.data.get("reason", "")
-        visita.descripcion_fallo_ubicacion = request.data.get("failure", "")
-        visita.completada_en = timezone.now()
-        visita.estado = "pendiente_validacion"
-        visita.save()
-
-        return Response(VisitaDetailSerializer(visita).data)
-
-
-class VisitaTimeExceptionView(APIView):
-    permission_classes = [EsTecnico]
-
-    def post(self, request, pk):
-        try:
-            visita = Visita.objects.get(pk=pk, tecnico=request.user)
-        except Visita.DoesNotExist:
-            return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-        visita.excepcion_tiempo = True
-        visita.justificacion_excepcion_tiempo = request.data.get("reason", "")
-        visita.save()
-
-        return Response(VisitaDetailSerializer(visita).data)
-
-
-class VisitaReviewExceptionView(APIView):
-    permission_classes = [EsSupervisorDeCuenta]
-
-    def post(self, request, pk):
-        try:
-            visita = Visita.objects.get(pk=pk)
-        except Visita.DoesNotExist:
-            return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-        approved = request.data.get("approved")
-        comentario = request.data.get("reviewReason", "")
-
-        if visita.excepcion_ubicacion and visita.excepcion_aprobada is None:
-            visita.excepcion_aprobada = approved
-            visita.excepcion_revisada_por = request.user
-            visita.comentario_revision_ubicacion = comentario
-            if approved:
-                visita.estado = "completada"
-        elif visita.excepcion_tiempo and visita.excepcion_tiempo_aprobada is None:
-            visita.excepcion_tiempo_aprobada = approved
-            visita.excepcion_tiempo_revisada_por = request.user
-            visita.comentario_revision_tiempo = comentario
-
-        visita.save()
-        return Response(VisitaDetailSerializer(visita).data)
-
-
-class TicketListCreateView(ListCreateAPIView):
-    def get_serializer_class(self):
-        return TicketCreateSerializer if self.request.method == "POST" else TicketSerializer
-
-    def get_permissions(self):
-        if self.request.method == "POST":
-            return [EsSupervisorDeTienda()]
-        return super().get_permissions()
-
-    def get_queryset(self):
-        usuario = self.request.user
-        rol = usuario.rol.nombre if usuario.rol else None
-        if rol == "Administrador":
-            return Ticket.objects.all()
-        return Ticket.objects.filter(
-            tienda__usuarios_asignados__usuario=usuario,
-            tienda__usuarios_asignados__activo=True,
-        )
-
-    def get_serializer_context(self):
-        return {"request": self.request}
-
-
-class TicketScheduleView(APIView):
-    permission_classes = [EsSupervisorDeCuenta]
-
-    def post(self, request, pk):
-        try:
-            ticket = Ticket.objects.get(pk=pk)
-        except Ticket.DoesNotExist:
-            return Response({"detail": "Ticket no encontrado."}, status=status.HTTP_404_NOT_FOUND)
-
-        tecnico_id = request.data.get("technicianId")
-        fecha = request.data.get("scheduledAt")
-        prioridad = request.data.get("priority")
-
-        if ticket.tecnico_asignado_id and ticket.tecnico_asignado_id != tecnico_id:
-            ReasignacionTicket.objects.create(
-                ticket=ticket, tecnico_anterior_id=ticket.tecnico_asignado_id,
-                tecnico_nuevo_id=tecnico_id, reasignado_por=request.user,
-            )
-
-        ticket.tecnico_asignado_id = tecnico_id
-        ticket.fecha_programada = fecha
-
-        if not ticket.asignado_en:
-            ticket.asignado_en = timezone.now()
-        if prioridad:
-            ticket.urgencia = NivelUrgencia.objects.get(nombre=prioridad)
-        ticket.estado = "programado"
-        ticket.save()
-
-        Visita.objects.create(
-            tienda=ticket.tienda, origen="ticket", tecnico_id=tecnico_id,
-            ticket_origen=ticket, fecha_programada=fecha, estado="programada",
-        )
-
-        return Response(TicketSerializer(ticket).data)
 
 
 class TecnicoListView(ListAPIView):
     serializer_class = UsuarioSerializer
-    permission_classes = [EsSupervisorDeCuenta]
+    permission_classes = [EsSupervisorCuenta]
 
     def get_queryset(self):
-        return Usuario.objects.filter(rol__nombre="Tecnico", is_active=True)
-
-class TiendaDetailView(RetrieveAPIView):
-    serializer_class = TiendaSerializer
-
-    def get_queryset(self):
-        return tiendas_visibles_para(self.request.user)
+        stores = tiendas_visibles_para(self.request.user)
+        candidates = Usuario.objects.filter(is_active=True, tiendas_asignadas__activo=True,
+                                            tiendas_asignadas__tienda__in=stores).select_related("rol").distinct()
+        return [user for user in candidates if rol_de(user) == "technician"]
 
 
-class VisitaDetailView(RetrieveAPIView):
-    serializer_class = VisitaDetailSerializer
+class EvidenciaDetailView(EvidenceDetailView):
+    """El ID numérico de main usa la misma lectura y eliminación protegida del PR."""
+    def client_id(self, request, pk):
+        return get_object_or_404(visible_evidence(request.user), pk=pk).client_id
 
-    def get_queryset(self):
-        usuario = self.request.user
-        rol = usuario.rol.nombre if usuario.rol else None
-        if rol == "Administrador":
-            return Visita.objects.all()
-        if rol == "Tecnico":
-            return Visita.objects.filter(tecnico=usuario)
-        return Visita.objects.filter(
-            tienda__usuarios_asignados__usuario=usuario,
-            tienda__usuarios_asignados__activo=True,
-        ).distinct()
+    def get(self, request, pk):
+        return super().get(request, self.client_id(request, pk))
+
+    def delete(self, request, pk):
+        return super().delete(request, self.client_id(request, pk))
 
 
-class TicketDetailView(RetrieveAPIView):
-    serializer_class = TicketSerializer
-
-    def get_queryset(self):
-        usuario = self.request.user
-        rol = usuario.rol.nombre if usuario.rol else None
-        if rol == "Administrador":
-            return Ticket.objects.all()
-        if rol == "Tecnico":
-            return Ticket.objects.filter(tecnico_asignado=usuario)
-        return Ticket.objects.filter(
-            tienda__usuarios_asignados__usuario=usuario,
-            tienda__usuarios_asignados__activo=True,
-        )
-
-
-class ReporteVisitasListView(ListAPIView):
-    """Historial y trazabilidad de visitas, escalado por rol:
-    tecnico ve las suyas; supervisores ven las tiendas que tienen asignadas;
-    administrador ve todas. Filtros opcionales: ?tecnico=<id>&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
-    """
-    serializer_class = ReporteVisitaSerializer
-
-    def get_queryset(self):
-        usuario = self.request.user
-        rol = usuario.rol.nombre if usuario.rol else None
-        qs = Visita.objects.select_related("tienda", "tecnico").order_by("-fecha_programada")
-
-        if rol == "Tecnico":
-            qs = qs.filter(tecnico=usuario)
-        elif rol in ("SupervisorCuenta", "SupervisorTienda"):
-            qs = qs.filter(
-                tienda__usuarios_asignados__usuario=usuario,
-                tienda__usuarios_asignados__activo=True,
-            ).distinct()
-        elif rol != "Administrador":
-            return qs.none()
-
-        tecnico_id = self.request.query_params.get("tecnico")
-        if tecnico_id:
-            qs = qs.filter(tecnico_id=tecnico_id)
-        desde = self.request.query_params.get("desde")
-        if desde:
-            qs = qs.filter(fecha_programada__date__gte=desde)
-        hasta = self.request.query_params.get("hasta")
-        if hasta:
-            qs = qs.filter(fecha_programada__date__lte=hasta)
-
-        return qs
-
-class CambiarPasswordView(APIView):
-    def post(self, request):
-        nueva = request.data.get("password")
-        if not nueva:
-            return Response({"detail": "Falta la nueva contraseña."}, status=status.HTTP_400_BAD_REQUEST)
-
-        usuario = request.user
-        usuario.set_password(nueva)
-        usuario.password_inicializada = True
-        usuario.save()
-
-        refresh = RefreshToken.for_user(usuario)
-        return Response({
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
-            "user": construir_datos_usuario(usuario),
-        })
-
-
-class EvidenciaDetailView(RetrieveDestroyAPIView):
-    serializer_class = EvidenciaSerializer
-
-    def get_queryset(self):
-        usuario = self.request.user
-        return Evidencia.objects.filter(
-            Q(checklist__visita__tecnico=usuario) | Q(ticket__tecnico_asignado=usuario)
-        )
+class VisitaNoRealizadaInput(serializers.Serializer):
+    reason = serializers.CharField(min_length=10, max_length=500)
 
 
 class VisitaNoRealizadaView(APIView):
     permission_classes = [EsTecnico]
 
     def post(self, request, pk):
-        try:
-            visita = Visita.objects.get(pk=pk, tecnico=request.user)
-        except Visita.DoesNotExist:
-            return Response({"detail": "Visita no encontrada."}, status=status.HTTP_404_NOT_FOUND)
-
-        visita.estado = "no_realizada"
-        visita.justificacion = request.data.get("reason", "")
-        visita.save()
-
-        return Response(VisitaDetailSerializer(visita).data)
-
-
-class DashboardView(APIView):
-    def get(self, request):
-        usuario = request.user
-        ahora = timezone.now()
-        inicio_mes = ahora.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-        tiendas_visibles = tiendas_visibles_para(usuario)
-        total_tiendas = tiendas_visibles.count()
-        visitas_mes = Visita.objects.filter(tienda__in=tiendas_visibles, fecha_programada__gte=inicio_mes)
-        tickets_mes = Ticket.objects.filter(tienda__in=tiendas_visibles, creado_en__gte=inicio_mes)
-
-        tiendas_con_checklist_cerrado = visitas_mes.filter(
-            origen="checklist", estado="completada"
-        ).values("tienda").distinct().count()
-        kpi_01 = round(tiendas_con_checklist_cerrado / total_tiendas * 100, 1) if total_tiendas else None
-
-        tiendas_bajo_minimo = 0
-        for tienda in tiendas_visibles.select_related("cliente"):
-            contrato = tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
-            if not contrato:
-                continue
-            cerrados = tickets_mes.filter(tienda=tienda, estado__in=["resuelto", "cerrado"]).count()
-            if cerrados < contrato.minimo_intervenciones_mensual:
-                tiendas_bajo_minimo += 1
-
-        total_programadas = visitas_mes.count()
-        no_realizadas = visitas_mes.filter(estado="no_realizada").count()
-        kpi_03 = round(no_realizadas / total_programadas * 100, 1) if total_programadas else None
-
-        tiendas_con_actividad = visitas_mes.filter(estado="completada").values("tienda").distinct().count()
-        kpi_04 = round(tiendas_con_actividad / total_tiendas * 100, 1) if total_tiendas else None
-
-        visitas_cerradas = visitas_mes.filter(estado__in=["completada", "pendiente_validacion"])
-        total_cerradas = visitas_cerradas.count()
-        con_proximidad = visitas_cerradas.filter(proximidad_validada=True).count()
-        con_excepcion_ubicacion = visitas_cerradas.filter(excepcion_ubicacion=True).count()
-        kpi_05 = round(con_proximidad / total_cerradas * 100, 1) if total_cerradas else None
-        kpi_06 = round(con_excepcion_ubicacion / total_cerradas * 100, 1) if total_cerradas else None
-
-        excepciones_pendientes = Visita.objects.filter(tienda__in=tiendas_visibles).filter(
-            (Q(excepcion_ubicacion=True) & Q(excepcion_aprobada__isnull=True))
-            | (Q(excepcion_tiempo=True) & Q(excepcion_tiempo_aprobada__isnull=True))
-        ).count()
-
-        kpi_08 = visitas_cerradas.aggregate(promedio=Avg("distancia_medida_metros"))["promedio"]
-
-        duracion_respuesta = ExpressionWrapper(F("asignado_en") - F("creado_en"), output_field=DurationField())
-        kpi_09_prom = tickets_mes.filter(asignado_en__isnull=False).annotate(
-            duracion=duracion_respuesta
-        ).aggregate(promedio=Avg("duracion"))["promedio"]
-        kpi_09 = round(kpi_09_prom.total_seconds() / 3600, 1) if kpi_09_prom else None
-
-        duracion_resolucion = ExpressionWrapper(F("resuelto_en") - F("creado_en"), output_field=DurationField())
-        kpi_10_prom = tickets_mes.filter(resuelto_en__isnull=False).annotate(
-            duracion=duracion_resolucion
-        ).aggregate(promedio=Avg("duracion"))["promedio"]
-        kpi_10 = round(kpi_10_prom.total_seconds() / 3600, 1) if kpi_10_prom else None
-
-        tickets_cerrados = tickets_mes.filter(estado__in=["resuelto", "cerrado"])
-        total_tickets_cerrados = tickets_cerrados.count()
-        reasignados = tickets_cerrados.filter(reasignaciones__isnull=False).distinct().count()
-        kpi_11 = round(reasignados / total_tickets_cerrados * 100, 1) if total_tickets_cerrados else None
-
-        visitas_con_checklist = visitas_mes.filter(origen="checklist", estado="completada")
-        completas, total_con_checklist = 0, 0
-        for v in visitas_con_checklist:
-            checklist = getattr(v, "checklist", None)
-            if not checklist:
-                continue
-            total_con_checklist += 1
-            items_requeridos = checklist.plantilla.items.filter(activo=True, foto_requerida=True)
-            falta_alguna = any(
-                not Evidencia.objects.filter(checklist=checklist, item=item).exists()
-                for item in items_requeridos
-            )
-            if not falta_alguna:
-                completas += 1
-        kpi_13 = round(completas / total_con_checklist * 100, 1) if total_con_checklist else None
-
-        carga_por_tecnico = list(
-            visitas_mes.filter(estado="completada", tecnico__isnull=False)
-            .values("tecnico__id", "tecnico__first_name", "tecnico__last_name", "tecnico__username")
-            .annotate(total=Count("id"))
-            .order_by("-total")
-        )
-
-        return Response({
-            "kpi01CumplimientoChecklist": kpi_01,
-            "kpi02TiendasBajoMinimo": tiendas_bajo_minimo,
-            "kpi03VisitasNoEjecutadas": kpi_03,
-            "kpi04CoberturaTiendas": kpi_04,
-            "kpi05ValidacionUbicacion": kpi_05,
-            "kpi06UsoExcepcionUbicacion": kpi_06,
-            "kpi07ExcepcionesPendientes": excepciones_pendientes,
-            "kpi08DistanciaMediaMetros": float(kpi_08) if kpi_08 is not None else None,
-            "kpi09PrimeraRespuestaHoras": kpi_09,
-            "kpi10ResolucionHoras": kpi_10,
-            "kpi11TasaReasignacion": kpi_11,
-            "kpi12AdopcionDigital": None,
-            "kpi13CompletitudEvidencia": kpi_13,
-            "kpi14CargaPorTecnico": carga_por_tecnico,
-            "periodo": {"desde": inicio_mes.date().isoformat(), "hasta": ahora.date().isoformat()},
-        })
+        release_expired_claims(tiendas_visibles_para(request.user))
+        def work():
+            visit = locked_visit(request.user, pk)
+            if visit.estado != "programada" or visit.iniciado_en or visit.formulario_abierto_en or visit.enviado_en or visit.completado_en:
+                raise Conflict("Solo una visita pendiente sin iniciar puede marcarse como no realizada.")
+            serializer = VisitaNoRealizadaInput(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            visit.estado = "no_realizada"
+            visit.justificacion = serializer.validated_data["reason"]
+            visit.save(update_fields=["estado", "justificacion"])
+            event(request.user, visit, "not_performed", "Visita no realizada", {"reason": visit.justificacion})
+            return visit_data(visit)
+        return Response(idempotent(request, work))
 
 
-class ReporteVisitasExportView(APIView):
-    def get(self, request):
-        usuario = request.user
-        rol = usuario.rol.nombre if usuario.rol else None
-        qs = Visita.objects.select_related("tienda", "tecnico").order_by("-fecha_programada")
+# Nombres de main que comparten la implementación del flujo vigente.
+VisitaPoolListView = VisitPoolListView
+VisitaProgramadasListView = ScheduledVisitListView
+VisitaDetailView = VisitDetailView
+VisitaReviewExceptionView = ExceptionReviewView
 
-        if rol == "Tecnico":
-            qs = qs.filter(tecnico=usuario)
-        elif rol in ("SupervisorCuenta", "SupervisorTienda"):
-            qs = qs.filter(
-                tienda__usuarios_asignados__usuario=usuario,
-                tienda__usuarios_asignados__activo=True,
-            ).distinct()
-        elif rol != "Administrador":
-            qs = qs.none()
 
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = 'attachment; filename="reporte_visitas.csv"'
-        writer = csv.writer(response)
-        writer.writerow(["ID", "Tienda", "Tecnico", "Origen", "Fecha programada", "Estado", "Proximidad validada", "Distancia (m)"])
-        for v in qs:
-            writer.writerow([
-                v.id,
-                v.tienda.nombre,
-                (v.tecnico.get_full_name() or v.tecnico.username) if v.tecnico else "",
-                v.origen,
-                v.fecha_programada,
-                v.estado,
-                v.proximidad_validada,
-                v.distancia_medida_metros or "",
-            ])
-        return response
+class VisitaTomarView(VisitActionView):
+    action = "claim"
+
+
+class ChecklistSaveDraftView(VisitActionView):
+    action = "draft"
+
+
+class VisitaStartView(VisitActionView):
+    action = "start"
+
+
+class VisitaCompleteView(VisitActionView):
+    action = "complete"
+
+
+class VisitaLocationExceptionView(ExceptionRequestView):
+    exception_type = "location"
+
+
+class VisitaTimeExceptionView(ExceptionRequestView):
+    exception_type = "time_limit"

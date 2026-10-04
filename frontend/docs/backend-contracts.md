@@ -1,82 +1,123 @@
-# Contratos de integración con Django
+# Contratos HTTP implementados
 
-Este documento distingue código observado de contratos propuestos. No se modificó ni se ejecutó Django durante la refactorización. Un modelo existente no implica que exista una API para consumirlo.
+Base `/api`, JSON camelCase y barra final. Django/DRF es la autoridad de autorización, estados, timestamps, GPS y contenido. Las listas son arrays, no páginas ni fixtures. Los mappers rechazan DTO incompatibles.
 
-## Base revisada
+## Autenticación y alcance
 
-Backend del checkout `28b37636cdc1b355a778b22561f02c9fa980bbfc`, rama `feature/sprint1-alex-frontend`. Fuentes: `backend/core/urls.py`, `views.py`, `serializers.py`, `models.py`, `permissions.py` y `backend/config/urls.py`.
+| Método/ruta         | Datos y respuesta                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| POST auth/login/    | `username,password` → `access,refresh,expiresAt,user`                                                 |
+| POST auth/refresh/  | `refresh` → sesión nueva; rota y revoca refresh anterior                                              |
+| GET auth/me/        | Identidad y alcance actual                                                                            |
+| POST auth/password/ | `password,confirmation,currentPassword` (actual obligatoria después del primer cambio) → nueva sesión |
+| POST auth/logout/   | 204; revoca tokens del usuario en todos los dispositivos                                              |
+| GET health/         | Público; SELECT 1; 200/503                                                                            |
 
-La consulta `git ls-remote` del 09/09/2026 encontró `main` remoto en `766a324d45252a47589b32fecd5903914122f8a7`; no se hizo merge ni se cambió de rama. Los contratos siguientes corresponden al checkout analizado, no a una certificación de despliegue de `main`.
+`expiresAt` de sesión es epoch en milisegundos. La identidad incluye ID numérico, username, name, email, role, active, passwordInitialized y storeIds. Roles canónicos: `technician,store_supervisor,account_supervisor,administrator`. JWT access dura una hora y refresh siete días; versiones del usuario invalidan tokens tras cambio de contraseña, rol, actividad o alcance. Inactivos, roles desconocidos y tokens revocados se rechazan.
 
-## Endpoints definidos en el checkout
+Antes del cambio inicial solo se permiten identidad, cambio de contraseña y logout. El guard React complementa la restricción del servidor. Un rol válido no concede acceso a tiendas ajenas: se requieren asignaciones activas, propiedad y técnico vigente según el recurso. El administrador gestiona catálogos; no ejecuta como técnico.
 
-| Método                                     | Ruta real                                                                                                                | Alcance observado / diferencia relevante                                                                                               |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| POST                                       | `/api/auth/login/`                                                                                                       | SimpleJWT; entrega tokens. No hay respuesta extendida de usuario y rol en la vista configurada.                                        |
-| POST                                       | `/api/auth/refresh/`                                                                                                     | Renovación de token definida. No se activa renovación automática en esta entrega.                                                      |
-| GET                                        | `/api/tiendas/`                                                                                                          | Tiendas visibles según usuario; decimales de coordenadas serializados como texto.                                                      |
-| GET, POST                                  | `/api/evidencias/`                                                                                                       | Evidencia asociada a checklist: `checklist`, `foto`, `descripcion`, `subida_en`. No hay relación con respuesta/ítem en ese serializer. |
-| GET                                        | `/api/visitas/pool/`                                                                                                     | Filtra origen checklist y estados programada/en curso; no excluye todas las visitas ya tomadas. Acordar la semántica final de bolsa.   |
-| POST                                       | `/api/visitas/pool/{id}/tomar/`                                                                                          | Reclama con transacción; 409 si tiene técnico. Cambia directamente a `en_curso`, sin un paso GPS de inicio separado.                   |
-| GET                                        | `/api/visitas/programadas/`                                                                                              | Visitas de tickets del técnico. No devuelve el detalle completo del reporte.                                                           |
-| GET, POST, GET detalle, PUT, PATCH, DELETE | `/api/admin/clientes/`, `/api/admin/tiendas/`, `/api/admin/contratos/`, `/api/admin/plantillas/`, `/api/admin/usuarios/` | ViewSets de administrador. Un endpoint definido no implica validación funcional realizada en este trabajo.                             |
-| GET, POST, GET detalle, PUT, PATCH         | `/api/admin/items-plantilla/`                                                                                            | Desactivación; DELETE está excluido explícitamente.                                                                                    |
+## Operaciones y errores
 
-Las URLs de detalle de los ViewSets agregan `{id}/`. Los permisos definitivos siguen siendo responsabilidad del servidor.
+Las mutaciones JSON requieren `Idempotency-Key` (1–100 caracteres). La clave pertenece al usuario y vincula ruta+huella del payload. Misma operación devuelve el recurso actual sin repetir efectos; reutilizar la clave con otro contenido/ruta devuelve 409. La transacción almacena operación y efecto juntos.
 
-## Interfaces frontend
+El frontend conserva únicamente UUID/huella de operaciones inciertas en sessionStorage para reintentos. Borra la clave tras un DTO válido o rechazo definitivo; una respuesta 2xx incompatible no se considera confirmación. Fotos usan un UUID estable en multipart en lugar de Idempotency-Key.
 
-`src/services/repositories/contracts.ts` es el punto de sustitución. Todos los métodos devuelven promesas; las consultas aceptan `AbortSignal`. Las páginas reciben repositorios desde `RepositoriesContext`. `AppError` clasifica validación, 401, 403, 404, conflicto, red, almacenamiento, GPS y operación no integrada.
+400 contiene errores por campo, 401 exige renovación/reautenticación, 403 deniega permiso, 404 oculta un recurso fuera del alcance o inexistente, 409 comunica estado/revisión incompatible. Un fallo de red conserva el editor y no utiliza respaldo local. El transporte también admite Blob autenticado para imágenes/CSV y preserva errores HTTP antes de leerlo.
 
-| Repositorio              | Casos de uso                                                                              |
-| ------------------------ | ----------------------------------------------------------------------------------------- |
-| AuthRepository           | Login, restauración, logout, cambio de contraseña; listado de cuentas ficticias en mock.  |
-| ChecklistRepository      | Listar bolsa y visitas propias, obtener detalle, tomar visita y guardar borrador.         |
-| VisitRepository          | Listar asignaciones, detalle, inicio/cierre GPS, solicitud y revisión de excepción.       |
-| TicketRepository         | Crear, listar, detalle, programar, reprogramar y reasignar con historial.                 |
-| StoreRepository          | Listar tiendas visibles y obtener la tienda concreta.                                     |
-| UserRepository           | Usuarios necesarios para asignación y nombres de participantes.                           |
-| DashboardRepository      | Indicadores derivados de visitas, tickets y contratos.                                    |
-| AdministrationRepository | Listado y escritura tipados de usuarios, tiendas, clientes, contratos y plantillas/ítems. |
-| EvidenceRepository       | Persistir, recuperar y eliminar Blob junto con metadatos.                                 |
+## Clientes y actualización de vistas
 
-La implementación HTTP es una estructura parcial intercambiable por interfaz: login y listado de tiendas tienen transporte real; el resto devuelve `not_implemented`. Esto es deliberado: el encargo pide completar primero el modo mock. No se presenta el adaptador HTTP como integración funcional completa.
+`GET/POST admin/clientes/` y `GET/PATCH admin/clientes/:id/` usan `id,name,taxId,email`. `name` es razón social, obligatoria y de máximo 200 caracteres; `taxId` es RUC/identificación y `email` es correo de contacto. El cliente se identifica por su razón social, conforme a la última indicación del usuario. Una edición parcial conserva los campos omitidos y no modifica las relaciones históricas.
 
-## Contratos pendientes: propuestas, NO endpoints existentes
+Los refrescos del mismo recurso conservan el contenido confirmado y muestran un indicador de actualización. Ante fallo de red, se avisa explícitamente que se muestran los últimos datos del servidor; permisos revocados retiran esos datos. Cambiar recurso/filtro inicia una consulta nueva. Los formularios de Administración pausan los eventos/período automático mientras están abiertos y recargan el listado al cerrar, para evitar borrar campos escritos.
 
-| Capacidad necesaria                       | Propuesta a acordar                        | Datos mínimos                                                                                                 |
-| ----------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Identidad de sesión                       | `/api/auth/me/` **o login extendido**      | Usuario, rol canónico, tiendas/cuenta autorizadas, estado activo, cambio inicial pendiente y vencimiento.     |
-| Cambio y recuperación de contraseña       | Rutas a definir                            | Validación actual/nueva contraseña, reglas del servidor y confirmación real. El mock no almacena contraseñas. |
-| Mis checklists reclamados                 | Consulta específica o filtros documentados | ID de visita separado del ID de tienda; técnico y estado.                                                     |
-| Detalle de checklist y plantilla efectiva | Ruta a definir                             | Versión de plantilla, tareas activas, obligatoriedad de foto, respuestas e IDs de evidencias.                 |
-| Inicio de visita                          | Propuesta `/api/visitas/{id}/iniciar/`     | Coordenadas, precisión, captura reciente, radio del contrato y fecha autoritativa de inicio.                  |
-| Borrador y cierre                         | Rutas a definir                            | Respuestas, observaciones, evidencias verificadas, GPS nuevo de cierre; conflicto de versión/idempotencia.    |
-| Excepción y revisión                      | Rutas a definir                            | Motivo, tipo de fallo GPS, técnico, supervisor, decisión, observación y timestamps.                           |
-| Tickets                                   | CRUD y acciones a definir                  | Reporte original, categoría, urgencia, tienda, fechas, estado, resolución, evidencias originales/técnicas.    |
-| Programación y reasignación               | Acciones a definir                         | Técnico anterior/nuevo, fecha anterior/nueva, prioridad, motivo, actor e historial.                           |
-| Roles y asignaciones de tienda            | Catálogos/acciones a definir               | IDs reales de rol y asignaciones activas. No se asumen IDs de fixtures del backend.                           |
-| Dashboard                                 | Consulta agregada a definir                | Mes/cuenta, denominadores, tickets por estado, duración de atención y metas contractuales.                    |
-| Evidencia por respuesta y de tickets      | Ampliación contractual a definir           | Archivo multipart, MIME/tamaño comprobados, tarea/respuesta, fecha de captura y fecha de recepción.           |
+## Visitas y checklists
 
-Ejemplo de login extendido esperado por el adaptador preparado: `{ access, refresh, expiresAt, user: { id, name, email, role, storeIds, active, passwordInitialized } }`, donde `expiresAt` es epoch en milisegundos. El DTO final puede diferir: adaptar en `services/adapters`, no en las páginas. El login SimpleJWT actual, sin identidad, produce un error claro y no abre rutas protegidas.
+La escritura de `admin/tiendas/` requiere `latitude` entre −90 y 90 y `longitude` entre −180 y 180, hasta seis decimales. El formulario admite valores individuales con punto/coma decimal y pegado del par con punto decimal separado por coma. Valida formato y rangos antes de redondear a seis decimales, muestra la ubicación resultante antes de confirmar y envía números a la API. Un valor inválido identifica su campo y conserva el editor; Django mantiene su validación de rangos/precisión. Esto no modifica las coordenadas capturadas durante visitas ni los radios GPS.
 
-## Correspondencias y decisiones que deben acordarse
+| Consulta                                          | Respuesta/alcance                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------ |
+| GET tiendas/, tiendas/:id/                        | Tiendas autorizadas; coordenadas numéricas o decimales serializados            |
+| GET usuarios/                                     | Usuarios permitidos para selección; programación vuelve a validar elegibilidad |
+| GET catalogos/                                    | Categorías activas y prioridades reales con IDs                                |
+| POST checklists/generar/                          | Generación mensual transaccional; `period` opcional YYYY-MM-01 del mes actual  |
+| GET checklists/                                   | Visitas de origen checklist visibles                                           |
+| GET visitas/, visitas/pool/, visitas/programadas/ | Mis asignaciones, bolsa actual o tickets programados según ruta/rol            |
+| GET visitas/:id/                                  | Estado, snapshot, borrador y evidencias confirmadas                            |
 
-- Roles: `Tecnico` → `technician`, `Supervisor de tienda` → `store_supervisor`, `Supervisor de cuenta` → `account_supervisor`, `Administrador` → `administrator`. Un valor desconocido o nulo no autoriza.
-- IDs de tickets y visitas son distintos. Las URLs del técnico usan el ID de visita; se muestra también `ticketId`.
-- Mock: `available` → `claimed` → `in_progress` → `completed` o `pending_approval`. Django actual usa `programada`, `en_curso`, `completada`, `pendiente_validacion`, `no_realizada`; hay que acordar la distinción entre reclamar e iniciar.
-- Respuestas frontend: `conforme` / `no_conforme`; modelo Django: `ok` / `observado` / `no_aplica`. El tercer estado no se inventa en la UI solicitada. La obligatoriedad de foto aún no está expuesta por el serializer de ítems.
-- Categorías y prioridades usan valores de demostración. En HTTP deben mapearse a los IDs de `CategoriaProblema` y `NivelUrgencia` entregados por el servidor.
-- El radio se obtiene del contrato/visita, no de una tienda fija. Mock inicial: 100 m. La UX considera antigua una lectura de más de 60 s y pide reintentar si la precisión supera el menor entre el radio y 100 m; estos umbrales son decisiones de UX pendientes de validación operativa.
-- Conforme a los comentarios de `Visita`, la excepción de cierre es por permiso denegado o falta de señal (incluye timeout). No hay excepción al inicio ni para estar fuera del radio. Una aprobación manual conserva la excepción y **no fabrica coordenadas ni cambia el hecho de que faltó validación GPS**.
-- Aprobación: pasa a completada/resuelto. Rechazo: vuelve a en curso, conserva motivo y permite nueva lectura. El estado definitivo debe acordarse con el backend.
-- Fechas de programación del mock se interpretan en la zona local del navegador; los timestamps de auditoría son ISO. Para una operación multi-zona, acordar la zona del contrato con el backend.
+La visita incluye IDs, origin, scheduledAt, status, tasks/answers, workDescription, evidenceIds, revision, serverNow, timestamps, ubicaciones reales, excepciones y duraciones. `storeSnapshot` contiene nombre, dirección, coordenadas y cliente fijados para la ejecución; `radiusMeters` proviene del contrato fijado. Tareas llevan id/title/photoRequired/active/order y se preservan como snapshot. Respuestas: taskId, result (conforme/no_conforme/no_aplica o null), observation, evidenceIds.
 
-## Seguridad e integración progresiva
+`workStatus` es autoritativo: pending (Pendiente), in_progress (En proceso), in_review (En revisión), finished (Finalizado). cancelled/No realizada solo describe ejecuciones históricas invalidadas. `status` conserva available/claimed para disponibilidad/asignación e in_progress/pending_approval/completed/cancelled para compatibilidad. Los mappers verifican que ambos campos sean coherentes. `formOpenedAt` distingue las etapas sin inventar un fin físico; no existe estado form_expired.
 
-La autorización, el geofencing y la validación de archivos definitivos pertenecen a Django. Capturar con `getUserMedia` limita la UX a la cámara, pero no demuestra al servidor el origen ni la autenticidad de una foto. No se registra información sensible en consola.
+| POST sobre visita             | Entrada y condición                                                                                                           |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| visitas/pool/:id/tomar/       | Reclamo atómico; mismo dueño puede repetir; otro técnico recibe 409                                                           |
+| visitas/:id/iniciar/          | `location`; asignación vigente, estado compatible y GPS válido; registra iniciado_en, no abre formulario                      |
+| visitas/:id/formulario/       | Primera apertura registra abierto_en y vence_en = apertura + 300 s; repeticiones devuelven el mismo plazo                     |
+| visitas/:id/borrador/         | `revision,answers,workDescription,evidenceIds`; CAS bajo bloqueo; incrementa revisión; no cierra                              |
+| visitas/:id/finalizar/        | `location`; valida contenido completo, plazo y GPS; registra envío/finalización una sola vez                                  |
+| visitas/:id/ubicacion-cierre/ | `location`; conserva GPS real para revisión pendiente y finaliza si se reúnen todos los requisitos                            |
+| visitas/:id/excepciones/      | type,reason,failure; revision para corregir una solicitud existente                                                           |
+| visitas/:id/revisar/          | exceptionId,approved,reason,revision,exceptionRevision; supervisor de National Facilities de la cartera                       |
+| visitas/:id/enviar-revision/  | revision,location,exceptions (type,reason,failure,revision); contenido completo; GPS real o justificación GPS; plazo original |
 
-La sesión API permanece en `sessionStorage`, con expiración y borrado selectivo de claves NF. No se atribuyen garantías de protección contra XSS a ese almacenamiento. La estrategia futura de refresh/cookies HttpOnly requiere acuerdo con el backend; no se simula una cookie desde el cliente.
+Las aperturas, reclamos, envíos, justificaciones y revisiones se serializan con bloqueos y claves/restricciones. Borradores concurrentes antiguos reciben 409: no sobrescriben al nuevo.
 
-Integrar cada repositorio por separado cuando exista el DTO validado, añadir pruebas del mapper/transporte (401/403/404/409, cancelación, vacío y errores), y ejecutar el mismo recorrido visual. Nunca recurrir a fixtures después de un error HTTP. El almacenamiento de evidencias en Cloud Storage del ADR-007 corresponde al equipo backend/despliegue y no se modifica aquí.
+La bolsa genera tantas visitas independientes por tienda/mes como indica la frecuencia contractual, sin separación mínima ni prohibición de repetir técnico. `period`, `quota` y `quotaCount` identifican la obligación publicada; editar el contrato no reescribe las cuotas ya generadas. `claimedAt` y `claimExpiresAt` fijan dos horas desde el reclamo. Repetir la solicitud no renueva esa reserva. Solo un checklist todavía sin iniciar vuelve automáticamente a la bolsa al vencer; inicio y formulario conservan reglas separadas.
+
+Consultar bolsa/lista/detalle y reclamar/iniciar comprueba reservas vencidas en el servidor. El servicio `expire_checklist_claims --watch --interval 60` también las libera sin tráfico. `claimHistory` devuelve id, at, actorId nullable, kind (`claim`/`claim_release`), technicianId, claimedAt, expiresAt y text. El autor nulo representa una liberación automática del sistema; no una cuenta ficticia. Un reclamo histórico sin fecha/evento comprobable queda protegido para revisión.
+
+Los timestamps pueden ser nulos. Históricos sin snapshot/timestamps no se reinician ni se completan inventando datos; requieren decisión de migración. Nuevas visitas tienen una pareja apertura/vencimiento coherente y restricciones de orden en PostgreSQL.
+
+## Contenido, plazo y GPS
+
+Todas las tareas deben tener un resultado y pertenecer a la plantilla fijada. No conforme exige observación; cada tarea con foto obligatoria exige evidencia confirmada asociada. Ticket exige descripción técnica y foto de resolución, separadas del reporte original.
+
+Inicio y cierre aceptan `location={latitude,longitude,accuracy,capturedAt}`; capturedAt es epoch ms de la lectura. Números finitos, latitud ±90, longitud ±180, precisión no negativa, antigüedad máxima 60 s, futuro máximo 5 s y precisión ≤ min(radio,100 m), alineados con los controles existentes de esta rama. El servidor calcula distancia Haversine contra el snapshot y rechaza fuera del radio. No acepta distancia/validación calculadas por el cliente como autoridad. La confirmación operativa de estos umbrales figura entre las preguntas pendientes.
+
+Los cinco minutos empiezan en la primera apertura del formulario, aunque se cierre la página o sesión. La ejecución anterior no tiene límite de cinco minutos. Tras vencer, se conserva contenido y evidencia y se exige excepción de tiempo para una finalización aceptada. Las excepciones de tiempo/GPS son independientes y únicas por tipo y ejecución.
+
+El técnico puede completar el formulario vencido y enviarlo con justificación sin renovar el plazo. El registro enviado permanece En revisión. Aprobar exige un envío completo y solo finaliza si todas las excepciones necesarias están aprobadas y hay GPS válido o excepción GPS aprobada. Rechazar registra decisión/motivo/autor/fecha y mantiene En revisión, permitiendo corregir y reenviar en la misma ejecución. La edición del contenido tras rechazo reabre aprobaciones anteriores conservando su historial. Un reenvío registra una nueva fecha de envío aceptado; las anteriores permanecen en eventos.
+
+Cada excepción devuelve revision. exceptionHistory contiene id, at, actorId, kind y un snapshot exception de cada solicitud, corrección, reapertura y decisión. Revisar exige la revisión del borrador y de la excepción que se mostró al supervisor: una versión antigua recibe 409. Las evidencias se protegen durante un envío pendiente de decisión; incompleto o rechazado admite edición controlada.
+
+Duraciones: totalSeconds = envío − inicio; executionSeconds = apertura − inicio; registrationSeconds = envío − apertura. executionSeconds es tiempo previo al formulario, no una hora inferida de fin físico. completedAt puede ser posterior al envío por revisión.
+
+## Tickets
+
+| Método/ruta                 | Contrato                                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| GET/POST tickets/           | Lista autorizada / creación por supervisor de tienda                                                                       |
+| GET tickets/:id/            | Reporte, programación, historial, visita vigente, resolución y ambos grupos de evidencias                                  |
+| POST tickets/:id/programar/ | Supervisor de cuenta: technicianId,scheduledAt,priorityId,reason,revision                                                  |
+| POST tickets/:id/cerrar/    | Compatibilidad idempotente: devuelve Finalizado si la resolución/revisión ya fue aceptada; no crea otra etapa ni timestamp |
+
+Crear requiere storeId, categoryId, priorityId, description (10–500 caracteres), evidenceIds (máximo cinco). Las fotos temporales deben ser del reportante y no estar asociadas a otro contexto. No se usan nombres/IDs inventados del catálogo.
+
+Programar exige fecha futura, contrato único vigente, técnico activo asignado a tienda y revisión actual. Reprogramar/reasignar exige motivo ≥10 caracteres y estado operativo Pendiente. Invalida la visita anterior sin borrar historial y crea una única ejecución vigente. El técnico anterior pierde acceso de ejecución. Una atención iniciada conserva técnico y ejecución; la reasignación está prohibida en En proceso, En revisión y Finalizado.
+
+workStatus sigue los mismos cuatro estados que el checklist. status conserva open/scheduled como detalles de programación, in_progress/pending_approval y resolved/closed históricos. resolved y closed se presentan como Finalizado; no hay segunda aceptación posterior a la finalización. El backend sincroniza ticket/visita. history incluye ID, actor, fecha y texto, y conserva valores anteriores/nuevos.
+
+## Evidencias privadas
+
+GET evidencias/ permite al supervisor de tienda recuperar exclusivamente sus adjuntos temporales sin asociación, incluyendo fotos confirmadas antes de recargar el reporte.
+
+POST evidencias/ multipart: `id` UUID estable, `foto` File/Blob, source (camera/gallery/upload), visitId y taskId cuando corresponde, capturedAt opcional. El servidor verifica imagen, formato/extensión/MIME coincidentes JPEG/PNG/WebP, 1 byte–5 MB y hasta cinco por tarea, resolución o reporte temporal.
+
+GET evidencias/:uuid/ devuelve metadatos; GET evidencias/:uuid/archivo/ devuelve Blob autorizado con no-store/nosniff. DELETE aplica baja lógica del autor durante formulario editable; no borra evidencia cerrada ni del reporte original. Reintento de mismo UUID+contenido+contexto no crea otra foto; otro contenido, autor/contexto o archivo eliminado da 409.
+
+Metadatos: id, visitId/ticketId/taskId nulos cuando no aplican, name, mimeType, size, capturedAt nullable, uploadedAt del servidor y source. Históricos sin metadatos exactos conservan vacío/0/null, sin fabricar captura. Evidencia confirmada se recupera desde relaciones del servidor aunque falle el último guardado de respuestas.
+
+Almacenamiento duradero: volumen local o bucket GCS privado con ADC. La URL pública de media no expone archivos. El comando de caducidad de temporales primero enumera y solo con --apply aplica baja lógica a temporales sin asociaciones; conserva archivo/trazabilidad. La política de borrado físico no está definida.
+
+## Administración e indicadores
+
+CRUD con permisos de administrador: `admin/usuarios,tiendas,clientes,contratos,plantillas`. `admin/items-plantilla` permite lectura; edición de ítems se hace anidada en plantilla y conserva snapshots/versiones. Usuario nuevo requiere username, password, nombre/correo, rol permitido, actividad y storeIds; contraseña pasa validadores Django. No puede desactivar ni degradar su propia cuenta administrativa. Borrados con historial protegido devuelven conflicto; se permite desactivar.
+
+GET dashboard/, reportes/ y reportes/exportar/ son de supervisor de cuenta, con period=YYYY-MM-01 y clientId opcional autorizado. El selector conserva todos los clientes de la cartera al filtrar uno. Cumplimiento preventivo usa cuotas mensuales y finales aceptados; pendientes no cuentan. `risks` devuelve una fila por tienda: `storeId,store,clientId,client,completed,required,missing`. El mínimo es dos atenciones de tickets por tienda/mes, además del checklist. Se cuentan tickets con visita vigente finalizada y fecha de resolución aceptada en el período, aunque fueran reportados antes. El mínimo de la bolsa publicada conserva su snapshot. CSV identifica contrato/período/cuota y distingue los cuatro timestamps, tres duraciones, estado y ambas excepciones. SLA está aplazado por el usuario; `sla=null` y la UI lo presenta pendiente de definición.
+
+Consulta [matriz](../../docs/integration/view-endpoint-matrix.md), [decisiones](../../docs/integration/decisions-pending.md) y [validación](validation.md).
+
+## Contratos y lanzamiento
+
+`monthlyInterventions` es un mínimo por tienda de atenciones de tickets, con valor mínimo dos; no suma checklists. El formulario, el serializer y PostgreSQL lo validan. Las fechas de contratos son inclusivas. Dos contratos activos del mismo cliente no pueden tener fechas simultáneas: error 400 por campo y exclusión PostgreSQL ante escrituras concurrentes. Un contrato consecutivo comienza después del último día del anterior. Los snapshots publicados preservan tareas, radio y mínimo mensual. El checklist puede iniciarse cualquier día de su mes y vigencia contractual; una reserva no permite iniciar una obligación del mes anterior. El sistema comienza con registros nuevos al lanzamiento; no tiene flujo de importación/regularización histórica.

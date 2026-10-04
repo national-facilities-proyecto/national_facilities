@@ -13,10 +13,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "npm run build:demo && playwright test",
-    "test:wpo": "npm run build:demo && node scripts/lighthouse.mjs",
-    "report:bundle": "npm run build:demo && node scripts/bundle-report.mjs",
-    "build:demo": "tsc -b && vite build --mode demo",
+    "test:e2e": "npm run build:api && playwright test",
+    "test:wpo": "npm run build:api && node scripts/lighthouse.mjs",
+    "report:bundle": "npm run build:api && node scripts/bundle-report.mjs",
     "build:api": "tsc -b && vite build --mode api"
   },
   "dependencies": {

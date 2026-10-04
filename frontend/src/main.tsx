@@ -8,16 +8,19 @@ import { AuthProvider } from './features/auth/AuthProvider'
 import { ErrorBoundary } from './components/feedback/ErrorBoundary'
 import { LoadingState } from './components/ui'
 const root = createRoot(document.getElementById('root')!)
-root.render(<LoadingState />)
+root.render(
+  <LoadingState
+    variant="session"
+    title="Preparando tu portal"
+    description="Tu espacio de trabajo estará listo en un momento."
+  />,
+)
 async function bootstrap() {
   try {
     const config = readConfig(import.meta.env)
-    const repositories =
-      import.meta.env.VITE_DATA_SOURCE === 'mock'
-        ? (await import('./mocks/repositories')).createMockRepositories()
-        : (await import('./services/adapters/httpRepositories')).createHttpRepositories(
-            config.apiUrl,
-          )
+    const repositories = (
+      await import('./services/adapters/httpRepositories')
+    ).createHttpRepositories(config.apiUrl)
     root.render(
       <StrictMode>
         <ErrorBoundary>

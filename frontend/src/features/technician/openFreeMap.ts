@@ -42,7 +42,9 @@ const vectorTileLayerStyles: Record<string, VectorTileStyle> = {
   landuse: { fill: true, fillColor: '#f1efe6', fillOpacity: 0.75, stroke: false },
   park: { fill: true, fillColor: '#dcebd7', fillOpacity: 0.9, stroke: false },
   transportation: (properties) => {
-    if (!['motorway', 'trunk', 'primary', 'secondary', 'tertiary'].includes(String(properties.class)))
+    if (
+      !['motorway', 'trunk', 'primary', 'secondary', 'tertiary'].includes(String(properties.class))
+    )
       return []
     return { color: '#ffffff', opacity: 0.95, weight: 1.5 }
   },
@@ -68,7 +70,8 @@ export function createOpenFreeMapLayer() {
       interactive: false,
       maxNativeZoom: 14,
       maxZoom: 18,
-      rendererFactory: (L as typeof L & { canvas: typeof L.canvas & { tile: unknown } }).canvas.tile,
+      rendererFactory: (L as typeof L & { canvas: typeof L.canvas & { tile: unknown } }).canvas
+        .tile,
       vectorTileLayerStyles,
     }),
   )

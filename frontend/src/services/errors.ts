@@ -10,10 +10,19 @@ export type ErrorCode =
   | 'location'
 export class AppError extends Error {
   readonly code: ErrorCode
-  constructor(code: ErrorCode, message: string) {
+  readonly fields: Record<string, string[]>
+  readonly status?: number
+  constructor(
+    code: ErrorCode,
+    message: string,
+    fields: Record<string, string[]> = {},
+    status?: number,
+  ) {
     super(message)
     this.code = code
     this.name = 'AppError'
+    this.fields = fields
+    this.status = status
   }
 }
 export function errorMessage(error: unknown): string {

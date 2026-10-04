@@ -3,8 +3,18 @@ import { useParams, Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
-import { Alert, Badge, Button, Card, Input, PageHeader, ResponsiveTable, Select } from '../../components/ui'
-import type { AdminEntities, AdminKind, UserRole } from '../../types/models'
+import { QueryFeedback } from '../../components/feedback/QueryFeedback'
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Input,
+  PageHeader,
+  ResponsiveTable,
+  Select,
+} from '../../components/ui'
+import type { AdminKind } from '../../types/models'
 import { roleLabels } from '../../types/models'
 import { titles, type Entity } from './fields'
 import { AdminForm } from './AdminForm'
@@ -40,24 +50,25 @@ function AdminList({ kind }: { kind: AdminKind }) {
       },
       [kind, repos],
     ),
+    editing === null,
   )
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
   const { rows, stores, clients, templates } = query.data
-  const filteredRows =
-    kind === 'users'
-      ? (rows as AdminEntities['users'][]).filter(
-          (user) =>
-            (!userName || user.name.toLocaleLowerCase().includes(userName.toLocaleLowerCase())) &&
-            (!userRole || user.role === userRole) &&
-            (!userStatus || String(user.active) === userStatus),
-        )
-      : rows
+  const filteredRows = rows.filter(
+    (row) =>
+      kind !== 'users' ||
+      ('role' in row &&
+        (!userName || row.name.toLocaleLowerCase().includes(userName.toLocaleLowerCase())) &&
+        (!userRole || row.role === userRole) &&
+        (!userStatus || String(row.active) === userStatus)),
+  )
   return (
     <>
       <PageHeader
         title={titles[kind]}
         description="Administración de catálogos y configuración de la operación."
       />
+      <QueryFeedback query={query} />
       <Button onClick={() => setEditing('new')}>Crear registro</Button>
       {kind === 'users' && (
         <Card>
@@ -67,11 +78,15 @@ function AdminList({ kind }: { kind: AdminKind }) {
               value={userName}
               onChange={(event) => setUserName(event.target.value)}
             />
-            <Select label="Rol" value={userRole} onChange={(event) => setUserRole(event.target.value)}>
+            <Select
+              label="Rol"
+              value={userRole}
+              onChange={(event) => setUserRole(event.target.value)}
+            >
               <option value="">Todos</option>
-              {(Object.keys(roleLabels) as UserRole[]).map((role) => (
+              {Object.entries(roleLabels).map(([role, label]) => (
                 <option key={role} value={role}>
-                  {roleLabels[role]}
+                  {label}
                 </option>
               ))}
             </Select>
@@ -139,7 +154,10 @@ function AdminList({ kind }: { kind: AdminKind }) {
           stores={stores}
           clients={clients}
           templates={templates}
-          onClose={() => setEditing(null)}
+          onClose={() => {
+            setEditing(null)
+            query.reload()
+          }}
         />
       )}
     </>

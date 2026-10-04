@@ -26,8 +26,21 @@ services:
       - .env
     volumes:
       - ./backend:/app
+      - evidence_data:/app/media
     ports:
       - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  claim-expiry:
+    build: ./backend
+    restart: unless-stopped
+    command: python manage.py expire_checklist_claims --watch --interval 60
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
@@ -36,6 +49,9 @@ services:
     build: ./frontend
     container_name: nf_frontend
     restart: unless-stopped
+    environment:
+      VITE_DATA_SOURCE: api
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}
     command: npm run dev -- --host 0.0.0.0
     volumes:
       - ./frontend:/app
@@ -47,3 +63,4 @@ services:
 
 volumes:
   pgdata:
+  evidence_data:

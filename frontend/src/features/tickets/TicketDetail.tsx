@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
+import { QueryFeedback } from '../../components/feedback/QueryFeedback'
 import {
   Alert,
   Badge,
@@ -14,26 +15,34 @@ import {
   Textarea,
 } from '../../components/ui'
 import { EvidenceGallery } from '../../components/EvidenceGallery'
-import { displayDate, localDate } from '../../utils/dates'
-import { ticketStatusLabels, type Priority, type Ticket, type User } from '../../types/models'
-import { errorMessage } from '../../services/errors'
+import { displayDate, localDate, localDateTime } from '../../utils/dates'
+import {
+  ticketStatusLabels,
+  ticketWorkStatus,
+  type Priority,
+  type Ticket,
+  type User,
+} from '../../types/models'
+import { AppError, errorMessage } from '../../services/errors'
 export function TicketDetail({ id, account = false }: { id: number; account?: boolean }) {
   const repos = useRepositories()
   const query = useQuery(
     useCallback(
       async (signal) => {
         const ticket = await repos.tickets.get(id, { signal })
-        const [store, users] = await Promise.all([
+        if (!repos.tickets.catalogs) throw new Error('Falta catálogo de tickets.')
+        const [store, users, catalogs] = await Promise.all([
           repos.stores.get(ticket.storeId, { signal }),
           repos.users.list({ signal }),
+          repos.tickets.catalogs(),
         ])
-        return { ticket, store, users }
+        return { ticket, store, users, catalogs }
       },
       [id, repos],
     ),
   )
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
-  const { ticket, store, users } = query.data
+  const { ticket, store, users, catalogs } = query.data
   const person = (userId?: number) =>
     users.find((user) => user.id === userId)?.name ??
     (userId ? `Usuario #${userId}` : 'Sin asignar')
@@ -46,6 +55,7 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
         ← Incidencias
       </Link>
       <PageHeader title={`Ticket #${ticket.id}`} description={`${store.name} · ${store.address}`} />
+      <QueryFeedback query={query} />
       <div className="nf-two-columns">
         <Card title="Reporte original">
           <Badge>{ticketStatusLabels[ticket.status]}</Badge>
@@ -61,8 +71,16 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
         <Card title="Programación">
           <p>Técnico: {person(ticket.technicianId)}</p>
           <p>Visita: {displayDate(ticket.scheduledAt)}</p>
-          {account && ['open', 'scheduled'].includes(ticket.status) && (
-            <ScheduleForm key={ticket.history.length} ticket={ticket} users={users} />
+          {account && ticketWorkStatus(ticket.status) === 'pending' && (
+            <ScheduleForm
+              key={ticket.history.length}
+              ticket={ticket}
+              users={users}
+              priorities={catalogs.priorities}
+            />
+          )}
+          {account && ticketWorkStatus(ticket.status) !== 'pending' && (
+            <p>Solo se puede cambiar de técnico mientras el ticket esté Pendiente.</p>
           )}
         </Card>
       </div>
@@ -74,6 +92,23 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
               <p>
                 {displayDate(event.at)} · {person(event.actorId)}
               </p>
+              {event.reason && <p>Motivo: {event.reason}</p>}
+              {event.previous && (
+                <p>
+                  Antes: {person(event.previous.technicianId)} ·{' '}
+                  {displayDate(event.previous.scheduledAt)} · Prioridad{' '}
+                  {catalogs.priorities.find((item) => item.id === event.previous?.priorityId)
+                    ?.name ?? 'No registrada'}
+                </p>
+              )}
+              {event.next && (
+                <p>
+                  Después: {person(event.next.technicianId)} · {displayDate(event.next.scheduledAt)}{' '}
+                  · Prioridad{' '}
+                  {catalogs.priorities.find((item) => item.id === event.next?.priorityId)?.name ??
+                    'No registrada'}
+                </p>
+              )}
             </li>
           ))}
         </ol>
@@ -84,8 +119,8 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
             <p>{ticket.resolution}</p>
             <p>
               {ticket.resolvedAt
-                ? `Resuelto: ${displayDate(ticket.resolvedAt)}`
-                : 'Pendiente de revisión GPS.'}
+                ? `Finalizado: ${displayDate(ticket.resolvedAt)}`
+                : 'Registro técnico guardado; finalización pendiente.'}
             </p>
             <EvidenceGallery ids={ticket.technicalEvidenceIds} />
           </>
@@ -96,14 +131,25 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
     </>
   )
 }
-function ScheduleForm({ ticket, users }: { ticket: Ticket; users: User[] }) {
+function ScheduleForm({
+  ticket,
+  users,
+  priorities,
+}: {
+  ticket: Ticket
+  users: User[]
+  priorities: { id: number; name: string }[]
+}) {
   const { tickets } = useRepositories()
   const [technician, setTechnician] = useState(ticket.technicianId ?? 0)
-  const [date, setDate] = useState(ticket.scheduledAt?.slice(0, 16) ?? `${localDate()}T10:00`)
+  const [date, setDate] = useState(
+    ticket.scheduledAt ? localDateTime(ticket.scheduledAt) : `${localDate()}T10:00`,
+  )
   const [priority, setPriority] = useState<Priority>(ticket.priority)
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({})
   return (
     <form
       className="nf-form"
@@ -112,14 +158,19 @@ function ScheduleForm({ ticket, users }: { ticket: Ticket; users: User[] }) {
         if (busy) return
         setBusy(true)
         setError('')
+        setFieldErrors({})
         void tickets
-          .schedule(ticket.id, technician, date, priority, reason)
-          .catch((cause) => setError(errorMessage(cause)))
+          .schedule(ticket.id, technician, date, priority, reason, ticket.revision)
+          .catch((cause) => {
+            setError(errorMessage(cause))
+            setFieldErrors(cause instanceof AppError ? cause.fields : {})
+          })
           .finally(() => setBusy(false))
       }}
     >
       <Select
         label="Técnico asignado"
+        errors={fieldErrors.technicianId}
         required
         value={technician}
         onChange={(event) => setTechnician(Number(event.target.value))}
@@ -138,24 +189,33 @@ function ScheduleForm({ ticket, users }: { ticket: Ticket; users: User[] }) {
       </Select>
       <Input
         label="Fecha y hora de visita"
+        errors={fieldErrors.scheduledAt}
         type="datetime-local"
         min={`${localDate()}T00:00`}
         required
         value={date}
         onChange={(event) => setDate(event.target.value)}
       />
+      <p>
+        La fecha se introduce en la zona horaria del dispositivo. El historial muestra la hora de
+        operación de Perú.
+      </p>
       <Select
         label="Prioridad asignada"
+        errors={fieldErrors.priorityId}
         value={priority}
-        onChange={(event) => setPriority(event.target.value as Priority)}
+        onChange={(event) => setPriority(event.target.value)}
       >
-        <option>Alta</option>
-        <option>Media</option>
-        <option>Baja</option>
+        {priorities.map((item) => (
+          <option key={item.id} value={item.name}>
+            {item.name}
+          </option>
+        ))}
       </Select>
       {ticket.technicianId && (
         <Textarea
           label="Motivo de reprogramación o reasignación"
+          errors={fieldErrors.reason}
           required
           minLength={10}
           value={reason}

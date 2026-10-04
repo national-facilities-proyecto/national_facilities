@@ -24,7 +24,7 @@ export default function TicketDetailPage() {
         }
         if (visit.origin !== 'ticket') throw new AppError('not_found', 'Ticket no encontrado.')
         const store = await repos.stores.get(visit.storeId, { signal })
-        return { visit, store }
+        return { visit, store: { ...store, ...visit.storeSnapshot } }
       },
       [id, repos],
     ),

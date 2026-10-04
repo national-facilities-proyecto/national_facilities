@@ -3,7 +3,7 @@ import { render } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { RepositoriesContext } from '../app/RepositoriesProvider'
 import { AuthProvider } from '../features/auth/AuthProvider'
-import { createMockRepositories } from '../mocks/repositories'
+import { createMockRepositories } from '../test/doubles/repositories'
 import type { Repositories } from '../services/repositories/contracts'
 export function renderPage(
   node: ReactNode,

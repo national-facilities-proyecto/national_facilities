@@ -3,25 +3,10 @@ import { Link } from 'react-router-dom'
 import { useRepositories } from '../app/RepositoriesProvider'
 import { useQuery } from '../hooks/useQuery'
 import { QueryState } from '../components/feedback/QueryState'
+import { QueryFeedback } from '../components/feedback/QueryFeedback'
 import { Badge, Button, Card, Input, PageHeader, ResponsiveTable, Select } from '../components/ui'
 import { displayDate, inDateRange } from '../utils/dates'
-import { type VisitStatus } from '../types/models'
-
-type ChecklistStatus = 'open' | 'scheduled' | 'pending_approval' | 'completed'
-
-const checklistStatusLabels: Record<ChecklistStatus, string> = {
-  open: 'Abierto',
-  scheduled: 'Programado',
-  pending_approval: 'Por aprobar',
-  completed: 'Completado',
-}
-
-function checklistStatus(status: VisitStatus): ChecklistStatus {
-  if (status === 'available') return 'open'
-  if (status === 'pending_approval') return 'pending_approval'
-  if (status === 'completed') return 'completed'
-  return 'scheduled'
-}
+import { visitStatusLabels, visitWorkStatus, workStatusOptions } from '../types/models'
 
 export default function TechnicalSupervisorChecklistsPage() {
   const repos = useRepositories()
@@ -33,18 +18,27 @@ export default function TechnicalSupervisorChecklistsPage() {
   const query = useQuery(
     useCallback(
       async (signal) => {
-        const [checklists, visits, stores, users, tickets] = await Promise.all([
+        const [checklists, visits, stores, users, tickets, catalogs] = await Promise.all([
           repos.checklists.list({ signal }),
           repos.visits.list({ signal }),
           repos.stores.list({ signal }),
           repos.users.list({ signal }),
           repos.tickets.list({ signal }),
+          repos.tickets.catalogs
+            ? repos.tickets.catalogs()
+            : Promise.reject(new Error('Catálogos no disponibles.')),
         ])
         return {
-          visits: [...checklists, ...visits.filter((visit) => visit.status === 'pending_approval')],
+          visits: [
+            ...checklists,
+            ...visits.filter(
+              (visit) => visit.status === 'pending_approval' || (visit.exceptions?.length ?? 0) > 0,
+            ),
+          ],
           stores,
           users,
           tickets,
+          catalogs,
         }
       },
       [repos],
@@ -58,7 +52,7 @@ export default function TechnicalSupervisorChecklistsPage() {
     tickets.find((ticket) => ticket.id === ticketId)?.priority
   const filtered = visits.filter(
     (visit) =>
-      (!status || checklistStatus(visit.status) === status) &&
+      (!status || visitWorkStatus(visit.status) === status) &&
       (!storeId || visit.storeId === Number(storeId)) &&
       (!priority || visitPriority(visit.ticketId) === priority) &&
       inDateRange(visit.completedAt ?? visit.scheduledAt, from, to),
@@ -66,20 +60,25 @@ export default function TechnicalSupervisorChecklistsPage() {
   return (
     <>
       <PageHeader
-        title="Checklists y excepciones GPS"
+        title="Checklists y excepciones"
         description="Supervisa el mantenimiento mensual y revisa excepciones de checklists y tickets."
       />
+      <QueryFeedback query={query} />
       <Card>
         <div className="nf-filters">
           <Select label="Estado" value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="">Todos</option>
-            {(Object.keys(checklistStatusLabels) as ChecklistStatus[]).map((value) => (
+            {workStatusOptions.map(({ value, label }) => (
               <option key={value} value={value}>
-                {checklistStatusLabels[value]}
+                {label}
               </option>
             ))}
           </Select>
-          <Select label="Tienda" value={storeId} onChange={(event) => setStoreId(event.target.value)}>
+          <Select
+            label="Tienda"
+            value={storeId}
+            onChange={(event) => setStoreId(event.target.value)}
+          >
             <option value="">Todas</option>
             {stores.map((store) => (
               <option key={store.id} value={store.id}>
@@ -87,9 +86,13 @@ export default function TechnicalSupervisorChecklistsPage() {
               </option>
             ))}
           </Select>
-          <Select label="Prioridad" value={priority} onChange={(event) => setPriority(event.target.value)}>
+          <Select
+            label="Prioridad"
+            value={priority}
+            onChange={(event) => setPriority(event.target.value)}
+          >
             <option value="">Todas</option>
-            {['Alta', 'Media', 'Baja'].map((value) => (
+            {query.data.catalogs.priorities.map(({ name: value }) => (
               <option key={value}>{value}</option>
             ))}
           </Select>
@@ -150,10 +153,10 @@ export default function TechnicalSupervisorChecklistsPage() {
           {
             label: 'Estado',
             render: (visit) => {
-              const currentStatus = checklistStatus(visit.status)
+              const currentStatus = visitWorkStatus(visit.status)
               return (
                 <Badge className={`nf-badge--${currentStatus}`}>
-                  {checklistStatusLabels[currentStatus]}
+                  {visitStatusLabels[visit.status]}
                 </Badge>
               )
             },

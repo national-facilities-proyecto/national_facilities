@@ -12,7 +12,8 @@ export function TicketReport({ ticketId }: { ticketId: number }) {
     useCallback((signal) => repos.tickets.get(ticketId, { signal }), [repos, ticketId]),
     false,
   )
-  if (!query.data || query.status !== 'success') return <QueryState query={query} />
+  if (!query.data || query.status !== 'success')
+    return <QueryState query={query} showHeading={false} />
   const ticket = query.data
   return (
     <Card title={`Reporte original · Ticket #${ticket.id}`}>

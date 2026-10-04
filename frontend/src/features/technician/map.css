@@ -19,6 +19,14 @@
   background: #f3f6f7ed;
   text-align: center;
 }
+.nf-map-status:has(.nf-loading--map) {
+  padding: 0;
+  place-content: stretch;
+}
+.nf-map-status .nf-loading--map {
+  height: 100%;
+  border: 0;
+}
 .nf-map-heading {
   display: flex;
   flex-wrap: wrap;
