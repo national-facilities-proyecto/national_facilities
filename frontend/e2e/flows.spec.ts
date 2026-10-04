@@ -52,7 +52,12 @@ async function setup(request: APIRequestContext, origin: 'checklist' | 'ticket')
 async function start(page: Page, id: number, path: string) {
   await page.goto(path + id)
   await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page.getByRole('button', { name: path === '/checklists/' ? 'Iniciar checklist' : 'Confirmar inicio', exact: true }).click()
+  await page
+    .getByRole('button', {
+      name: path === '/checklists/' ? 'Iniciar checklist' : 'Confirmar inicio',
+      exact: true,
+    })
+    .click()
   await expect(page.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
 }
 async function form(page: Page, origin: 'checklist' | 'ticket') {

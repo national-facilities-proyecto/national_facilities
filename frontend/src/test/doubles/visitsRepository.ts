@@ -64,9 +64,16 @@ export function createVisitsRepository(): NonNullable<Repositories['visits']> {
         required(visit.status === 'in_progress', 'Inicia primero el trabajo.')
         if (!visit.formOpenedAt) {
           if (visit.origin === 'checklist' && !location)
-            required(['denied', 'timeout', 'unavailable'].includes(failure ?? ''), 'Solicita GPS o declara su indisponibilidad.')
+            required(
+              ['denied', 'timeout', 'unavailable'].includes(failure ?? ''),
+              'Solicita GPS o declara su indisponibilidad.',
+            )
           if (visit.origin === 'checklist' && location) {
-            validateLocation(location, db.stores.find((item) => item.id === visit.storeId)!, visit.radiusMeters ?? 100)
+            validateLocation(
+              location,
+              db.stores.find((item) => item.id === visit.storeId)!,
+              visit.radiusMeters ?? 100,
+            )
             visit.endLocation = location
           }
           visit.formOpenedAt = new Date().toISOString()

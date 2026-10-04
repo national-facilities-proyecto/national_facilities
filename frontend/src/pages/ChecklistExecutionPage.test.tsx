@@ -57,11 +57,19 @@ it('muestra tareas y cámara sin formulario ni plazo durante el trabajo físico'
   for (const task of visit.tasks) expect(screen.getByText(task.title)).toBeVisible()
   expect(screen.getByRole('button', { name: 'Tomar fotografía del recorrido' })).toBeVisible()
   expect(screen.queryByRole('button', { name: '✓ Conforme' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('region', { name: 'Tiempo de registro del formulario' })).not.toBeInTheDocument()
-  const getCurrentPosition = vi.fn((success: PositionCallback) => success({
-    coords: { latitude: store.latitude, longitude: store.longitude, accuracy: 8 }, timestamp: Date.now(),
-  } as GeolocationPosition))
-  Object.defineProperty(navigator, 'geolocation', { configurable: true, value: { getCurrentPosition } })
+  expect(
+    screen.queryByRole('region', { name: 'Tiempo de registro del formulario' }),
+  ).not.toBeInTheDocument()
+  const getCurrentPosition = vi.fn((success: PositionCallback) =>
+    success({
+      coords: { latitude: store.latitude, longitude: store.longitude, accuracy: 8 },
+      timestamp: Date.now(),
+    } as GeolocationPosition),
+  )
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: { getCurrentPosition },
+  })
   fireEvent.click(screen.getByRole('button', { name: 'Finalizar checklist' }))
   await screen.findByRole('region', { name: 'Tiempo de registro del formulario' })
   const opened = await repos.visits.get(1)
@@ -79,7 +87,11 @@ it('conserva las fotos y permite el flujo de justificación cuando el GPS no est
   const open = vi.spyOn(repos.visits, 'openForm')
   Object.defineProperty(navigator, 'geolocation', {
     configurable: true,
-    value: { getCurrentPosition: vi.fn((_success: PositionCallback, failure: PositionErrorCallback) => failure({ code: 1 } as GeolocationPositionError)) },
+    value: {
+      getCurrentPosition: vi.fn((_success: PositionCallback, failure: PositionErrorCallback) =>
+        failure({ code: 1 } as GeolocationPositionError),
+      ),
+    },
   })
   renderPage(<VisitEditor id={1} origin="checklist" />, repos)
   await screen.findByRole('heading', { name: 'Trabajo en ejecución' })

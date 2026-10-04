@@ -35,7 +35,9 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   await expect(page.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
   await expect(page.getByText('Inspect test device', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '✓ Conforme', exact: true })).toHaveCount(0)
-  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
+    0,
+  )
   let uploads = 0
   page.on('request', (request) => {
     if (request.method() === 'POST' && request.url().endsWith('/evidencias/')) uploads++
@@ -61,20 +63,33 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   const deadline = current.expiresAt
   expect(Date.parse(deadline ?? '') - Date.parse(current.formOpenedAt ?? '')).toBe(300000)
   await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
-  await page.getByLabel('Ítem para fotografía 1', { exact: true }).selectOption({ label: 'Inspect test device' })
+  await page
+    .getByLabel('Ítem para fotografía 1', { exact: true })
+    .selectOption({ label: 'Inspect test device' })
   await page.getByRole('button', { name: 'Asociar fotografía', exact: true }).click()
-  await expect(page.getByText('No hay fotografías pendientes de asociación.', { exact: true })).toBeVisible()
+  await expect(
+    page.getByText('No hay fotografías pendientes de asociación.', { exact: true }),
+  ).toBeVisible()
   await expect(page.locator('fieldset .nf-evidence img')).toHaveCount(1)
   expect(uploads).toBe(1)
   const recorded = object(await call(request, `/visitas/${available.id}/`, token))
   const answers = Array.isArray(recorded.answers) ? recorded.answers.map(object) : []
-  const evidence = await request.get(`${api}/evidencias/${String((answers[0]?.evidenceIds as string[])[0])}/`, { headers: { Authorization: 'Bearer ' + token } })
+  const evidence = await request.get(
+    `${api}/evidencias/${String((answers[0]?.evidenceIds as string[])[0])}/`,
+    { headers: { Authorization: 'Bearer ' + token } },
+  )
   expect(evidence.ok()).toBe(true)
-  expect(Date.parse(String(object(await evidence.json()).capturedAt))).toBeLessThan(Date.parse(current.formOpenedAt ?? ''))
-  await page.getByLabel('Reporte general del checklist').fill('Preventive review completed during the physical walkthrough.')
+  expect(Date.parse(String(object(await evidence.json()).capturedAt))).toBeLessThan(
+    Date.parse(current.formOpenedAt ?? ''),
+  )
+  await page
+    .getByLabel('Reporte general del checklist')
+    .fill('Preventive review completed during the physical walkthrough.')
   await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
   await page.reload()
-  await expect(page.getByLabel('Reporte general del checklist')).toHaveValue('Preventive review completed during the physical walkthrough.')
+  await expect(page.getByLabel('Reporte general del checklist')).toHaveValue(
+    'Preventive review completed during the physical walkthrough.',
+  )
   await expect(page.getByRole('button', { name: '✓ Conforme', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',

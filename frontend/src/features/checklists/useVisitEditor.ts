@@ -325,7 +325,8 @@ export function useVisitEditor(initial: Visit) {
     setSaving(true)
     try {
       if (!repos.visits.openForm) throw new Error('Falta apertura de formulario.')
-      const coordinates = visit.origin === 'checklist' && !failure ? await location.request() : undefined
+      const coordinates =
+        visit.origin === 'checklist' && !failure ? await location.request() : undefined
       const next = await repos.visits.openForm(visit.id, coordinates, failure)
       latest.current = next
       confirmedRevision.current = next.revision ?? 0

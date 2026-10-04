@@ -133,7 +133,9 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         <PageHeader title={store.name} description={store.address} />
         {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
         <Card title="Trabajo en ejecución">
-          <Badge>{visit.origin === 'checklist' ? 'En curso' : visitStatusLabels[visit.status]}</Badge>
+          <Badge>
+            {visit.origin === 'checklist' ? 'En curso' : visitStatusLabels[visit.status]}
+          </Badge>
           <p>
             Inicio real:{' '}
             {visit.startedAt ? new Date(visit.startedAt).toLocaleString('es-PE') : 'No registrado'}
@@ -152,7 +154,10 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             </ol>
           )}
           {visit.origin === 'checklist' && auth.session && (
-            <ChecklistPhotos scope={`${repos.source}:${auth.session.user.id}:${visit.id}`} tasks={visit.tasks} />
+            <ChecklistPhotos
+              scope={`${repos.source}:${auth.session.user.id}:${visit.id}`}
+              tasks={visit.tasks}
+            />
           )}
           <Button disabled={saving} onClick={() => void openForm()}>
             {saving
@@ -162,14 +167,23 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                 : 'Registrar resolución'}
           </Button>
           {error && <Alert>{error}</Alert>}
-          {visit.origin === 'checklist' && openingFailure && ['denied', 'timeout', 'unavailable'].includes(openingFailure) && (
-            <>
-              <p>El envío requerirá GPS válido o una justificación de ubicación revisada por el supervisor.</p>
-              <Button variant="secondary" disabled={saving} onClick={() => void openForm(openingFailure)}>
-                Continuar al formulario sin GPS
-              </Button>
-            </>
-          )}
+          {visit.origin === 'checklist' &&
+            openingFailure &&
+            ['denied', 'timeout', 'unavailable'].includes(openingFailure) && (
+              <>
+                <p>
+                  El envío requerirá GPS válido o una justificación de ubicación revisada por el
+                  supervisor.
+                </p>
+                <Button
+                  variant="secondary"
+                  disabled={saving}
+                  onClick={() => void openForm(openingFailure)}
+                >
+                  Continuar al formulario sin GPS
+                </Button>
+              </>
+            )}
         </Card>
       </>
     )
@@ -206,7 +220,11 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         }
       />
       {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
-      <Badge>{visit.origin === 'checklist' && visit.status === 'in_progress' ? 'En curso' : visitStatusLabels[visit.status]}</Badge>
+      <Badge>
+        {visit.origin === 'checklist' && visit.status === 'in_progress'
+          ? 'En curso'
+          : visitStatusLabels[visit.status]}
+      </Badge>
       {visit.status === 'pending_approval' && (
         <Card title="En revisión">
           <p>
@@ -299,13 +317,22 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         {visit.origin === 'checklist' ? (
           <>
             {auth.session && (
-              <ChecklistPhotos scope={`${repos.source}:${auth.session.user.id}:${visit.id}`} tasks={visit.tasks}
+              <ChecklistPhotos
+                scope={`${repos.source}:${auth.session.user.id}:${visit.id}`}
+                tasks={visit.tasks}
                 onAssociate={async (photo, taskId) => {
-                  const count = visit.answers.find((answer) => answer.taskId === taskId)?.evidenceIds.length ?? 0
-                  const validation = validateFiles([new File([photo.blob], photo.name, { type: photo.mimeType })], count)
-                  if (validation.errors.length) throw new AppError('validation', validation.errors.join(' '))
+                  const count =
+                    visit.answers.find((answer) => answer.taskId === taskId)?.evidenceIds.length ??
+                    0
+                  const validation = validateFiles(
+                    [new File([photo.blob], photo.name, { type: photo.mimeType })],
+                    count,
+                  )
+                  if (validation.errors.length)
+                    throw new AppError('validation', validation.errors.join(' '))
                   await capture(photo, taskId)
-                }} />
+                }}
+              />
             )}
             <div className="nf-progress" role="status">
               <span>
@@ -338,8 +365,12 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                 />
               ))}
             </section>
-            <Textarea label="Reporte general del checklist" rows={4} value={visit.workDescription}
-              onChange={(event) => update({ workDescription: event.target.value })} />
+            <Textarea
+              label="Reporte general del checklist"
+              rows={4}
+              value={visit.workDescription}
+              onChange={(event) => update({ workDescription: event.target.value })}
+            />
           </>
         ) : (
           <Card title="Resolución del trabajo">

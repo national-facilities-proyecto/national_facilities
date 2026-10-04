@@ -27,7 +27,11 @@ async function start(id = 1, gpsAvailable = true) {
     capturedAt: Date.now(),
   }
   await repos.visits.start(id, coordinates)
-  await repos.visits.openForm?.(id, gpsAvailable ? coordinates : undefined, gpsAvailable ? undefined : 'unavailable')
+  await repos.visits.openForm?.(
+    id,
+    gpsAvailable ? coordinates : undefined,
+    gpsAvailable ? undefined : 'unavailable',
+  )
   return { visit, coordinates }
 }
 async function completeDraft(id = 1, gpsAvailable = true) {
