@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
-import { checklistCase, login } from './helpers.js'
+import { scheduledMapVisit, login } from './helpers.js'
 
 function gate() {
   let release = () => {}
@@ -11,16 +11,21 @@ function gate() {
 }
 
 for (const width of [320, 1440]) {
-  test(`carga a ${width}px: conserva el portal y reserva el espacio del mapa`, async ({ page }) => {
+  test(`carga a ${width}px: conserva el portal y reserva el espacio del mapa`, async ({
+    page,
+    request,
+  }) => {
     await page.setViewportSize({ width, height: 900 })
-    checklistCase()
+    const visitId = await scheduledMapVisit(request)
     const routeGate = gate()
     const mapGate = gate()
+    let mapRequests = 0
     await page.route(/\/assets\/RoutesPage-[^/]+\.js$/, async (route) => {
       await routeGate.promise
       await route.continue()
     })
     await page.route(/\/assets\/AssignedLocationsMap-[^/]+\.js$/, async (route) => {
+      mapRequests++
       await mapGate.promise
       await route.continue()
     })
@@ -51,7 +56,12 @@ for (const width of [320, 1440]) {
       }
       await page.screenshot({ path: `test-results/loading-route-${width}.png`, fullPage: true })
       routeGate.release()
+      await expect.poll(() => mapRequests).toBeGreaterThan(0)
       await expect(page.locator('.nf-loading--map')).toBeVisible()
+      await expect(page.locator('.nf-map-container')).toHaveCount(0)
+      await expect(page.getByText('Preparando tus ubicaciones asignadas.')).toBeVisible()
+      await page.getByRole('button', { name: 'Futuras', exact: true }).click()
+      await expect(page.locator(`a[href="/routes/${visitId}"]`)).toBeVisible()
       await expect(page.getByRole('button', { name: 'Hoy', exact: true })).toBeVisible()
       const placeholder = await page.locator('.nf-loading--map').boundingBox()
       const placeholderCard = await page
@@ -60,6 +70,7 @@ for (const width of [320, 1440]) {
       await page.screenshot({ path: `test-results/loading-map-${width}.png`, fullPage: true })
       mapGate.release()
       await expect(page.locator('.nf-map-container')).toBeVisible()
+      await expect(page.getByText('Preparando tus ubicaciones asignadas.')).toHaveCount(0)
       const map = await page.locator('.nf-map-container').boundingBox()
       const mapCard = await page
         .getByRole('region', { name: 'Mapa de tiendas', exact: true })

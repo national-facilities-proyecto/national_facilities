@@ -76,6 +76,41 @@ export async function call(
 export async function visit(request: APIRequestContext, id: number, token: string) {
   return mapVisit(await call(request, '/visitas/' + id + '/', token))
 }
+// Mis Rutas contains ticket visits, not the shared checklist pool. Each map test
+// needs its own pending visit rather than data left by another E2E run.
+export async function scheduledMapVisit(request: APIRequestContext) {
+  const storeToken = await access(request, 'store')
+  const stores = await call(request, '/tiendas/', storeToken)
+  const catalogs = object(await call(request, '/catalogos/', storeToken))
+  if (!Array.isArray(stores) || !stores.length) throw new Error('Sin tienda aislada.')
+  if (!Array.isArray(catalogs.categories) || !Array.isArray(catalogs.priorities))
+    throw new Error('Sin catálogo.')
+  const priorityId = object(catalogs.priorities[0]).id
+  const ticket = object(
+    await call(request, '/tickets/', storeToken, {
+      storeId: object(stores[0]).id,
+      categoryId: object(catalogs.categories[0]).id,
+      priorityId,
+      description: 'Pending visit for map loading and provider recovery.',
+      evidenceIds: [],
+    }),
+  )
+  const accountToken = await access(request, 'account')
+  const users = await call(request, '/usuarios/', accountToken)
+  if (!Array.isArray(users)) throw new Error('Usuarios incompatibles.')
+  const tech = users.map(object).find((user) => user.username === 'tech')
+  const scheduled = object(
+    await call(request, `/tickets/${String(ticket.id)}/programar/`, accountToken, {
+      technicianId: tech?.id,
+      scheduledAt: new Date(Date.now() + 2 * 86400000).toISOString(),
+      priorityId,
+      reason: '',
+      revision: 0,
+    }),
+  )
+  if (typeof scheduled.visitId !== 'number') throw new Error('Sin visita de mapa.')
+  return scheduled.visitId
+}
 export function advance(id: number, mode: 'work' | 'expire' | 'expire_claim') {
   execFileSync(python, [resolve('../backend/test_support/clock.py'), String(id), mode], {
     cwd: resolve('..'),

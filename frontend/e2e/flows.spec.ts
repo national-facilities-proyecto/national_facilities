@@ -11,6 +11,8 @@ import {
   visit,
   advance,
   upload,
+  scheduledMapVisit,
+  mapVisit,
 } from './helpers.js'
 import type { APIRequestContext, Page } from '@playwright/test'
 
@@ -346,7 +348,11 @@ for (const username of ['tech', 'store', 'account', 'admin'])
       fullPage: true,
     })
   })
-test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({ page }) => {
+test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({
+  page,
+  request,
+}) => {
+  const visitId = await scheduledMapVisit(request)
   const requests: string[] = []
   page.on('request', (request) => {
     if (/AssignedLocationsMap|tiles\.openfreemap\.org/.test(request.url()))
@@ -354,11 +360,32 @@ test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({ 
   })
   await page.route('https://tiles.openfreemap.org/**', (route) => route.abort())
   await login(page)
+  expect(requests).toEqual([])
   await page.goto('/routes')
+  const detail = page.locator(`a[href="/routes/${visitId}"]`)
+  await page.getByRole('button', { name: 'Futuras', exact: true }).click()
+  await expect(detail).toBeVisible()
+  await expect.poll(() => requests.some((url) => url.includes('tiles.openfreemap.org'))).toBe(true)
   await expect(page.getByRole('button', { name: 'Reintentar mapa' })).toBeVisible({
     timeout: 20000,
   })
   expect(requests.some((url) => url.includes('AssignedLocationsMap'))).toBe(true)
+  await expect(detail).toBeVisible()
+  const tileRequests = () => requests.filter((url) => url.includes('tiles.openfreemap.org')).length
+  const beforeRetry = tileRequests()
+  await page.getByRole('button', { name: 'Reintentar mapa' }).click()
+  await expect.poll(tileRequests).toBeGreaterThan(beforeRetry)
+  await expect(page.getByRole('button', { name: 'Reintentar mapa' })).toBeVisible({
+    timeout: 20000,
+  })
+  await expect(detail).toBeVisible()
+  const visits = await call(request, '/visitas/programadas/', await access(request, 'tech'))
+  if (!Array.isArray(visits)) throw new Error('Visitas incompatibles.')
+  const completed = visits.map(mapVisit).filter((visit) => visit.status === 'completed')
   await page.getByRole('button', { name: 'Finalizados', exact: true }).click()
-  await expect(page.getByRole('link', { name: 'Ver detalle' }).first()).toBeVisible()
+  await expect(detail).toHaveCount(0)
+  await expect(page.locator('#main-content .nf-list a')).toHaveCount(completed.length)
+  if (completed.length)
+    await expect(page.getByRole('link', { name: 'Ver detalle' }).first()).toBeVisible()
+  else await expect(page.getByText('No hay atenciones en este filtro.')).toBeVisible()
 })
