@@ -70,6 +70,15 @@ class TiendaSerializer(serializers.ModelSerializer):
         if self.instance and "cliente" in attrs and attrs["cliente"].pk != self.instance.cliente_id:
             if self.instance.visitas.exists() or self.instance.tickets.exists():
                 raise serializers.ValidationError({"clientId": "No puede cambiarse el cliente de una tienda con historial."})
+        if self.instance and self.instance.zona_id:
+            # No añade zona al contrato HTTP de Fase 1A. Valida un posible cambio
+            # de cliente si la zona ya fue asignada explícitamente desde el dominio.
+            candidate = Tienda(cliente_id=attrs["cliente"].pk if "cliente" in attrs else self.instance.cliente_id,
+                               zona_id=self.instance.zona_id)
+            try:
+                candidate.clean()
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError({"clientId": exc.message_dict["zona"]})
         return attrs
 
 

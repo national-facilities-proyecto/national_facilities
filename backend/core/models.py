@@ -1,4 +1,5 @@
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q, F
 from django.core.validators import MinValueValidator
@@ -37,11 +38,69 @@ class Cliente(models.Model):
         return self.razon_social
 
 
+class Zona(models.Model):
+    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="zonas")
+    nombre = models.CharField(max_length=150)
+    activo = models.BooleanField(default=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["cliente", "nombre"], name="zona_cliente_nombre_unico"),
+        ]
+        indexes = [models.Index(fields=["cliente", "activo"], name="zona_cliente_activo_idx")]
+
+    def clean(self):
+        super().clean()
+        if self.pk and self.cliente_id:
+            previous = Zona.objects.using(self._state.db).filter(pk=self.pk)
+            if previous.exclude(cliente_id=self.cliente_id).exists():
+                if (self.tiendas.exclude(cliente_id=self.cliente_id).exists()
+                        or self.coberturas.exclude(cliente_id=self.cliente_id).exists()):
+                    raise ValidationError({"cliente": "No puede cambiarse el cliente de una zona con tiendas o coberturas de otro cliente."})
+
+    def save(self, *args, **kwargs):
+        # También protege el cambio de cliente al guardar desde el ORM normal.
+        # QuerySet.update/bulk_* no ejecutan esta validación de dominio.
+        self.clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.cliente.razon_social} / {self.nombre}"
+
+
+def _validar_cliente_zona(cliente_id, zona_id, using=None):
+    if cliente_id is None or zona_id is None:
+        return
+    # Consulta el cliente persistido, no una relación cacheada potencialmente antigua.
+    # La existencia de zona/cliente queda además protegida por sus FK en la DB.
+    zona_cliente_id = Zona.objects.using(using).filter(pk=zona_id).values_list("cliente_id", flat=True).first()
+    if zona_cliente_id is not None and zona_cliente_id != cliente_id:
+        raise ValidationError({"zona": "La zona debe pertenecer al mismo cliente."})
+
+
+def _validar_cliente_zona_update_fields(instance, update_fields, using=None):
+    if not instance.pk or not update_fields:
+        return
+    fields = set(update_fields)
+    changes_client = bool(fields & {"cliente", "cliente_id"})
+    changes_zone = bool(fields & {"zona", "zona_id"})
+    if changes_client == changes_zone:
+        return
+    previous = type(instance).objects.using(using).filter(pk=instance.pk).values("cliente_id", "zona_id").first()
+    if previous:
+        # Los atributos omitidos en update_fields conservarán su valor en la DB.
+        _validar_cliente_zona(instance.cliente_id if changes_client else previous["cliente_id"],
+                             instance.zona_id if changes_zone else previous["zona_id"], using)
+
+
 class Tienda(models.Model):
     # La tienda es una entidad operativa independiente de quién tenga acceso a ella.
     # La relación con usuarios (supervisor de tienda, supervisor de cuenta) se
     # resuelve mediante AsignacionTienda, no con una FK directa aquí.
     cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="tiendas")
+    # Nullable durante la transición: las tiendas existentes requieren asignación explícita.
+    zona = models.ForeignKey(Zona, on_delete=models.PROTECT, related_name="tiendas", null=True, blank=True)
     nombre = models.CharField(max_length=150)
     direccion = models.CharField(max_length=250)
     latitud = models.DecimalField(max_digits=9, decimal_places=6)
@@ -49,11 +108,22 @@ class Tienda(models.Model):
     contacto = models.CharField(max_length=200, blank=True)
     activo = models.BooleanField(default=True)
 
+    def clean(self):
+        super().clean()
+        _validar_cliente_zona(self.cliente_id, self.zona_id, self._state.db)
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        _validar_cliente_zona_update_fields(self, kwargs.get("update_fields"), kwargs.get("using") or self._state.db)
+        return super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.nombre} ({self.cliente.razon_social})"
 
 
 class AsignacionTienda(models.Model):
+    # Sigue siendo el mecanismo vigente en Fase 1A. Tras la migración funcional,
+    # quedará para Supervisor de tienda y el histórico de transición.
     """
     Relación entre un usuario y una tienda.
 
@@ -75,6 +145,33 @@ class AsignacionTienda(models.Model):
 
     def __str__(self):
         return f"{self.usuario} → {self.tienda}"
+
+
+class CoberturaUsuario(models.Model):
+    # Base V2 para Técnico y Supervisor NF; todavía no participa en permisos.
+    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name="coberturas")
+    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="coberturas_usuario")
+    zona = models.ForeignKey(Zona, on_delete=models.PROTECT, related_name="coberturas")
+    activo = models.BooleanField(default=True)
+    asignado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["usuario", "cliente", "zona"], name="cobertura_usuario_cliente_zona_unica"),
+        ]
+        indexes = [models.Index(fields=["usuario", "activo"], name="cobertura_usuario_activo_idx")]
+
+    def clean(self):
+        super().clean()
+        _validar_cliente_zona(self.cliente_id, self.zona_id, self._state.db)
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        _validar_cliente_zona_update_fields(self, kwargs.get("update_fields"), kwargs.get("using") or self._state.db)
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.usuario} → {self.cliente.razon_social} / {self.zona.nombre}"
 
 
 class PlantillaChecklist(models.Model):
@@ -283,6 +380,22 @@ class CategoriaProblema(models.Model):
 
     def __str__(self):
         return self.nombre
+
+
+class ClienteEspecialidad(models.Model):
+    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="especialidades")
+    categoria = models.ForeignKey(CategoriaProblema, on_delete=models.PROTECT, related_name="clientes_habilitados")
+    activo = models.BooleanField(default=True)
+    habilitada_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["cliente", "categoria"], name="cliente_especialidad_unica"),
+        ]
+        indexes = [models.Index(fields=["cliente", "activo"], name="cliente_espec_activo_idx")]
+
+    def __str__(self):
+        return f"{self.cliente.razon_social} → {self.categoria.nombre}"
 
 
 class NivelUrgencia(models.Model):
