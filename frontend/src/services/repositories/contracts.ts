@@ -86,6 +86,7 @@ export interface StoreRepository {
 }
 export interface UserRepository {
   list(options?: RequestOptions): Promise<User[]>
+  eligible?(storeId: number, options?: RequestOptions): Promise<User[]>
 }
 export interface DashboardRepository {
   get(options?: RequestOptions & { period?: string; clientId?: number }): Promise<Dashboard>

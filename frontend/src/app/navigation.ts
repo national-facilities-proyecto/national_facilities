@@ -18,7 +18,9 @@ export const navigation: Record<UserRole, { to: string; label: string }[]> = {
     { to: '/admin/users', label: 'Usuarios y roles' },
     { to: '/admin/stores', label: 'Tiendas' },
     { to: '/admin/clients', label: 'Clientes' },
+    { to: '/admin/zones', label: 'Zonas' },
     { to: '/admin/contracts', label: 'Contratos' },
     { to: '/admin/templates', label: 'Plantillas e ítems' },
+    { to: '/admin/specialties', label: 'Especialidades' },
   ],
 }

@@ -12,7 +12,8 @@ from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
 from .models import (Rol, Usuario, Cliente, Tienda, AsignacionTienda, PlantillaChecklist, ItemPlantilla,
-                     Contrato, Visita, Checklist, RespuestaItem, Evidencia, Ticket, CategoriaProblema, NivelUrgencia, ReasignacionTicket)
+                     Contrato, Visita, Checklist, RespuestaItem, Evidencia, Ticket, CategoriaProblema, NivelUrgencia, ReasignacionTicket,
+                     Zona, CoberturaUsuario, ClienteEspecialidad)
 from .generation import generate_month
 
 
@@ -32,14 +33,17 @@ def fixtures():
         users[name] = Usuario.objects.create_user(username=name, email=f"{name}@test.invalid", password=PASSWORD,
             rol=roles[role], password_initialized=True)
     client = Cliente.objects.create(razon_social="Test client", ruc="TEST-1")
-    store = Tienda.objects.create(cliente=client, nombre="Test store", direccion="Test address", latitud="-12.173900", longitud="-77.018100")
-    for name in ["tech", "othertech", "account", "store"]:
-        AsignacionTienda.objects.create(usuario=users[name], tienda=store)
+    zone = Zona.objects.create(cliente=client, nombre="Zona explícita de pruebas")
+    store = Tienda.objects.create(cliente=client, zona=zone, nombre="Test store", direccion="Test address", latitud="-12.173900", longitud="-77.018100")
+    AsignacionTienda.objects.create(usuario=users["store"], tienda=store)
+    for name in ["tech", "othertech", "account"]:
+        CoberturaUsuario.objects.create(usuario=users[name], cliente=client, zona=zone)
     template = PlantillaChecklist.objects.create(nombre="Test template")
     item = ItemPlantilla.objects.create(plantilla=template, descripcion="Inspect device", foto_obligatoria=True)
     contract = Contrato.objects.create(cliente=client, plantilla_checklist=template,
         fecha_inicio=timezone.localdate().replace(day=1), radio_validacion_metros=100)
     category = CategoriaProblema.objects.create(nombre="Eléctrico")
+    ClienteEspecialidad.objects.create(cliente=client, categoria=category)
     urgency = NivelUrgencia.objects.create(nombre="Alta", sla_primera_respuesta_horas=2, sla_resolucion_horas=24)
     return users, store, template, item, contract, category, urgency
 
@@ -169,9 +173,7 @@ class IntegrationTests(TestCase):
         self.assertEqual(self.client.get("/api/dashboard/").status_code, 403)
 
     def test_ticket_minimum_is_separate_for_each_store_and_excludes_checklists(self):
-        second_store = Tienda.objects.create(cliente=self.store.cliente, nombre="Second store", direccion="Address", latitud="-12", longitud="-77")
-        for user in (self.users["tech"], self.users["account"]):
-            AsignacionTienda.objects.create(usuario=user, tienda=second_store)
+        second_store = Tienda.objects.create(cliente=self.store.cliente, zona=self.store.zona, nombre="Second store", direccion="Address", latitud="-12", longitud="-77")
         generate_month(self.users["tech"])
         checklist = Visita.objects.get(origen="checklist", tienda=self.store)
         self.start(checklist)
@@ -701,13 +703,13 @@ class IntegrationTests(TestCase):
         original = visit.checklist.tareas_snapshot
         self.login_as("admin")
         payload = {"username": "newtech", "name": "New Technician", "email": "newtech@test.invalid",
-                   "role": "technician", "active": True, "storeIds": [self.store.pk], "password": PASSWORD}
+                   "role": "technician", "active": True, "coverages": [{"clientId": self.store.cliente_id, "zoneId": self.store.zona_id}], "password": PASSWORD}
         response = self.post("admin/usuarios/", payload)
         self.assertEqual(response.status_code, 201, response.data)
         user = Usuario.objects.get(pk=response.data["id"])
         self.assertTrue(user.check_password(PASSWORD))
         self.assertFalse(user.password_initialized)
-        self.assertTrue(AsignacionTienda.objects.filter(usuario=user, tienda=self.store, activo=True).exists())
+        self.assertTrue(CoberturaUsuario.objects.filter(usuario=user, cliente=self.store.cliente, zona=self.store.zona, activo=True).exists())
         payload["username"] = "weakuser"
         payload["password"] = "12345678"
         self.assertEqual(self.post("admin/usuarios/", payload).status_code, 400)
@@ -809,8 +811,9 @@ class IntegrationTests(TestCase):
         self.assertEqual(dashboard.status_code, 200)
         self.assertEqual(dashboard.data["compliance"], 100)
         another_client = Cliente.objects.create(razon_social="Another authorized client", ruc="TEST-2")
-        another_store = Tienda.objects.create(cliente=another_client, nombre="Another store", direccion="Address", latitud="-12", longitud="-77")
-        AsignacionTienda.objects.create(usuario=self.users["account"], tienda=another_store)
+        another_zone = Zona.objects.create(cliente=another_client, nombre="Otra zona de pruebas")
+        Tienda.objects.create(cliente=another_client, zona=another_zone, nombre="Another store", direccion="Address", latitud="-12", longitud="-77")
+        CoberturaUsuario.objects.create(usuario=self.users["account"], cliente=another_client, zona=another_zone)
         filtered = self.client.get("/api/dashboard/", {"period": period, "clientId": self.store.cliente_id})
         self.assertEqual(filtered.status_code, 200)
         self.assertEqual(filtered.data["compliance"], 100)

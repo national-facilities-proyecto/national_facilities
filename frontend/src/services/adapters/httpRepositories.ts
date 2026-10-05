@@ -14,6 +14,9 @@ import {
   mapEvidence,
   mapCatalogs,
   mapDashboard,
+  mapZone,
+  mapSpecialty,
+  mapClientSpecialty,
   object,
   rows,
   number,
@@ -27,6 +30,9 @@ const paths: Record<AdminKind, string> = {
   clients: 'clientes',
   contracts: 'contratos',
   templates: 'plantillas',
+  zones: 'zonas',
+  specialties: 'especialidades',
+  clientSpecialties: 'cliente-especialidades',
 }
 const mappers: { [K in AdminKind]: (v: unknown) => AdminEntities[K] } = {
   users: mapUser,
@@ -34,6 +40,9 @@ const mappers: { [K in AdminKind]: (v: unknown) => AdminEntities[K] } = {
   clients: mapClient,
   contracts: mapContract,
   templates: mapTemplate,
+  zones: mapZone,
+  specialties: mapSpecialty,
+  clientSpecialties: mapClientSpecialty,
 }
 function mapSession(raw: unknown): Session {
   const v = object(raw)
@@ -76,7 +85,7 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       })
       if (path.startsWith('/visitas/')) mapVisit(raw)
       if (path.startsWith('/tickets/')) mapTicket(raw)
-      for (const kind of ['users', 'stores', 'clients', 'contracts', 'templates'] as const) {
+      for (const kind of Object.keys(paths) as AdminKind[]) {
         if (path.startsWith('/admin/' + paths[kind] + '/')) mappers[kind](raw)
       }
       pendingKeys.delete(signature)
@@ -262,6 +271,11 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       },
     },
     users: {
+      async eligible(storeId, options) {
+        return rows(
+          await request('/tecnicos/?storeId=' + storeId, { signal: options?.signal }),
+        ).map(mapUser)
+      },
       async list(options) {
         return rows(await request('/usuarios/', { signal: options?.signal })).map(mapUser)
       },

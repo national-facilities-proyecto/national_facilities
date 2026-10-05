@@ -49,7 +49,17 @@ export function validSession(value: unknown): value is Session {
     normalizeRole(user.role) !== null &&
     normalizeRole(user.role) === user.role &&
     Array.isArray(user.storeIds) &&
-    user.storeIds.every((id) => typeof id === 'number'),
+    user.storeIds.every((id) => typeof id === 'number') &&
+    (user.coverages === undefined ||
+      (Array.isArray(user.coverages) &&
+        user.coverages.every(
+          (row) =>
+            row &&
+            Number.isInteger(row.clientId) &&
+            row.clientId > 0 &&
+            Number.isInteger(row.zoneId) &&
+            row.zoneId > 0,
+        ))),
   )
 }
 export function canAccess(session: Session | null, allowed: UserRole[], now = Date.now()): boolean {

@@ -13,9 +13,14 @@ export type User = {
   email: string
   role: UserRole
   storeIds: number[]
+  coverages?: Coverage[]
   active: boolean
   passwordInitialized: boolean
 }
+export type Coverage = { clientId: number; zoneId: number }
+export type Zone = { id: number; clientId: number; name: string; active: boolean }
+export type Specialty = { id: number; name: string; active: boolean }
+export type ClientSpecialty = { id: number; clientId: number; categoryId: number; active: boolean }
 export type Session = {
   user: User
   access: string
@@ -41,6 +46,7 @@ export type Store = {
   latitude: number
   longitude: number
   clientId: number
+  zoneId?: number | null
   contact: string
   active: boolean
 }
@@ -278,6 +284,9 @@ export type AdminEntities = {
   clients: Client
   contracts: Contract
   templates: Template
+  zones: Zone
+  specialties: Specialty
+  clientSpecialties: ClientSpecialty
 }
 export type AdminKind = keyof AdminEntities
 export type Dashboard = {

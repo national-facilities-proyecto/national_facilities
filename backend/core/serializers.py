@@ -7,7 +7,7 @@ from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla,
                      Usuario, Rol, AsignacionTienda, Visita, Ticket, Evidencia,
-                     CategoriaProblema, NivelUrgencia)
+                     CategoriaProblema, NivelUrgencia, Zona, CoberturaUsuario, ClienteEspecialidad)
 from .permissions import ROLES
 from .auth_views import identity
 from .services import evidence_ids
@@ -60,29 +60,90 @@ class TiendaSerializer(serializers.ModelSerializer):
     latitude = serializers.DecimalField(source="latitud", max_digits=9, decimal_places=6, min_value=-90, max_value=90)
     longitude = serializers.DecimalField(source="longitud", max_digits=9, decimal_places=6, min_value=-180, max_value=180)
     clientId = serializers.PrimaryKeyRelatedField(source="cliente", queryset=Cliente.objects.all())
-    contact = serializers.CharField(source="contacto", max_length=200, allow_blank=True)
+    zoneId = serializers.PrimaryKeyRelatedField(source="zona", queryset=Zona.objects.all(), allow_null=True, required=False)
+    contact = serializers.CharField(source="contacto", max_length=200, allow_blank=True, required=False, default="")
     active = serializers.BooleanField(source="activo")
     class Meta:
         model = Tienda
-        fields = ["id", "name", "address", "latitude", "longitude", "clientId", "contact", "active"]
+        fields = ["id", "name", "address", "latitude", "longitude", "clientId", "zoneId", "contact", "active"]
 
     def validate(self, attrs):
         if self.instance and "cliente" in attrs and attrs["cliente"].pk != self.instance.cliente_id:
             if self.instance.visitas.exists() or self.instance.tickets.exists():
                 raise serializers.ValidationError({"clientId": "No puede cambiarse el cliente de una tienda con historial."})
-        if self.instance and self.instance.zona_id:
-            # No añade zona al contrato HTTP de Fase 1A. Valida un posible cambio
-            # de cliente si la zona ya fue asignada explícitamente desde el dominio.
-            candidate = Tienda(cliente_id=attrs["cliente"].pk if "cliente" in attrs else self.instance.cliente_id,
-                               zona_id=self.instance.zona_id)
-            try:
-                candidate.clean()
-            except DjangoValidationError as exc:
-                raise serializers.ValidationError({"clientId": exc.message_dict["zona"]})
+        client = attrs.get("cliente", self.instance.cliente if self.instance else None)
+        zone = attrs.get("zona", self.instance.zona if self.instance else None)
+        if not self.instance and zone is None:
+            raise serializers.ValidationError({"zoneId": "Selecciona una zona para la nueva tienda."})
+        if self.instance and "zona" in attrs and zone is None and self.instance.zona_id:
+            raise serializers.ValidationError({"zoneId": "Una tienda V2 debe conservar una zona."})
+        if self.instance and client.pk != self.instance.cliente_id and zone is None:
+            raise serializers.ValidationError({"zoneId": "Selecciona una zona del nuevo cliente."})
+        if zone and client and zone.cliente_id != client.pk:
+            raise serializers.ValidationError({"zoneId": "La zona debe pertenecer al mismo cliente."})
         return attrs
 
 
 TiendaAdminSerializer = TiendaSerializer
+
+
+class ZonaSerializer(serializers.ModelSerializer):
+    clientId = serializers.PrimaryKeyRelatedField(source="cliente", queryset=Cliente.objects.all())
+    name = serializers.CharField(source="nombre", max_length=150)
+    active = serializers.BooleanField(source="activo")
+
+    class Meta:
+        model = Zona
+        fields = ["id", "clientId", "name", "active"]
+
+    def validate(self, attrs):
+        client = attrs.get("cliente", self.instance.cliente if self.instance else None)
+        name = attrs.get("nombre", self.instance.nombre if self.instance else None)
+        if Zona.objects.filter(cliente=client, nombre=name).exclude(pk=self.instance.pk if self.instance else None).exists():
+            raise serializers.ValidationError({"name": "Ya existe una zona con este nombre en el cliente."})
+        candidate = Zona(pk=self.instance.pk if self.instance else None, cliente=client, nombre=name)
+        try:
+            candidate.clean()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"clientId": exc.messages})
+        return attrs
+
+
+class CategoriaProblemaSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="nombre", max_length=100,
+        validators=[UniqueValidator(queryset=CategoriaProblema.objects.all())])
+    active = serializers.BooleanField(source="activo")
+
+    class Meta:
+        model = CategoriaProblema
+        fields = ["id", "name", "active"]
+
+
+class ClienteEspecialidadSerializer(serializers.ModelSerializer):
+    clientId = serializers.PrimaryKeyRelatedField(source="cliente", queryset=Cliente.objects.all())
+    categoryId = serializers.PrimaryKeyRelatedField(source="categoria", queryset=CategoriaProblema.objects.all())
+    active = serializers.BooleanField(source="activo")
+
+    class Meta:
+        model = ClienteEspecialidad
+        fields = ["id", "clientId", "categoryId", "active"]
+
+    def validate(self, attrs):
+        client = attrs.get("cliente", self.instance.cliente if self.instance else None)
+        category = attrs.get("categoria", self.instance.categoria if self.instance else None)
+        if ClienteEspecialidad.objects.filter(cliente=client, categoria=category).exclude(pk=self.instance.pk if self.instance else None).exists():
+            raise serializers.ValidationError({"categoryId": "La especialidad ya tiene una habilitación para este cliente; edítala."})
+        return attrs
+
+
+class CoberturaInputSerializer(serializers.Serializer):
+    clientId = serializers.PrimaryKeyRelatedField(queryset=Cliente.objects.all())
+    zoneId = serializers.PrimaryKeyRelatedField(queryset=Zona.objects.all())
+
+    def validate(self, attrs):
+        if attrs["zoneId"].cliente_id != attrs["clientId"].pk:
+            raise serializers.ValidationError({"zoneId": "La zona debe pertenecer al mismo cliente."})
+        return attrs
 
 
 class RoleField(serializers.Field):
@@ -102,12 +163,13 @@ class UsuarioSerializer(serializers.ModelSerializer):
     role = RoleField(source="rol")
     active = serializers.BooleanField(source="is_active")
     passwordInitialized = serializers.BooleanField(source="password_initialized", read_only=True)
-    storeIds = serializers.PrimaryKeyRelatedField(many=True, queryset=Tienda.objects.all(), write_only=True)
+    storeIds = serializers.PrimaryKeyRelatedField(many=True, queryset=Tienda.objects.all(), write_only=True, required=False)
+    coverages = CoberturaInputSerializer(many=True, required=False, write_only=True)
     password = serializers.CharField(write_only=True, required=False, min_length=8, trim_whitespace=False)
     class Meta:
         model = Usuario
-        fields = ["id", "username", "name", "email", "role", "active", "passwordInitialized", "storeIds", "password"]
-        extra_kwargs = {"username": {"required": True}, "email": {"required": True}}
+        fields = ["id", "username", "name", "email", "role", "active", "passwordInitialized", "storeIds", "coverages", "password"]
+        extra_kwargs = {"username": {"required": True}, "email": {"required": False, "allow_blank": True}}
 
     def to_representation(self, instance):
         return identity(instance)
@@ -121,10 +183,25 @@ class UsuarioSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"role": "No puedes desactivar tu cuenta o quitarte el rol administrador."})
         ids = attrs.get("storeIds", [a.tienda for a in user.tiendas_asignadas.filter(activo=True).select_related("tienda")] if user.pk else [])
         role = attrs.get("rol", user.rol if user.pk else None)
-        if role and ROLES.get(role.nombre.lower()) == "store_supervisor" and len(ids) != 1:
+        role_key = ROLES.get(role.nombre.lower()) if role else None
+        coverage = attrs.get("coverages", [{"clientId": c.cliente, "zoneId": c.zona}
+            for c in user.coberturas.filter(activo=True).select_related("cliente", "zona")] if user.pk else [])
+        if role_key == "store_supervisor" and len(ids) != 1:
             raise serializers.ValidationError({"storeIds": "Asigna exactamente una tienda al supervisor de tienda."})
         if len({store.pk for store in ids}) != len(ids) and "storeIds" in attrs:
             raise serializers.ValidationError({"storeIds": "No repitas tiendas."})
+        if role_key in ("technician", "account_supervisor"):
+            if attrs.get("storeIds"):
+                raise serializers.ValidationError({"storeIds": "Este rol se administra mediante coberturas Cliente + Zona."})
+            if not coverage:
+                raise serializers.ValidationError({"coverages": "Añade al menos una cobertura Cliente + Zona."})
+        elif attrs.get("coverages"):
+            raise serializers.ValidationError({"coverages": "Este rol no utiliza cobertura operativa."})
+        if role_key == "administrator" and attrs.get("storeIds"):
+            raise serializers.ValidationError({"storeIds": "El administrador tiene alcance global."})
+        pairs = [(c["clientId"].pk, c["zoneId"].pk) for c in coverage]
+        if len(set(pairs)) != len(pairs):
+            raise serializers.ValidationError({"coverages": "No repitas parejas Cliente + Zona."})
         password = attrs.get("password")
         if password:
             for field in ("username", "first_name", "email"):
@@ -138,16 +215,19 @@ class UsuarioSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         stores = validated_data.pop("storeIds", [])
+        coverage = validated_data.pop("coverages", [])
         password = validated_data.pop("password")
         user = Usuario(**validated_data)
         user.set_password(password)
         user.save()
-        self.assign(user, stores)
+        self.assign(user, stores if ROLES.get(user.rol.nombre.lower()) == "store_supervisor" else [])
+        self.assign_coverages(user, coverage)
         return user
 
     @transaction.atomic
     def update(self, instance, validated_data):
         stores = validated_data.pop("storeIds", None)
+        coverage = validated_data.pop("coverages", None)
         password = validated_data.pop("password", None)
         old_role = instance.rol_id
         old_active = instance.is_active
@@ -157,11 +237,22 @@ class UsuarioSerializer(serializers.ModelSerializer):
         if password:
             instance.set_password(password)
             instance.password_initialized = False
-        if password or instance.rol_id != old_role or instance.is_active != old_active or stores_changed:
+        next_role = ROLES.get(instance.rol.nombre.lower())
+        if next_role != "store_supervisor":
+            stores = []
+            # Las asignaciones legacy dejan de ser autoridad para estos roles.
+            stores_changed = False
+        if next_role not in ("technician", "account_supervisor"):
+            coverage = []
+        old_pairs = set(instance.coberturas.filter(activo=True).values_list("cliente_id", "zona_id"))
+        coverage_changed = coverage is not None and {(c["clientId"].pk, c["zoneId"].pk) for c in coverage} != old_pairs
+        if password or instance.rol_id != old_role or instance.is_active != old_active or stores_changed or coverage_changed:
             instance.auth_version += 1
         instance.save()
         if stores is not None:
             self.assign(instance, stores)
+        if coverage is not None:
+            self.assign_coverages(instance, coverage)
         return instance
 
     def assign(self, user, stores):
@@ -169,6 +260,22 @@ class UsuarioSerializer(serializers.ModelSerializer):
         user.tiendas_asignadas.exclude(tienda_id__in=ids).update(activo=False)
         for store in stores:
             AsignacionTienda.objects.update_or_create(usuario=user, tienda=store, defaults={"activo": True})
+
+    def assign_coverages(self, user, coverage):
+        # Se bloquea Zona para mantener consistencia ante cambios administrativos.
+        zones = {z.pk: z for z in Zona.objects.select_for_update().filter(
+            pk__in=[c["zoneId"].pk for c in coverage]).order_by("pk")}
+        for row in coverage:
+            if row["zoneId"].pk not in zones or zones[row["zoneId"].pk].cliente_id != row["clientId"].pk:
+                raise serializers.ValidationError({"coverages": "La zona cambió de cliente; revisa la cobertura."})
+        pairs = {(c["clientId"].pk, c["zoneId"].pk) for c in coverage}
+        for current in user.coberturas.filter(activo=True):
+            if (current.cliente_id, current.zona_id) not in pairs:
+                current.activo = False
+                current.save(update_fields=["activo"])
+        for client_id, zone_id in sorted(pairs):
+            CoberturaUsuario.objects.update_or_create(usuario=user, cliente_id=client_id, zona_id=zone_id,
+                defaults={"activo": True})
 
 
 class ItemPlantillaSerializer(serializers.ModelSerializer):

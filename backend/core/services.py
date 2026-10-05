@@ -8,7 +8,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from .models import Visita, Ticket, Operacion, Evento, Evidencia, Tienda, Contrato, Checklist, PlantillaChecklist
-from .permissions import rol_de, tiendas_visibles_para
+from .permissions import rol_de, tiendas_visibles_para, visitas_continuables_para
 
 
 class Conflict(APIException):
@@ -31,7 +31,9 @@ def idempotent(request, work):
             raise Conflict("La clave ya se usó para una operación diferente.")
         if operation.respuesta is not None:
             cached = operation.respuesta
-            if cached.get("storeId") and not tiendas_visibles_para(request.user).filter(pk=cached["storeId"]).exists():
+            is_visit = cached.get("origin") in ("ticket", "checklist")
+            is_ticket = request.path.startswith("/api/tickets/") and cached.get("id")
+            if cached.get("storeId") and not is_visit and not is_ticket and not tiendas_visibles_para(request.user).filter(pk=cached["storeId"]).exists():
                 raise PermissionDenied("El recurso ya no pertenece a tu alcance.")
             if cached.get("origin") in ("ticket", "checklist") and not visible_visits(request.user).filter(pk=cached.get("id")).exists():
                 raise PermissionDenied("La ejecución ya no está disponible para este usuario.")
@@ -51,7 +53,7 @@ def idempotent(request, work):
 
 
 def visible_visits(user):
-    queryset = Visita.objects.filter(tienda__in=tiendas_visibles_para(user))
+    queryset = Visita.objects.filter(Q(tienda__in=tiendas_visibles_para(user)) | Q(pk__in=visitas_continuables_para(user).values("pk")))
     if rol_de(user) == "technician":
         today = timezone.localdate()
         month = today.replace(day=1)
@@ -63,7 +65,8 @@ def visible_visits(user):
 
 
 def visible_tickets(user):
-    queryset = Ticket.objects.filter(tienda__in=tiendas_visibles_para(user))
+    queryset = Ticket.objects.filter(Q(tienda__in=tiendas_visibles_para(user)) |
+        Q(pk__in=visitas_continuables_para(user).exclude(ticket_origen_id=None).values("ticket_origen_id")))
     if rol_de(user) == "technician":
         queryset = queryset.filter(tecnico_asignado=user)
     return queryset

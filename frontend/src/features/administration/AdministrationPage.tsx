@@ -40,20 +40,22 @@ function AdminList({ kind }: { kind: AdminKind }) {
   const query = useQuery(
     useCallback(
       async (signal) => {
-        const [rows, stores, clients, templates] = await Promise.all([
+        const [rows, stores, clients, templates, zones, specialties] = await Promise.all([
           repos.administration.list(kind, { signal }),
           repos.administration.list('stores', { signal }),
           repos.administration.list('clients', { signal }),
           repos.administration.list('templates', { signal }),
+          repos.administration.list('zones', { signal }),
+          repos.administration.list('specialties', { signal }),
         ])
-        return { rows, stores, clients, templates }
+        return { rows, stores, clients, templates, zones, specialties }
       },
       [kind, repos],
     ),
     editing === null,
   )
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
-  const { rows, stores, clients, templates } = query.data
+  const { rows, stores, clients, templates, zones, specialties } = query.data
   const filteredRows = rows.filter(
     (row) =>
       kind !== 'users' ||
@@ -70,6 +72,12 @@ function AdminList({ kind }: { kind: AdminKind }) {
       />
       <QueryFeedback query={query} />
       <Button onClick={() => setEditing('new')}>Crear registro</Button>
+      {(kind === 'specialties' || kind === 'clientSpecialties') && (
+        <p>
+          <Link to="/admin/specialties">Catálogo global</Link> ·{' '}
+          <Link to="/admin/clientSpecialties">Habilitación por cliente</Link>
+        </p>
+      )}
       {kind === 'users' && (
         <Card>
           <div className="nf-filters">
@@ -114,7 +122,7 @@ function AdminList({ kind }: { kind: AdminKind }) {
                 #{row.id} ·{' '}
                 {'name' in row
                   ? row.name
-                  : `Contrato de ${clients.find((client) => client.id === row.clientId)?.name ?? row.clientId}`}
+                  : `${clients.find((client) => client.id === row.clientId)?.name ?? row.clientId}`}
               </strong>
             ),
           },
@@ -129,7 +137,14 @@ function AdminList({ kind }: { kind: AdminKind }) {
                     ? `${row.monthlyVisits} visitas / mes · Radio ${row.radiusMeters} m`
                     : 'tasks' in row
                       ? `Versión ${row.version} · ${row.tasks.length} ítems`
-                      : row.taxId,
+                      : 'taxId' in row
+                        ? row.taxId
+                        : 'categoryId' in row
+                          ? (specialties.find((item) => item.id === row.categoryId)?.name ??
+                            'Especialidad')
+                          : 'clientId' in row
+                            ? (clients.find((item) => item.id === row.clientId)?.name ?? 'Cliente')
+                            : 'Catálogo global',
           },
           {
             label: 'Estado',
@@ -154,6 +169,8 @@ function AdminList({ kind }: { kind: AdminKind }) {
           stores={stores}
           clients={clients}
           templates={templates}
+          zones={zones}
+          specialties={specialties}
           onClose={() => {
             setEditing(null)
             query.reload()

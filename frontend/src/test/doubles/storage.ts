@@ -54,6 +54,8 @@ function matches(value: unknown, sample: unknown): boolean {
 export function validateDatabase(value: unknown): value is MockDatabase {
   if (!isRecord(value) || value.version !== 1) return false
   const seed = createFixtures()
+  const storeShape = { ...seed.stores[0] }
+  delete storeShape.zoneId
   for (const key of [
     'users',
     'stores',
@@ -62,6 +64,9 @@ export function validateDatabase(value: unknown): value is MockDatabase {
     'templates',
     'visits',
     'tickets',
+    'zones',
+    'specialties',
+    'clientSpecialties',
   ] as const) {
     if (!Array.isArray(value[key])) return false
   }
@@ -80,10 +85,19 @@ export function validateDatabase(value: unknown): value is MockDatabase {
   )
     return false
   if (
-    !matches(value.stores, seed.stores) ||
+    !matches(value.stores, [storeShape]) ||
+    !(value.stores as unknown[]).every(
+      (store) =>
+        isRecord(store) &&
+        (store.zoneId == null ||
+          (typeof store.zoneId === 'number' && Number.isInteger(store.zoneId) && store.zoneId > 0)),
+    ) ||
     !matches(value.clients, seed.clients) ||
     !matches(value.contracts, seed.contracts) ||
-    !matches(value.templates, seed.templates)
+    !matches(value.templates, seed.templates) ||
+    !matches(value.zones, seed.zones) ||
+    !matches(value.specialties, seed.specialties) ||
+    !matches(value.clientSpecialties, seed.clientSpecialties)
   )
     return false
   const visits = value.visits as unknown[]

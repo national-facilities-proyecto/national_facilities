@@ -5,8 +5,8 @@ from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from .models import Ticket, Visita, Usuario, CategoriaProblema, NivelUrgencia, Evidencia, Evento, ReasignacionTicket
-from .permissions import rol_de, tiendas_visibles_para
+from .models import Ticket, Visita, Usuario, CategoriaProblema, NivelUrgencia, Evidencia, Evento, ReasignacionTicket, ClienteEspecialidad
+from .permissions import rol_de, tiendas_visibles_para, tecnicos_elegibles_para
 from .services import Conflict, idempotent, visible_tickets, event
 from .generation import applicable_contract, snapshot
 from .serializers import ticket_data
@@ -41,6 +41,9 @@ class TicketListCreateView(APIView):
             serializer.is_valid(raise_exception=True)
             data = serializer.validated_data
             store = get_object_or_404(tiendas_visibles_para(request.user).select_for_update(of=("self",)), pk=data["storeId"], activo=True)
+            if not ClienteEspecialidad.objects.filter(cliente_id=store.cliente_id, categoria=data["categoryId"], activo=True,
+                                                      categoria__activo=True).exists():
+                raise ValidationError({"categoryId": "La especialidad no está habilitada para el cliente de esta tienda."})
             if len(set(data["evidenceIds"])) != len(data["evidenceIds"]):
                 raise ValidationError({"evidenceIds": "No repitas fotografías."})
             # Bloqueo ordenado protege dos tickets que intenten asociar el mismo adjunto.
@@ -67,6 +70,9 @@ class ScheduleView(APIView):
         if rol_de(request.user) != "account_supervisor":
             raise PermissionDenied("Solo el supervisor de cuenta puede programar.")
         def work():
+            if Ticket.objects.filter(pk=pk, tienda__zona_id=None,
+                tienda__cliente_id__in=request.user.coberturas.filter(activo=True, zona__activo=True).values("cliente_id")).exists():
+                raise ValidationError({"storeId": "La tienda no tiene zona. Administración debe asignarla antes de programar."})
             ticket = get_object_or_404(visible_tickets(request.user).select_for_update(of=("self",)), pk=pk)
             serializer = ScheduleInputSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -78,9 +84,11 @@ class ScheduleView(APIView):
             scheduled = data["scheduledAt"]
             if scheduled < timezone.now():
                 raise ValidationError({"scheduledAt": "La programación debe ser futura."})
-            technician = get_object_or_404(Usuario.objects.filter(is_active=True), pk=data["technicianId"])
-            if rol_de(technician) != "technician" or not tiendas_visibles_para(technician).filter(pk=ticket.tienda_id, activo=True).exists():
-                raise ValidationError({"technicianId": "Técnico inactivo o sin acceso a la tienda."})
+            technician = get_object_or_404(Usuario.objects.filter(is_active=True).select_for_update(), pk=data["technicianId"])
+            if ticket.tienda.zona_id is None:
+                raise ValidationError({"storeId": "La tienda no tiene zona. Administración debe asignarla antes de programar."})
+            if rol_de(technician) != "technician" or not tecnicos_elegibles_para(ticket.tienda).filter(pk=technician.pk).exists():
+                raise ValidationError({"technicianId": "Técnico sin cobertura activa para el Cliente + Zona de la tienda."})
             if ticket.tecnico_asignado_id and len(data["reason"].strip()) < 10:
                 raise ValidationError({"reason": "Reprogramar o reasignar requiere motivo de al menos 10 caracteres."})
             contract = applicable_contract(ticket.tienda, timezone.localdate(scheduled))

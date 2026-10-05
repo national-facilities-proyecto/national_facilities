@@ -60,12 +60,33 @@ export function allow(user: User, roles: User['role'][]): void {
   if (!roles.includes(user.role))
     throw new AppError('forbidden', 'No tienes acceso a esta operación.')
 }
-export function visible(user: User, storeId: number): boolean {
-  return user.role === 'administrator' || user.storeIds.includes(storeId)
+export function visible(user: User, storeId: number, db = readDatabase()): boolean {
+  if (user.role === 'administrator') return true
+  if (user.role === 'store_supervisor')
+    return user.storeIds.length === 1 && user.storeIds[0] === storeId
+  const store = db.stores.find((item) => item.id === storeId && item.active)
+  return Boolean(
+    store &&
+    store.zoneId != null &&
+    db.zones.some(
+      (zone) => zone.id === store.zoneId && zone.active && zone.clientId === store.clientId,
+    ) &&
+    user.coverages?.some((row) => row.clientId === store.clientId && row.zoneId === store.zoneId),
+  )
+}
+export function continuable(user: User, visit: Visit): boolean {
+  return Boolean(
+    user.role === 'technician' &&
+    visit.technicianId === user.id &&
+    visit.startedAt &&
+    ['in_progress', 'pending_approval'].includes(visit.status),
+  )
 }
 export function getVisit(db: MockDatabase, id: number, own = false): Visit {
   const user = currentUser(db)
-  const visit = db.visits.find((item) => item.id === id && visible(user, item.storeId))
+  const visit = db.visits.find(
+    (item) => item.id === id && (visible(user, item.storeId, db) || continuable(user, item)),
+  )
   if (!visit) throw new AppError('not_found', 'Visita no encontrada.')
   if (own && (user.role !== 'technician' || visit.technicianId !== user.id))
     throw new AppError('forbidden', 'La visita pertenece a otro técnico.')
@@ -76,7 +97,8 @@ export function getTicket(db: MockDatabase, id: number) {
   const ticket = db.tickets.find(
     (item) =>
       item.id === id &&
-      visible(user, item.storeId) &&
+      (visible(user, item.storeId, db) ||
+        db.visits.some((visit) => visit.ticketId === item.id && continuable(user, visit))) &&
       (user.role !== 'technician' || item.technicianId === user.id),
   )
   if (!ticket) throw new AppError('not_found', 'Ticket no encontrado.')
@@ -103,18 +125,18 @@ export async function listVisits(origin: Visit['origin'], options?: RequestOptio
     : db.visits.filter(
         (visit) =>
           visit.origin === origin &&
-          visible(user, visit.storeId) &&
+          (visible(user, visit.storeId, db) || continuable(user, visit)) &&
           (user.role !== 'technician' ||
             visit.technicianId === user.id ||
             (origin === 'checklist' && visit.status === 'available')),
       )
 }
 export function finish(db: MockDatabase, visit: Visit, pending: boolean) {
+  const ticket = visit.ticketId ? getTicket(db, visit.ticketId) : undefined
   const now = new Date().toISOString()
   visit.status = pending ? 'pending_approval' : 'completed'
   if (!pending) visit.completedAt = now
-  if (visit.ticketId) {
-    const ticket = getTicket(db, visit.ticketId)
+  if (ticket) {
     ticket.status = pending ? 'pending_approval' : 'resolved'
     ticket.resolution = visit.workDescription
     ticket.technicalEvidenceIds = visit.evidenceIds

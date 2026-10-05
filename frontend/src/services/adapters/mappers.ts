@@ -11,6 +11,9 @@ import type {
   LocationException,
   Coordinates,
   Dashboard,
+  Zone,
+  Specialty,
+  ClientSpecialty,
 } from '../../types/models'
 import { AppError } from '../errors'
 import { ticketWorkStatus, visitWorkStatus } from '../../types/models'
@@ -90,6 +93,13 @@ export function mapUser(value: unknown): User {
     email: string(v.email),
     role: choice(v.role, ['technician', 'store_supervisor', 'account_supervisor', 'administrator']),
     storeIds: rows(v.storeIds).map(id),
+    coverages:
+      v.coverages === undefined
+        ? []
+        : rows(v.coverages).map((raw) => {
+            const row = object(raw)
+            return { clientId: id(row.clientId), zoneId: id(row.zoneId) }
+          }),
     active: boolean(v.active),
     passwordInitialized: boolean(v.passwordInitialized),
   }
@@ -112,7 +122,25 @@ export function mapStore(value: unknown): Store {
     latitude,
     longitude,
     clientId: id(v.clientId),
+    zoneId: optional(v.zoneId, id) ?? null,
     contact: string(v.contact),
+    active: boolean(v.active),
+  }
+}
+export function mapZone(value: unknown): Zone {
+  const v = object(value)
+  return { id: id(v.id), clientId: id(v.clientId), name: string(v.name), active: boolean(v.active) }
+}
+export function mapSpecialty(value: unknown): Specialty {
+  const v = object(value)
+  return { id: id(v.id), name: string(v.name), active: boolean(v.active) }
+}
+export function mapClientSpecialty(value: unknown): ClientSpecialty {
+  const v = object(value)
+  return {
+    id: id(v.id),
+    clientId: id(v.clientId),
+    categoryId: id(v.categoryId),
     active: boolean(v.active),
   }
 }

@@ -2,6 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import F
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -38,9 +39,17 @@ class PublicAuthentication(BaseAuthentication):
         return "Bearer"
 
 
-def identity(user):
+def identity(user, scope=None):
+    stores = tiendas_visibles_para(user)
+    coverages = user.coberturas.filter(activo=True, cliente_id=F("zona__cliente_id")).order_by("cliente_id", "zona_id")
+    if scope is not None:
+        stores = stores.filter(pk__in=scope.values("pk"))
+        coverages = coverages.filter(zona_id__in=scope.exclude(zona_id=None).values("zona_id"))
+    if rol_de(user) not in ("technician", "account_supervisor"):
+        coverages = coverages.none()
     return {"id": user.pk, "username": user.username, "name": user.get_full_name() or user.username,
-            "email": user.email, "role": rol_de(user), "storeIds": list(tiendas_visibles_para(user).values_list("id", flat=True)),
+            "email": user.email, "role": rol_de(user), "storeIds": list(stores.values_list("id", flat=True)),
+            "coverages": [{"clientId": c.cliente_id, "zoneId": c.zona_id} for c in coverages],
             "active": user.is_active, "passwordInitialized": user.password_initialized}
 
 

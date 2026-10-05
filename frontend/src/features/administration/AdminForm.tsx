@@ -2,7 +2,7 @@ import { useId, useState } from 'react'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { Alert, Button, Input, Select } from '../../components/ui'
 import { Modal } from '../../components/ui/Modal'
-import type { AdminEntities, AdminKind, ChecklistTask } from '../../types/models'
+import type { AdminEntities, AdminKind, ChecklistTask, Coverage } from '../../types/models'
 import { localDate } from '../../utils/dates'
 import { normalizeRole } from '../auth/session'
 import { AppError, errorMessage, required } from '../../services/errors'
@@ -16,6 +16,8 @@ export function AdminForm({
   stores,
   clients,
   templates,
+  zones = [],
+  specialties = [],
   onClose,
 }: {
   kind: AdminKind
@@ -23,6 +25,8 @@ export function AdminForm({
   stores: AdminEntities['stores'][]
   clients: AdminEntities['clients'][]
   templates: AdminEntities['templates'][]
+  zones?: AdminEntities['zones'][]
+  specialties?: AdminEntities['specialties'][]
   onClose(this: void): void
 }) {
   const repos = useRepositories()
@@ -50,6 +54,9 @@ export function AdminForm({
   const [storeIds, setStoreIds] = useState<number[]>(
     original && 'storeIds' in original ? original.storeIds : [],
   )
+  const [coverages, setCoverages] = useState<Coverage[]>(
+    original && 'role' in original ? (original.coverages ?? []) : [],
+  )
   const [tasks, setTasks] = useState<ChecklistTask[]>(
     original && 'tasks' in original ? original.tasks : [],
   )
@@ -62,7 +69,7 @@ export function AdminForm({
     longitude: number
   }>()
   const coordinateHelpId = useId()
-  const fields = getAdminFields(clients, templates)
+  const fields = getAdminFields(clients, templates, zones, specialties, Number(values.clientId))
   const build = (): Entity => {
     const id = original?.id ?? 0
     const text = (name: string) => values[name]?.trim() ?? ''
@@ -73,11 +80,29 @@ export function AdminForm({
       required(original || text('password'), 'La contraseña inicial es obligatoria.')
       const role = normalizeRole(text('role'))
       required(role, 'Selecciona un rol válido.')
-      required(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text('email')), 'El correo no es válido.')
+      required(
+        !text('email') || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text('email')),
+        'El correo no es válido.',
+      )
       required(
         text('role') !== 'store_supervisor' || storeIds.length === 1,
         'El supervisor de tienda debe tener exactamente una tienda.',
       )
+      const usesCoverage = role === 'technician' || role === 'account_supervisor'
+      if (usesCoverage) {
+        required(coverages.length > 0, 'Añade al menos una cobertura Cliente + Zona.')
+        required(
+          coverages.every((row) =>
+            zones.some((zone) => zone.id === row.zoneId && zone.clientId === row.clientId),
+          ),
+          'Cada cobertura necesita una zona del cliente seleccionado.',
+        )
+        required(
+          new Set(coverages.map((row) => `${row.clientId}:${row.zoneId}`)).size ===
+            coverages.length,
+          'No repitas parejas Cliente + Zona.',
+        )
+      }
       return {
         id,
         name: text('name'),
@@ -85,19 +110,32 @@ export function AdminForm({
         role,
         username: text('username'),
         ...(text('password') ? { password: values.password } : {}),
-        storeIds,
+        storeIds: role === 'store_supervisor' ? storeIds : [],
+        coverages: usesCoverage ? coverages : [],
         active,
         passwordInitialized:
           original && 'passwordInitialized' in original ? original.passwordInitialized : false,
       }
     }
     if (kind === 'stores') {
+      const legacy =
+        original &&
+        'address' in original &&
+        original.zoneId == null &&
+        original.clientId === num('clientId')
+      required(legacy || text('zoneId'), 'Selecciona una zona para la tienda.')
+      required(
+        !text('zoneId') ||
+          zones.some((zone) => zone.id === num('zoneId') && zone.clientId === num('clientId')),
+        'La zona debe pertenecer al cliente de la tienda.',
+      )
       return {
         id,
         name: text('name'),
         address: text('address'),
         contact: text('contact'),
         clientId: num('clientId'),
+        zoneId: text('zoneId') ? num('zoneId') : null,
         latitude: storeCoordinate(text('latitude'), 'latitude'),
         longitude: storeCoordinate(text('longitude'), 'longitude'),
         active,
@@ -110,6 +148,10 @@ export function AdminForm({
         taxId: text('taxId'),
         email: text('email'),
       }
+    if (kind === 'zones') return { id, clientId: num('clientId'), name: text('name'), active }
+    if (kind === 'specialties') return { id, name: text('name'), active }
+    if (kind === 'clientSpecialties')
+      return { id, clientId: num('clientId'), categoryId: num('categoryId'), active }
     if (kind === 'contracts') {
       required(
         ['monthlyVisits', 'monthlyInterventions', 'radiusMeters'].every(
@@ -232,7 +274,11 @@ export function AdminForm({
                   required={!field.optional}
                   value={values[field.name] ?? ''}
                   onChange={(event) =>
-                    setValues((current) => ({ ...current, [field.name]: event.target.value }))
+                    setValues((current) => ({
+                      ...current,
+                      [field.name]: event.target.value,
+                      ...(kind === 'stores' && field.name === 'clientId' ? { zoneId: '' } : {}),
+                    }))
                   }
                 >
                   <option value="">Seleccionar</option>
@@ -294,25 +340,86 @@ export function AdminForm({
               Registro activo
             </label>
           )}
-          {kind === 'users' && (
+          {kind === 'users' && values.role === 'store_supervisor' && (
             <fieldset>
-              <legend>Tiendas visibles para el usuario</legend>
-              {stores.map((store) => (
-                <label className="nf-check" key={store.id}>
-                  <input
-                    type="checkbox"
-                    checked={storeIds.includes(store.id)}
+              <legend>Tienda del supervisor</legend>
+              <Select
+                label="Tienda asignada"
+                required
+                value={storeIds[0] ?? ''}
+                onChange={(event) =>
+                  setStoreIds(event.target.value ? [Number(event.target.value)] : [])
+                }
+              >
+                <option value="">Seleccionar tienda</option>
+                {stores.map((store) => (
+                  <option key={store.id} value={store.id}>
+                    {store.name}
+                  </option>
+                ))}
+              </Select>
+            </fieldset>
+          )}
+          {kind === 'users' && ['technician', 'account_supervisor'].includes(values.role) && (
+            <fieldset>
+              <legend>Coberturas Cliente + Zona</legend>
+              {coverages.map((row, index) => (
+                <div className="nf-two-columns" key={index}>
+                  <Select
+                    label={`Cliente de cobertura ${index + 1}`}
+                    required
+                    value={row.clientId || ''}
                     onChange={(event) =>
-                      setStoreIds((current) =>
-                        event.target.checked
-                          ? [...current, store.id]
-                          : current.filter((id) => id !== store.id),
+                      setCoverages((current) =>
+                        current.map((item, i) =>
+                          i === index ? { clientId: Number(event.target.value), zoneId: 0 } : item,
+                        ),
                       )
                     }
-                  />
-                  {store.name}
-                </label>
+                  >
+                    <option value="">Seleccionar cliente</option>
+                    {clients.map((client) => (
+                      <option key={client.id} value={client.id}>
+                        {client.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    label={`Zona de cobertura ${index + 1}`}
+                    required
+                    value={row.zoneId || ''}
+                    onChange={(event) =>
+                      setCoverages((current) =>
+                        current.map((item, i) =>
+                          i === index ? { ...item, zoneId: Number(event.target.value) } : item,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="">Seleccionar zona</option>
+                    {zones
+                      .filter((zone) => zone.clientId === row.clientId)
+                      .map((zone) => (
+                        <option key={zone.id} value={zone.id}>
+                          {zone.name}
+                        </option>
+                      ))}
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    aria-label={`Quitar cobertura ${index + 1}`}
+                    onClick={() => setCoverages((current) => current.filter((_, i) => i !== index))}
+                  >
+                    Quitar
+                  </Button>
+                </div>
               ))}
+              <Button
+                variant="secondary"
+                onClick={() => setCoverages((current) => [...current, { clientId: 0, zoneId: 0 }])}
+              >
+                Añadir cobertura
+              </Button>
             </fieldset>
           )}
           {kind === 'templates' && <TemplateItems tasks={tasks} setTasks={setTasks} />}

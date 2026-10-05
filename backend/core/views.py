@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, F
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 from rest_framework.generics import ListAPIView, RetrieveAPIView
@@ -10,11 +10,11 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework import serializers
 from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla, Usuario,
-                     CategoriaProblema, NivelUrgencia, Rol, Evento, Ticket)
-from .permissions import tiendas_visibles_para, EsTecnico, EsAdministrador, EsSupervisorCuenta, rol_de
+                     CategoriaProblema, NivelUrgencia, Rol, Evento, Ticket, Zona, ClienteEspecialidad)
+from .permissions import tiendas_visibles_para, tecnicos_elegibles_para, visitas_continuables_para, EsTecnico, EsAdministrador, EsSupervisorCuenta, rol_de
 from .serializers import (TiendaSerializer, ClienteSerializer, ContratoSerializer,
                           PlantillaChecklistSerializer, ItemPlantillaSerializer, UsuarioSerializer,
-                          visit_data)
+                          visit_data, ZonaSerializer, CategoriaProblemaSerializer, ClienteEspecialidadSerializer)
 from .auth_views import identity, PasswordView as CambiarPasswordView
 from .evidence_views import EvidenceUploadView as EvidenciaListCreateView, EvidenceDetailView, visible_evidence
 from .ticket_views import TicketListCreateView, TicketDetailView, ScheduleView as TicketScheduleView
@@ -49,7 +49,8 @@ class HealthView(APIView):
 class TiendaDetailView(RetrieveAPIView):
     serializer_class = TiendaSerializer
     def get_queryset(self):
-        return tiendas_visibles_para(self.request.user)
+        return Tienda.objects.filter(Q(pk__in=tiendas_visibles_para(self.request.user).values("pk")) |
+            Q(pk__in=visitas_continuables_para(self.request.user).values("tienda_id")))
 
 
 class UsersView(APIView):
@@ -59,16 +60,22 @@ class UsersView(APIView):
             users = Usuario.objects.all()
         else:
             stores = tiendas_visibles_para(request.user)
-            users = Usuario.objects.filter(Q(pk=request.user.pk) | Q(tiendas_asignadas__tienda__in=stores, tiendas_asignadas__activo=True)).distinct()
-        allowed = set(tiendas_visibles_para(request.user).values_list("pk", flat=True))
-        return Response([{**identity(u), "storeIds": [pk for pk in identity(u)["storeIds"] if pk in allowed]}
-                         for u in users if rol_de(u)])
+            users = Usuario.objects.filter(Q(pk=request.user.pk)
+                | Q(coberturas__zona_id__in=stores.exclude(zona_id=None).values("zona_id"), coberturas__activo=True,
+                    coberturas__cliente_id=F("coberturas__zona__cliente_id"))
+                | Q(tiendas_asignadas__tienda__in=stores, tiendas_asignadas__activo=True)).distinct()
+        scope = None if role == "administrator" else tiendas_visibles_para(request.user)
+        return Response([identity(u, scope=scope) for u in users if rol_de(u)])
 
 
 class CatalogsView(APIView):
     def get(self, request):
+        categories = CategoriaProblema.objects.filter(activo=True)
+        if rol_de(request.user) == "store_supervisor":
+            categories = categories.filter(clientes_habilitados__activo=True,
+                clientes_habilitados__cliente_id__in=tiendas_visibles_para(request.user).values("cliente_id")).distinct()
         return Response({
-            "categories": [{"id": c.pk, "name": c.nombre} for c in CategoriaProblema.objects.filter(activo=True)],
+            "categories": [{"id": c.pk, "name": c.nombre} for c in categories],
             "priorities": [{"id": c.pk, "name": c.nombre, "firstResponseHours": c.sla_primera_respuesta_horas,
                             "resolutionHours": c.sla_resolucion_horas} for c in NivelUrgencia.objects.all()],
             "roles": [{"id": r.pk, "name": r.nombre} for r in Rol.objects.all()],
@@ -251,7 +258,12 @@ class AdminViewSet(ModelViewSet):
         def work():
             instance = get_object_or_404(self.get_queryset().select_for_update(), pk=kwargs["pk"])
             previous = self.get_serializer(instance).data
-            self.lock_parent(request.data)
+            parent_data = dict(request.data)
+            if isinstance(instance, (Zona, ClienteEspecialidad)):
+                parent_data.setdefault("clientId", instance.cliente_id)
+            if isinstance(instance, Tienda):
+                parent_data.setdefault("zoneId", instance.zona_id)
+            self.lock_parent(parent_data)
             serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get("partial", False))
             serializer.is_valid(raise_exception=True)
             serializer.save()
@@ -260,8 +272,18 @@ class AdminViewSet(ModelViewSet):
         return Response(idempotent(request, work))
 
     def lock_parent(self, data):
-        if self.queryset.model == Contrato and data.get("clientId"):
-            get_object_or_404(Cliente.objects.select_for_update(), pk=data["clientId"])
+        if self.queryset.model in (Contrato, Zona, ClienteEspecialidad) and data.get("clientId"):
+            try:
+                client_id = serializers.IntegerField(min_value=1).run_validation(data["clientId"])
+            except serializers.ValidationError as exc:
+                raise ValidationError({"clientId": exc.detail})
+            get_object_or_404(Cliente.objects.select_for_update(), pk=client_id)
+        if self.queryset.model == Tienda and data.get("zoneId"):
+            try:
+                zone_id = serializers.IntegerField(min_value=1).run_validation(data["zoneId"])
+            except serializers.ValidationError as exc:
+                raise ValidationError({"zoneId": exc.detail})
+            get_object_or_404(Zona.objects.select_for_update(), pk=zone_id)
 
     def audit(self, actor, kind, pk, previous, current):
         from rest_framework.renderers import JSONRenderer
@@ -277,7 +299,7 @@ class AdminViewSet(ModelViewSet):
         pk = instance.pk
         if isinstance(instance, Usuario) and instance.pk == request.user.pk:
             raise Conflict("No puedes eliminar tu propia cuenta.")
-        if isinstance(instance, ItemPlantilla):
+        if isinstance(instance, (ItemPlantilla, Zona, CategoriaProblema, ClienteEspecialidad)):
             instance.activo = False
             instance.save(update_fields=["activo"])
         else:
@@ -297,6 +319,21 @@ class ClienteViewSet(AdminViewSet):
 class TiendaAdminViewSet(AdminViewSet):
     queryset = Tienda.objects.all()
     serializer_class = TiendaSerializer
+
+
+class ZonaViewSet(AdminViewSet):
+    queryset = Zona.objects.all()
+    serializer_class = ZonaSerializer
+
+
+class CategoriaProblemaViewSet(AdminViewSet):
+    queryset = CategoriaProblema.objects.all()
+    serializer_class = CategoriaProblemaSerializer
+
+
+class ClienteEspecialidadViewSet(AdminViewSet):
+    queryset = ClienteEspecialidad.objects.all()
+    serializer_class = ClienteEspecialidadSerializer
 
 
 class ContratoViewSet(AdminViewSet):
@@ -320,15 +357,27 @@ class UsuarioViewSet(AdminViewSet):
     serializer_class = UsuarioSerializer
 
 
-class TecnicoListView(ListAPIView):
-    serializer_class = UsuarioSerializer
+class TecnicoListView(APIView):
     permission_classes = [EsSupervisorCuenta]
 
-    def get_queryset(self):
+    def get(self, request):
         stores = tiendas_visibles_para(self.request.user)
-        candidates = Usuario.objects.filter(is_active=True, tiendas_asignadas__activo=True,
-                                            tiendas_asignadas__tienda__in=stores).select_related("rol").distinct()
-        return [user for user in candidates if rol_de(user) == "technician"]
+        store_id = request.query_params.get("storeId")
+        if store_id is not None:
+            try:
+                legacy = Tienda.objects.filter(zona_id=None, activo=True,
+                    cliente_id__in=request.user.coberturas.filter(activo=True, zona__activo=True).values("cliente_id"))
+                store = get_object_or_404(Tienda.objects.filter(Q(pk__in=stores.values("pk")) | Q(pk__in=legacy.values("pk"))), pk=int(store_id))
+            except ValueError:
+                raise ValidationError({"storeId": "Selecciona una tienda válida."})
+            candidates = tecnicos_elegibles_para(store)
+            scope = stores.filter(pk=store.pk)
+        else:
+            candidates = Usuario.objects.filter(is_active=True, coberturas__activo=True, coberturas__zona__activo=True,
+                coberturas__zona_id__in=stores.exclude(zona_id=None).values("zona_id"),
+                coberturas__cliente_id=F("coberturas__zona__cliente_id")).distinct()
+            scope = stores
+        return Response([identity(user, scope=scope) for user in candidates if rol_de(user) == "technician"])
 
 
 class EvidenciaDetailView(EvidenceDetailView):

@@ -14,6 +14,9 @@ router.register("admin/contratos", views.ContratoViewSet, basename="admin-contra
 router.register("admin/plantillas", views.PlantillaChecklistViewSet, basename="admin-plantillas")
 router.register("admin/items-plantilla", views.ItemPlantillaViewSet, basename="admin-items")
 router.register("admin/usuarios", views.UsuarioViewSet, basename="admin-usuarios")
+router.register("admin/zonas", views.ZonaViewSet, basename="admin-zonas")
+router.register("admin/especialidades", views.CategoriaProblemaViewSet, basename="admin-especialidades")
+router.register("admin/cliente-especialidades", views.ClienteEspecialidadViewSet, basename="admin-cliente-especialidades")
 
 urlpatterns = [
     path("health/", views.HealthView.as_view(), name="health"),

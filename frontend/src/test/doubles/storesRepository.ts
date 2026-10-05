@@ -1,7 +1,7 @@
 import type { Repositories } from '../../services/repositories/contracts'
 import { AppError } from '../../services/errors'
 import { readDatabase } from './storage'
-import { delay, currentUser, visible, scenarioState } from './runtime'
+import { delay, currentUser, visible, continuable, scenarioState } from './runtime'
 
 export function createStoresRepository(): NonNullable<Repositories['stores']> {
   return {
@@ -17,7 +17,12 @@ export function createStoresRepository(): NonNullable<Repositories['stores']> {
       await delay(options)
       const db = readDatabase()
       const user = currentUser(db)
-      const store = db.stores.find((item) => item.id === id && visible(user, id))
+      const store = db.stores.find(
+        (item) =>
+          item.id === id &&
+          (visible(user, id, db) ||
+            db.visits.some((visit) => visit.storeId === id && continuable(user, visit))),
+      )
       if (!store) throw new AppError('not_found', 'Tienda no encontrada.')
       return store
     },

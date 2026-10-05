@@ -2,15 +2,39 @@ import type { Repositories } from '../../services/repositories/contracts'
 import { required } from '../../services/errors'
 import { localDate } from '../../utils/dates'
 import { readDatabase } from './storage'
-import { delay, currentUser, allow, visible, getTicket, mutate, scenarioState } from './runtime'
+import {
+  delay,
+  currentUser,
+  allow,
+  visible,
+  continuable,
+  getTicket,
+  mutate,
+  scenarioState,
+} from './runtime'
 
 export function createTicketsRepository(): NonNullable<Repositories['tickets']> {
   return {
     async catalogs() {
+      const db = readDatabase()
+      const user = currentUser(db)
+      const clients = new Set(
+        db.stores.filter((store) => visible(user, store.id, db)).map((store) => store.clientId),
+      )
       return {
-        categories: ['Climatización', 'Eléctrico', 'Plomería', 'Refrigeración'].map(
-          (name, index) => ({ id: index + 1, name }),
-        ),
+        categories: db.specialties
+          .filter(
+            (item) =>
+              item.active &&
+              (user.role !== 'store_supervisor' ||
+                db.clientSpecialties.some(
+                  (relation) =>
+                    relation.categoryId === item.id &&
+                    relation.active &&
+                    clients.has(relation.clientId),
+                )),
+          )
+          .map(({ id, name }) => ({ id, name })),
         priorities: ['Alta', 'Media', 'Baja'].map((name, index) => ({
           id: index + 1,
           name,
@@ -27,7 +51,10 @@ export function createTicketsRepository(): NonNullable<Repositories['tickets']> 
         ? []
         : db.tickets.filter(
             (item) =>
-              visible(user, item.storeId) &&
+              (visible(user, item.storeId, db) ||
+                db.visits.some(
+                  (visit) => visit.ticketId === item.id && continuable(user, visit),
+                )) &&
               (user.role !== 'technician' || item.technicianId === user.id),
           )
     },
@@ -40,10 +67,24 @@ export function createTicketsRepository(): NonNullable<Repositories['tickets']> 
         const user = currentUser(db)
         allow(user, ['store_supervisor'])
         required(visible(user, input.storeId), 'La tienda no pertenece a tu sesión.')
+        const store = db.stores.find((item) => item.id === input.storeId)
+        required(
+          db.specialties.some(
+            (item) =>
+              item.name === input.category &&
+              item.active &&
+              db.clientSpecialties.some(
+                (relation) =>
+                  relation.clientId === store?.clientId &&
+                  relation.categoryId === item.id &&
+                  relation.active,
+              ),
+          ),
+          'Especialidad no habilitada para este cliente.',
+        )
         required(
           input.description.trim().length >= 10 &&
             input.description.length <= 500 &&
-            ['Climatización', 'Eléctrico', 'Plomería', 'Refrigeración'].includes(input.category) &&
             ['Alta', 'Media', 'Baja'].includes(input.priority),
           'Completa los campos del reporte.',
         )

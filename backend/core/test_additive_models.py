@@ -183,7 +183,9 @@ class AdditiveModelsTests(TestCase):
         self.assertEqual(CategoriaProblema.objects.count(), 1)
         self.assertEqual(self.categoria.clientes_habilitados.count(), 2)
 
-    def test_asignacion_tienda_sigue_siendo_el_alcance_vigente(self):
+    def test_asignacion_tienda_sigue_funcionando_para_supervisor_tienda(self):
+        self.usuario.rol = Rol.objects.create(nombre="Supervisor de tienda")
+        self.usuario.save(update_fields=["rol"])
         store = self.tienda()
         store.save()
         assignment = AsignacionTienda.objects.create(usuario=self.usuario, tienda=store)
@@ -192,11 +194,11 @@ class AdditiveModelsTests(TestCase):
         assignment.save(update_fields=["activo"])
         self.assertNotIn(store, tiendas_visibles_para(self.usuario))
 
-    def test_cobertura_nueva_no_concede_permisos_en_fase_1a(self):
+    def test_cobertura_nueva_concede_permisos_en_fase_1b(self):
         store = self.tienda(zona=self.zona)
         store.save()
         CoberturaUsuario.objects.create(usuario=self.usuario, cliente=self.cliente_a, zona=self.zona)
-        self.assertNotIn(store, tiendas_visibles_para(self.usuario))
+        self.assertIn(store, tiendas_visibles_para(self.usuario))
 
     def test_zona_y_categoria_referenciadas_estan_protegidas(self):
         self.tienda(zona=self.zona).save()

@@ -31,18 +31,32 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
       async (signal) => {
         const ticket = await repos.tickets.get(id, { signal })
         if (!repos.tickets.catalogs) throw new Error('Falta catálogo de tickets.')
-        const [store, users, catalogs] = await Promise.all([
+        const [store, users, catalogs, eligible] = await Promise.all([
           repos.stores.get(ticket.storeId, { signal }),
           repos.users.list({ signal }),
           repos.tickets.catalogs(),
+          account && repos.users.eligible
+            ? repos.users.eligible(ticket.storeId, { signal })
+            : Promise.resolve(undefined),
         ])
-        return { ticket, store, users, catalogs }
+        const eligibleUsers =
+          eligible ??
+          users.filter(
+            (user) =>
+              user.active &&
+              user.role === 'technician' &&
+              store.zoneId != null &&
+              user.coverages?.some(
+                (row) => row.clientId === store.clientId && row.zoneId === store.zoneId,
+              ),
+          )
+        return { ticket, store, users, catalogs, eligibleUsers }
       },
-      [id, repos],
+      [id, repos, account],
     ),
   )
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
-  const { ticket, store, users, catalogs } = query.data
+  const { ticket, store, users, catalogs, eligibleUsers } = query.data
   const person = (userId?: number) =>
     users.find((user) => user.id === userId)?.name ??
     (userId ? `Usuario #${userId}` : 'Sin asignar')
@@ -75,7 +89,7 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
             <ScheduleForm
               key={ticket.history.length}
               ticket={ticket}
-              users={users}
+              users={eligibleUsers}
               priorities={catalogs.priorities}
             />
           )}
@@ -177,10 +191,7 @@ function ScheduleForm({
       >
         <option value={0}>Seleccionar técnico</option>
         {users
-          .filter(
-            (user) =>
-              user.active && user.role === 'technician' && user.storeIds.includes(ticket.storeId),
-          )
+          .filter((user) => user.active && user.role === 'technician')
           .map((user) => (
             <option value={user.id} key={user.id}>
               {user.name}
