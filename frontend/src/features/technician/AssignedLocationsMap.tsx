@@ -21,6 +21,35 @@ function districtFromAddress(address: string) {
     .filter(Boolean)
   return sections.length > 1 ? sections.at(-2) : sections[0]
 }
+function StoreLabel({ store }: { store: Store }) {
+  const district = districtFromAddress(store.address) ?? ''
+  const name = store.name.trim()
+  if (!district && !name) return null
+  return (
+    <Tooltip
+      key={JSON.stringify([district, name])}
+      permanent
+      direction="top"
+      offset={[0, -24]}
+      className="nf-map-label"
+      // Leaflet recibe texto desde la apertura, sin esperar al portal de React.
+      content={() => {
+        const label = document.createElement('div')
+        if (district) {
+          const title = document.createElement('strong')
+          title.textContent = district
+          label.append(title)
+        }
+        if (name) {
+          const title = document.createElement('span')
+          title.textContent = name
+          label.append(title)
+        }
+        return label
+      }}
+    />
+  )
+}
 function Bounds({ stores }: { stores: Store[] }) {
   const map = useMap()
   useEffect(() => {
@@ -128,10 +157,7 @@ export function AssignedLocationsMap({
           <Bounds stores={stores} />
           {stores.map((store) => (
             <Marker key={store.id} position={[store.latitude, store.longitude]} icon={icon}>
-              <Tooltip permanent direction="top" offset={[0, -24]} className="nf-map-label">
-                <strong>{districtFromAddress(store.address)}</strong>
-                <span>{store.name}</span>
-              </Tooltip>
+              <StoreLabel store={store} />
               <Popup>
                 <strong>{store.name}</strong>
                 <p>{store.address}</p>
