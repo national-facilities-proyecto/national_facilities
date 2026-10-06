@@ -491,7 +491,12 @@ test('administraci√≥n: cliente, tienda, contrato, usuario, cobertura y contrase√
   await page.getByLabel('Cliente', { exact: true }).selectOption({ label: clientName })
   await page.getByLabel('Nombre de zona', { exact: true }).fill(zoneName)
   await save()
-  await expect(page.getByText(zoneName, { exact: true }).first()).toBeVisible()
+  await expect(
+    page
+      .getByRole('table', { name: 'Zonas', exact: true })
+      .getByRole('row')
+      .filter({ hasText: zoneName }),
+  ).toBeVisible()
   await page.goto('/admin/stores')
   await page.getByRole('button', { name: 'Crear registro', exact: true }).click()
   await page.getByLabel('Nombre de tienda').fill(storeName)
