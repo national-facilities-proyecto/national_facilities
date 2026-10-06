@@ -1,4 +1,4 @@
-import type { Visit } from '../../types/models'
+import { exceptionLabel, type Visit } from '../../types/models'
 import { Badge, Card } from '../../components/ui'
 import { EvidenceGallery } from '../../components/EvidenceGallery'
 import { displayDate } from '../../utils/dates'
@@ -27,7 +27,7 @@ export function VisitRecord({ visit }: { visit: Visit }) {
         )}
         {(visit.exceptions ?? []).map((item) => (
           <p key={item.id}>
-            {item.type === 'time_limit' ? 'Tiempo' : 'GPS'}: {item.reason} ·{' '}
+            {exceptionLabel(item)}: {item.reason} ·{' '}
             {item.approved === undefined ? 'Pendiente' : item.approved ? 'Aprobada' : 'Rechazada'} ·{' '}
             {item.reviewReason} · {displayDate(item.reviewedAt)} · Autor:{' '}
             {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Revisor:{' '}

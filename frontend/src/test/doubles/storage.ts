@@ -109,9 +109,14 @@ export function validateDatabase(value: unknown): value is MockDatabase {
       (visit) =>
         isRecord(visit) &&
         matches(visit, visitShape) &&
-        ['available', 'claimed', 'in_progress', 'pending_approval', 'completed'].includes(
-          String(visit.status),
-        ) &&
+        [
+          'available',
+          'claimed',
+          'in_progress',
+          'pending_approval',
+          'correction_required',
+          'completed',
+        ].includes(String(visit.status)) &&
         ['checklist', 'ticket'].includes(String(visit.origin)) &&
         optionalFields(visit, {
           technicianId: 'number',
@@ -132,7 +137,8 @@ export function validateDatabase(value: unknown): value is MockDatabase {
             answer.evidenceIds.every((id) => typeof id === 'string') &&
             (answer.result === undefined ||
               answer.result === 'conforme' ||
-              answer.result === 'no_conforme'),
+              answer.result === 'no_conforme' ||
+              answer.result === 'no_aplica'),
         ) &&
         Array.isArray(visit.evidenceIds) &&
         visit.evidenceIds.every((id) => typeof id === 'string'),
@@ -165,9 +171,15 @@ export function validateDatabase(value: unknown): value is MockDatabase {
         resolvedAt: 'string',
         resolution: 'string',
       }) &&
-      ['open', 'scheduled', 'in_progress', 'pending_approval', 'resolved', 'closed'].includes(
-        String(ticket.status),
-      ) &&
+      [
+        'open',
+        'scheduled',
+        'in_progress',
+        'pending_approval',
+        'correction_required',
+        'resolved',
+        'closed',
+      ].includes(String(ticket.status)) &&
       ['Alta', 'Media', 'Baja'].includes(String(ticket.priority)),
   )
 }

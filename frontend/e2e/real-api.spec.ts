@@ -13,6 +13,9 @@ import {
   checklistCase,
   jpeg,
   string,
+  arrive,
+  openResults,
+  waitUntilScheduled,
 } from './helpers.js'
 
 test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finalización reales', async ({
@@ -30,9 +33,9 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   if (!available) throw new Error('No existe checklist de prueba disponible.')
   await login(page)
   await page.goto('/checklists/' + available.id)
-  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page.getByRole('button', { name: 'Iniciar checklist', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
+  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Recorrido de inspección' })).toBeVisible()
   await expect(page.getByText('Inspect test device', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '✓ Conforme', exact: true })).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
@@ -56,9 +59,11 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   expect(current.expiresAt).toBeUndefined()
   advance(available.id, 'work')
   await page.reload()
-  await expect(page.getByText(/Tiempo transcurrido: 8 min/)).toBeVisible()
-  await page.getByRole('button', { name: 'Finalizar checklist', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Finalizar checklist', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
+    0,
+  )
+  await openResults(page)
+  await expect(page.getByRole('button', { name: 'Finalizar', exact: true })).toBeVisible()
   current = await visit(request, available.id, token)
   const deadline = current.expiresAt
   expect(Date.parse(deadline ?? '') - Date.parse(current.formOpenedAt ?? '')).toBe(300000)
@@ -106,8 +111,8 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   await expect(another.locator('.nf-evidence img')).toHaveCount(1)
   expect((await visit(request, available.id, token)).expiresAt).toBe(deadline)
   await context.close()
-  await page.getByRole('button', { name: 'Finalizar checklist', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirmar finalización', exact: true }).click()
+  await page.getByRole('button', { name: 'Finalizar', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
   expect((await visit(request, available.id, token)).status).toBe('completed')
 })
@@ -121,16 +126,17 @@ test('reserva de checklist: liberación a las dos horas, pantalla antigua y nuev
   const token = await access(request, 'tech')
   await login(page)
   await page.goto(`/checklists/${id}`)
-  await page.getByRole('button', { name: 'Reservar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
   await expect(page.getByText(/Reserva hasta/)).toBeVisible()
   const original = object(await call(request, `/visitas/${id}/`, token))
   expect(Date.parse(String(original.claimExpiresAt)) - Date.parse(String(original.claimedAt))).toBe(
     7200000,
   )
   advance(id, 'expire_claim')
-  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page.getByRole('button', { name: 'Iniciar checklist', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Actualizar visita', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: 'Reintentar ubicación', exact: true }),
+  ).toBeVisible()
   const released = object(await call(request, `/visitas/${id}/`, token))
   expect(released.status).toBe('available')
   expect(released.technicianId).toBeNull()
@@ -151,20 +157,22 @@ test('reserva de checklist: liberación a las dos horas, pantalla antigua y nuev
   await expect(
     other.getByRole('heading', { name: 'Historial de reservas', exact: true }),
   ).toBeVisible()
-  await other.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await other.getByRole('button', { name: 'Iniciar checklist', exact: true }).click()
+  await other.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await expect(
-    other.getByRole('heading', { name: 'Trabajo en ejecución', exact: true }),
+    other.getByRole('heading', { name: 'Recorrido de inspección', exact: true }),
   ).toBeVisible()
   const active = object(await call(request, `/visitas/${id}/`, otherToken))
   expect(active.formOpenedAt).toBeNull()
   expect(active.expiresAt).toBeNull()
-  await page.getByRole('button', { name: 'Actualizar visita', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Iniciar checklist', exact: true })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Registrar llegada', exact: true })).toHaveCount(0)
   const oldAccess = await request.get(`${api}/visitas/${id}/`, {
     headers: { Authorization: 'Bearer ' + token },
   })
   expect(oldAccess.status()).toBe(404)
+  await call(request, `/visitas/${id}/no-realizada/`, otherToken, {
+    reason: 'Intento aislado de reserva terminado por la prueba.',
+  })
   await context.close()
 })
 
@@ -232,14 +240,24 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
       .getByText('Motivo: Changed technician availability for this assignment.', { exact: true }),
   ).toBeVisible()
   await expect(page.getByText('Ticket reprogramado / reasignado', { exact: true })).toBeVisible()
-  const ticket = mapTicket(await call(request, '/tickets/' + id + '/', accountToken))
+  const beforeArrival = object(await call(request, '/tickets/' + id + '/', accountToken))
+  const ticket = mapTicket(
+    await call(request, '/tickets/' + id + '/programar/', accountToken, {
+      technicianId: tech?.id,
+      scheduledAt: new Date(Date.now() + 1000).toISOString(),
+      priorityId: beforeArrival.priorityId,
+      reason: 'Reprogramación explícita para registrar llegada en esta prueba.',
+      revision: beforeArrival.revision,
+    }),
+  )
+  if (!ticket.visitId) throw new Error('Sin visita programada.')
+  await waitUntilScheduled(request, ticket.visitId, await access(request, 'tech'))
   await page.evaluate(() => sessionStorage.clear())
   await page.goto('/login')
   await login(page)
   await page.goto('/routes/' + ticket.visitId)
-  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirmar inicio', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Atención en curso' })).toBeVisible()
   const supervisorContext = await browser.newContext()
   const supervisor = await supervisorContext.newPage()
   await login(supervisor, 'account')
@@ -254,7 +272,7 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
   if (!ticket.visitId) throw new Error('Sin visita programada.')
   advance(ticket.visitId, 'work')
   await page.reload()
-  await page.getByRole('button', { name: 'Registrar resolución', exact: true }).click()
+  await openResults(page, 'ticket')
   await page
     .getByLabel('Descripción del trabajo realizado')
     .fill('Replaced the component and checked the cabinet safely.')
@@ -263,8 +281,8 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
   await expect(page.getByLabel('Descripción del trabajo realizado')).toHaveValue(
     'Replaced the component and checked the cabinet safely.',
   )
-  await page.getByRole('button', { name: 'Finalizar ticket', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirmar finalización', exact: true }).click()
+  await page.getByRole('button', { name: 'Finalizar', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
   expect(mapTicket(await call(request, '/tickets/' + id + '/', accountToken)).status).toBe(
     'resolved',
@@ -341,7 +359,8 @@ test('indicador real: dos tickets por tienda, checklist separado y contrato dupl
   })
   await call(request, `/visitas/pool/${caseId}/tomar/`, techToken, {})
   await call(request, `/visitas/${caseId}/iniciar/`, techToken, { location: gps() })
-  await call(request, `/visitas/${caseId}/formulario/`, techToken, { location: gps() })
+  await call(request, `/visitas/${caseId}/ubicacion-cierre/`, techToken, { location: gps() })
+  await call(request, `/visitas/${caseId}/formulario/`, techToken, {})
   const tasks = Array.isArray(firstVisit.tasks) ? firstVisit.tasks.map(object) : []
   const photo = await request.post(api + '/evidencias/', {
     headers: { Authorization: 'Bearer ' + techToken },
@@ -356,14 +375,17 @@ test('indicador real: dos tickets por tienda, checklist separado y contrato dupl
   expect(photo.ok()).toBe(true)
   const imageId = string(object(await photo.json()).id)
   await call(request, `/visitas/${caseId}/borrador/`, techToken, {
-    revision: 0,
+    revision: object(await call(request, `/visitas/${caseId}/`, techToken)).revision,
     answers: [
       { taskId: Number(tasks[0]?.id), result: 'conforme', observation: '', evidenceIds: [imageId] },
     ],
     workDescription: '',
     evidenceIds: [],
   })
-  await call(request, `/visitas/${caseId}/finalizar/`, techToken, { location: gps() })
+  await call(request, `/visitas/${caseId}/finalizar/`, techToken, {
+    revision: object(await call(request, `/visitas/${caseId}/`, techToken)).revision,
+    exceptions: [],
+  })
   let metrics = object(await call(request, '/dashboard/', accountToken))
   const initialRisks = Array.isArray(metrics.risks) ? metrics.risks.map(object) : []
   expect(initialRisks.find((row) => row.storeId === storeId)?.completed).toBe(0)
@@ -380,14 +402,16 @@ test('indicador real: dos tickets por tienda, checklist separado y contrato dupl
     const scheduled = object(
       await call(request, `/tickets/${Number(ticket.id)}/programar/`, accountToken, {
         technicianId: technician?.id,
-        scheduledAt: new Date(Date.now() + 3600000).toISOString(),
+        scheduledAt: new Date(Date.now() + 1000).toISOString(),
         priorityId: priorities[0]?.id,
         reason: '',
         revision: 0,
       }),
     )
     const visitId = Number(scheduled.visitId)
+    await waitUntilScheduled(request, visitId, techToken)
     await call(request, `/visitas/${visitId}/iniciar/`, techToken, { location: gps() })
+    await call(request, `/visitas/${visitId}/ubicacion-cierre/`, techToken, { location: gps() })
     await call(request, `/visitas/${visitId}/formulario/`, techToken, {})
     const uploaded = await request.post(api + '/evidencias/', {
       headers: { Authorization: 'Bearer ' + techToken },
@@ -401,12 +425,15 @@ test('indicador real: dos tickets por tienda, checklist separado y contrato dupl
     expect(uploaded.ok()).toBe(true)
     const evidenceId = string(object(await uploaded.json()).id)
     await call(request, `/visitas/${visitId}/borrador/`, techToken, {
-      revision: 0,
+      revision: object(await call(request, `/visitas/${visitId}/`, techToken)).revision,
       workDescription: 'Repair completed and verified ' + index,
       answers: [],
       evidenceIds: [evidenceId],
     })
-    await call(request, `/visitas/${visitId}/finalizar/`, techToken, { location: gps() })
+    await call(request, `/visitas/${visitId}/finalizar/`, techToken, {
+      revision: object(await call(request, `/visitas/${visitId}/`, techToken)).revision,
+      exceptions: [],
+    })
   }
   metrics = object(await call(request, '/dashboard/', accountToken))
   const risks = Array.isArray(metrics.risks) ? metrics.risks.map(object) : []
@@ -583,9 +610,9 @@ test('checklist: cámara real del navegador y galería interrumpida reintentan s
   const token = await access(request, 'tech')
   await login(page)
   await page.goto('/checklists/' + id)
-  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page.getByRole('button', { name: 'Iniciar checklist', exact: true }).click()
-  await page.getByRole('button', { name: 'Finalizar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await openResults(page)
   await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
   await page.getByRole('button', { name: 'Tomar foto', exact: true }).click()
   const camera = page.getByRole('dialog')
@@ -611,6 +638,9 @@ test('checklist: cámara real del navegador y galería interrumpida reintentan s
   const confirmed = object(await call(request, '/visitas/' + id + '/', token))
   if (!Array.isArray(confirmed.answers)) throw new Error('Respuestas incompatibles.')
   expect(object(confirmed.answers[0]).evidenceIds).toHaveLength(2)
+  await page.getByRole('button', { name: 'Finalizar', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
 })
 
 test('dos dispositivos detectan conflicto de borrador y concilian con confirmación explícita', async ({
@@ -622,20 +652,22 @@ test('dos dispositivos detectan conflicto de borrador y concilian con confirmaci
   const token = await access(request, 'tech')
   await login(page)
   await page.goto('/checklists/' + id)
-  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page.getByRole('button', { name: 'Iniciar checklist', exact: true }).click()
-  await page.getByRole('button', { name: 'Finalizar checklist', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Finalizar checklist', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await openResults(page)
+  await expect(page.getByRole('button', { name: 'Finalizar', exact: true })).toBeVisible()
   const context = await browser.newContext()
   const another = await context.newPage()
   await login(another)
   await another.goto('/checklists/' + id + '/start')
-  await expect(
-    another.getByRole('button', { name: 'Finalizar checklist', exact: true }),
-  ).toBeVisible()
+  await expect(another.getByRole('button', { name: 'Finalizar', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
   await upload(page)
   await another.getByRole('button', { name: 'No aplica', exact: true }).click()
+  await another
+    .getByLabel('Descripción obligatoria')
+    .fill('No corresponde al equipo inspeccionado.')
+  await another.getByRole('button', { name: 'Guardar observación', exact: true }).click()
   await expect(
     another.getByRole('heading', { name: 'Borrador modificado en otra sesión' }),
   ).toBeVisible()
@@ -653,5 +685,143 @@ test('dos dispositivos detectan conflicto de borrador y concilian con confirmaci
   if (!Array.isArray(current.answers)) throw new Error('Respuestas incompatibles.')
   expect(object(current.answers[0]).result).toBe('no_aplica')
   expect(object(current.answers[0]).evidenceIds).toHaveLength(1)
+  expect(object(current.answers[0]).observation).toBe('No corresponde al equipo inspeccionado.')
+  await another.getByRole('button', { name: 'Finalizar', exact: true }).click()
+  await another.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
+  await expect(another.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
   await context.close()
+})
+
+test('V2: reserva no ocupa, segundo inicio rechazado, recovery y envío sin GPS con No aplica', async ({
+  page,
+  request,
+  context,
+}) => {
+  const token = await access(request, 'tech')
+  const first = checklistCase()
+  const second = checklistCase()
+  await call(request, `/visitas/pool/${second}/tomar/`, token, {})
+  await login(page)
+  await arrive(page, first)
+  await page.goto('/checklists')
+  await expect(
+    page.getByRole('heading', { name: 'Tienes un trabajo en curso', exact: true }),
+  ).toBeVisible()
+  const recovery = object(await call(request, '/visitas/recuperacion/', token))
+  expect(object(recovery.activeExecution).id).toBe(first)
+  expect(
+    Array.isArray(recovery.reservations) &&
+      recovery.reservations.map(object).some((v) => v.id === second),
+  ).toBe(true)
+  await page.goto(`/checklists/${second}`)
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await expect(page.getByRole('alert').filter({ hasText: /trabajo|ejecución/i })).toBeVisible()
+  expect(object(await call(request, `/visitas/${second}/`, token)).startedAt).toBeNull()
+  await page.goto(`/checklists/${first}/start`)
+  await openResults(page)
+  await page.getByRole('button', { name: 'No aplica', exact: true }).click()
+  await page
+    .getByLabel('Descripción obligatoria')
+    .fill('Este componente no corresponde a la tienda inspeccionada.')
+  await page.getByRole('button', { name: 'Guardar observación', exact: true }).click()
+  await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+  await context.clearPermissions()
+  let gpsRequests = 0
+  await page.exposeFunction('gpsRequestedAtSubmit', () => {
+    gpsRequests++
+  })
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'geolocation', {
+      value: {
+        getCurrentPosition() {
+          void (
+            window as unknown as { gpsRequestedAtSubmit: () => Promise<void> }
+          ).gpsRequestedAtSubmit()
+        },
+      },
+      configurable: true,
+    })
+  })
+  const submitted = page.waitForRequest(
+    (r) => r.method() === 'POST' && r.url().endsWith(`/visitas/${first}/finalizar/`),
+  )
+  await page.getByRole('button', { name: 'Finalizar', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
+  expect((await submitted).postDataJSON()).toEqual({ revision: expect.any(Number), exceptions: [] })
+  await expect(page.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
+  expect(gpsRequests).toBe(0)
+  expect(object(await call(request, `/visitas/${first}/`, token)).status).toBe('completed')
+})
+
+test('V2: llegada y cierre excepcionales separados, envío explícito y revisión readonly', async ({
+  page,
+  context,
+  request,
+}) => {
+  const id = checklistCase()
+  const token = await access(request, 'tech')
+  await context.clearPermissions()
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition(_success: PositionCallback, error: PositionErrorCallback) {
+          error({ code: 1 } as GeolocationPositionError)
+        },
+      },
+    })
+  })
+  await login(page)
+  await page.goto(`/checklists/${id}`)
+  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await page.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
+  await page
+    .getByLabel('Justificación de la excepción')
+    .fill('El permiso de ubicación fue denegado al llegar.')
+  await page.getByRole('button', { name: 'Guardar excepción GPS', exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Recorrido de inspección', exact: true }),
+  ).toBeVisible()
+  let state = object(await call(request, `/visitas/${id}/`, token))
+  expect(state.phase).toBe('physical_work')
+  expect(state.occupiesTechnician).toBe(true)
+  expect(state.submittedAt).toBeNull()
+  expect(state.formOpenedAt).toBeNull()
+  await page.getByRole('button', { name: 'Terminar recorrido', exact: true }).click()
+  await page.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
+  await page
+    .getByLabel('Justificación de la excepción')
+    .fill('El navegador mantiene denegado el permiso al terminar.')
+  await page.getByRole('button', { name: 'Guardar excepción GPS', exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Recorrido terminado', exact: true }),
+  ).toBeVisible()
+  state = object(await call(request, `/visitas/${id}/`, token))
+  expect(state.formOpenedAt).toBeNull()
+  const exceptions = Array.isArray(state.exceptions) ? state.exceptions.map(object) : []
+  expect(exceptions.map((e) => e.scope)).toEqual(['arrival', 'closure'])
+  expect(exceptions.every((e) => object(e.telemetry).latitude === null)).toBe(true)
+  await page.getByRole('button', { name: 'Registrar resultados', exact: true }).click()
+  await page.getByRole('button', { name: 'No aplica', exact: true }).click()
+  await page.getByLabel('Descripción obligatoria').fill('Componente no instalado en esta tienda.')
+  await page.getByRole('button', { name: 'Guardar observación', exact: true }).click()
+  await page.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
+  await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'En revisión', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'No aplica', exact: true })).toHaveCount(0)
+  state = object(await call(request, `/visitas/${id}/`, token))
+  expect(state.readOnly).toBe(true)
+  expect(state.occupiesTechnician).toBe(false)
+  const reviewer = await context.newPage()
+  await login(reviewer, 'account')
+  await reviewer.goto('/technical-supervisor/reviews')
+  await expect(
+    reviewer.getByRole('heading', { name: 'Revisiones pendientes', exact: true }),
+  ).toBeVisible()
+  await expect(reviewer.locator(`a[href="/technical-supervisor/checklists/${id}"]`)).toBeVisible()
+  await reviewer.locator(`a[href="/technical-supervisor/checklists/${id}"]`).click()
+  await expect(reviewer.getByText('GPS de llegada:', { exact: false }).first()).toBeVisible()
+  await expect(reviewer.getByText('GPS de cierre:', { exact: false }).first()).toBeVisible()
+  await reviewer.close()
 })

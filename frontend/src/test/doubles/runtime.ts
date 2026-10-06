@@ -79,7 +79,7 @@ export function continuable(user: User, visit: Visit): boolean {
     user.role === 'technician' &&
     visit.technicianId === user.id &&
     visit.startedAt &&
-    ['in_progress', 'pending_approval'].includes(visit.status),
+    ['in_progress', 'pending_approval', 'correction_required'].includes(visit.status),
   )
 }
 export function getVisit(db: MockDatabase, id: number, own = false): Visit {

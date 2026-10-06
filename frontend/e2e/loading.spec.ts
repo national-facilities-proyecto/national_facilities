@@ -36,7 +36,7 @@ for (const width of [320, 1440]) {
       name: width < 1024 ? 'Accesos del técnico' : 'Navegación principal',
     })
     try {
-      await navigation.getByRole('link', { name: 'Mis Rutas', exact: true }).click()
+      await navigation.getByRole('link', { name: 'Atenciones', exact: true }).click()
       await expect(page.locator('#main-content .nf-loading--list')).toBeVisible()
       await expect(page.getByRole('button', { name: /Perfil de/ })).toBeVisible()
       await expect(navigation).toBeVisible()

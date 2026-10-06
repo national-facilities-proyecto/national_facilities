@@ -112,9 +112,44 @@ export async function scheduledMapVisit(request: APIRequestContext) {
   return scheduled.visitId
 }
 export function advance(id: number, mode: 'work' | 'expire' | 'expire_claim') {
-  execFileSync(python, [resolve('../backend/test_support/clock.py'), String(id), mode], {
-    cwd: resolve('..'),
-  })
+  if (mode !== 'expire') {
+    execFileSync(python, [resolve('../backend/test_support/clock.py'), String(id), mode], {
+      cwd: resolve('..'),
+    })
+    return
+  }
+  // Adelanta toda la cronología de un caso aislado; respeta fin físico <= apertura.
+  // El helper antiguo solo desplazaba apertura e incumple la constraint V2.
+  execFileSync(
+    python,
+    [
+      '-c',
+      `
+import os, sys
+from pathlib import Path
+sys.path.insert(0, str(Path('backend').resolve()))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.test_settings')
+import django
+django.setup()
+from django.db import connection, transaction
+from django.utils import timezone
+from datetime import timedelta
+from core.models import Visita
+if os.environ['DJANGO_SETTINGS_MODULE'] != 'config.test_settings' or connection.settings_dict['NAME'] != 'nf_integration':
+    raise RuntimeError('Reloj permitido solo en base E2E aislada.')
+with transaction.atomic():
+    v = Visita.objects.select_for_update().get(pk=int(sys.argv[1]), tienda__cliente__ruc='E2E-ONLY')
+    if not all((v.iniciado_en, v.terminado_en, v.formulario_abierto_en, v.formulario_vence_en)) or v.enviado_en or v.completado_en:
+        raise RuntimeError('Se requiere un formulario V2 abierto y todavía no enviado.')
+    delta = v.formulario_abierto_en - (timezone.now() - timedelta(minutes=6))
+    for field in ('iniciado_en', 'terminado_en', 'formulario_abierto_en', 'formulario_vence_en'):
+        setattr(v, field, getattr(v, field) - delta)
+    v.save(update_fields=['iniciado_en', 'terminado_en', 'formulario_abierto_en', 'formulario_vence_en'])
+`,
+      String(id),
+    ],
+    { cwd: resolve('..') },
+  )
 }
 export async function upload(page: Page) {
   await page.getByRole('button', { name: 'Seleccionar de galería', exact: true }).first().click()
@@ -123,4 +158,56 @@ export async function upload(page: Page) {
     .setInputFiles({ name: 'evidence.jpg', mimeType: 'image/jpeg', buffer: jpeg })
   await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
   await expect(page.locator('fieldset .nf-evidence img')).toHaveCount(1)
+}
+
+export async function arrive(page: Page, id: number, origin: 'checklist' | 'ticket' = 'checklist') {
+  await page.goto((origin === 'checklist' ? '/checklists/' : '/routes/') + id)
+  const claim = page.getByRole('button', { name: 'Tomar checklist', exact: true })
+  const arrival = page.getByRole('button', { name: 'Registrar llegada', exact: true })
+  await expect(claim.or(arrival).first()).toBeVisible()
+  if (origin === 'checklist' && (await claim.isVisible())) await claim.click()
+  await arrival.click()
+  await expect(
+    page.getByRole('heading', {
+      name: origin === 'checklist' ? 'Recorrido de inspección' : 'Atención en curso',
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
+    0,
+  )
+}
+export async function openResults(page: Page, origin: 'checklist' | 'ticket' = 'checklist') {
+  await page
+    .getByRole('button', {
+      name: origin === 'checklist' ? 'Terminar recorrido' : 'Terminar atención',
+      exact: true,
+    })
+    .click()
+  await expect(
+    page.getByRole('heading', {
+      name: origin === 'checklist' ? 'Recorrido terminado' : 'Atención terminada',
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
+    0,
+  )
+  await page
+    .getByRole('button', {
+      name: origin === 'checklist' ? 'Registrar resultados' : 'Registrar resolución',
+      exact: true,
+    })
+    .click()
+  await expect(
+    page.getByRole('region', { name: 'Tiempo de registro del formulario' }),
+  ).toBeVisible()
+}
+export async function waitUntilScheduled(request: APIRequestContext, id: number, token: string) {
+  await expect
+    .poll(async () => {
+      const raw = object(await call(request, `/visitas/${id}/`, token))
+      return Date.parse(string(raw.serverNow)) >= Date.parse(string(raw.scheduledAt))
+    })
+    .toBe(true)
 }

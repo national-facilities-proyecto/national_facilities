@@ -45,7 +45,7 @@ export function ChecklistTaskCard({
           aria-pressed={answer?.result === 'no_conforme'}
           onClick={onNonConforming}
         >
-          ! No conforme
+          No conforme
         </Button>
         {onNotApplicable && (
           <Button

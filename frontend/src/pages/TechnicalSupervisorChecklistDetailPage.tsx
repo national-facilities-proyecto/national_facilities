@@ -7,7 +7,7 @@ import { Alert, Badge, Button, Card, PageHeader, Textarea } from '../components/
 import { Modal } from '../components/ui/Modal'
 import { EvidenceGallery } from '../components/EvidenceGallery'
 import { displayDate } from '../utils/dates'
-import { visitStatusLabels } from '../types/models'
+import { exceptionLabel, visitStatusLabels } from '../types/models'
 import { errorMessage } from '../services/errors'
 import { ExceptionHistory } from '../features/checklists/ExceptionHistory'
 import { ClaimHistory } from '../features/checklists/ClaimHistory'
@@ -44,7 +44,8 @@ export default function TechnicalSupervisorChecklistDetailPage() {
       <Card title="Información de la visita">
         <Badge>{visitStatusLabels[visit.status]}</Badge>
         <p>Inicio: {displayDate(visit.startedAt)}</p>
-        <p>Cierre: {displayDate(visit.completedAt)}</p>
+        <p>Fin físico: {displayDate(visit.physicalEndedAt)}</p>
+        <p>Finalización: {displayDate(visit.completedAt)}</p>
         <p>Primera apertura: {displayDate(visit.formOpenedAt)}</p>
         <p>Vencimiento: {displayDate(visit.expiresAt)}</p>
         <p>Envío: {displayDate(visit.submittedAt)}</p>
@@ -54,28 +55,43 @@ export default function TechnicalSupervisorChecklistDetailPage() {
           {visit.registrationSeconds ?? 'No registrado'} s
         </p>
         <p>
-          {visit.endLocation
+          {visit.endLocation?.validated === true
             ? 'Proximidad validada por el servidor.'
-            : 'Sin lectura GPS de cierre registrada.'}
+            : visit.endLocation
+              ? 'El GPS de cierre no tiene una validación normal confirmada.'
+              : 'Sin lectura GPS de cierre registrada.'}
         </p>
         {(visit.exceptions ?? []).map((item) => (
           <Alert key={item.id} success>
-            {item.type === 'time_limit' ? 'Tiempo' : 'GPS'}: {item.reason} · Autor:{' '}
+            {exceptionLabel(item)}: {item.reason} · Autor:{' '}
             {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Solicitud:{' '}
             {displayDate(item.requestedAt)}
             <p>
               {item.approved === undefined ? 'Pendiente' : item.approved ? 'Aprobada' : 'Rechazada'}{' '}
               · {item.reviewReason} · {displayDate(item.reviewedAt)}
             </p>
+            {item.type === 'location' && (
+              <>
+                <p>Causa registrada: {item.failure || 'No registrada'}</p>
+                <p>
+                  Coordenadas reales: {item.telemetry?.latitude ?? 'Ausente'},{' '}
+                  {item.telemetry?.longitude ?? 'Ausente'} · Precisión:{' '}
+                  {item.telemetry?.accuracy ?? 'No registrada'} m · Distancia:{' '}
+                  {item.telemetry?.distanceMeters ?? 'No registrada'} m · Radio:{' '}
+                  {item.telemetry?.radiusMeters ?? visit.radiusMeters ?? 'No registrado'} m
+                </p>
+              </>
+            )}
           </Alert>
         ))}
-        {visit.status === 'pending_approval' &&
+        {visit.phase === 'in_review' &&
+          visit.submittedAt &&
           (visit.exceptions ?? [])
             .filter((item) => item.approved === undefined)
             .map((item) => (
               <div className="nf-actions" key={item.id}>
                 <p>
-                  {item.type === 'time_limit' ? 'Tiempo' : 'GPS'}: {item.reason}
+                  {exceptionLabel(item)}: {item.reason}
                 </p>
                 <Button
                   onClick={() => {

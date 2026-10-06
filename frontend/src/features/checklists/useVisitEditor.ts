@@ -1,23 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
-import type { Answer, Coordinates, Evidence, Visit } from '../../types/models'
+import type { Answer, Evidence, Visit } from '../../types/models'
 import { registrationEditable } from '../../types/models'
 import { AppError, errorMessage } from '../../services/errors'
-import { LocationError } from '../geolocation/location'
-import { useLocationRequest } from '../geolocation/useLocation'
 import { pendingItems } from './validation'
 import { formExpired } from './clock'
 import { useAuth } from '../auth/AuthProvider'
 
 type Step =
   | { kind: 'editing' }
-  | { kind: 'observation'; taskId: number }
+  | { kind: 'observation'; taskId: number; result?: 'no_conforme' | 'no_aplica' }
   | { kind: 'camera'; taskId?: number }
   | { kind: 'validating' }
-  | { kind: 'confirm_finish'; location: Coordinates }
-  | { kind: 'location_error'; message: string; failure: string }
-  | { kind: 'exception'; failure: string }
+  | { kind: 'confirm_finish' }
   | { kind: 'time_exception' }
   | { kind: 'success'; pending: boolean }
 export function useVisitEditor(initial: Visit) {
@@ -31,19 +27,15 @@ export function useVisitEditor(initial: Visit) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [reason, setReason] = useState('')
-  const [corrections, setCorrections] = useState<
-    Partial<Record<'time_limit' | 'location', string>>
-  >({})
+  const [corrections, setCorrections] = useState<Record<string, string>>({})
   const [exceptionBusy, setExceptionBusy] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [remote, setRemote] = useState<Visit>()
   const [pendingPhoto, setPendingPhoto] = useState<{ photo: Evidence; taskId?: number }>()
-  const [openingFailure, setOpeningFailure] = useState<string>()
   const version = useRef(0)
   const latest = useRef(visit)
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
   const mounted = useRef(true)
-  const location = useLocationRequest()
   const back = visit.origin === 'checklist' ? '/checklists' : '/routes'
   const mustComplete = false
   const confirmedRevision = useRef(initial.revision ?? 0)
@@ -222,18 +214,23 @@ export function useVisitEditor(initial: Visit) {
       })
       .catch((cause) => setError(errorMessage(cause)))
   }
+  const applyConfirmed = (next: Visit) => {
+    latest.current = next
+    confirmedRevision.current = next.revision ?? 0
+    setVisit(next)
+  }
+  const needsReview = Boolean(visit.exceptions?.length)
   const finish = async () => {
-    if (step.kind !== 'editing' || saving) return
-    if (formExpired(latest.current) && latest.current.status !== 'pending_approval') {
-      setStep({ kind: 'time_exception' })
-      return
-    }
+    if (step.kind !== 'editing' || saving || conflict) return
     const pending = pendingItems(latest.current)
     if (pending.length) {
       setError(pending.join(' '))
       return
     }
-    if (formExpired(visit) && visit.status !== 'pending_approval') {
+    if (
+      formExpired(latest.current) &&
+      !latest.current.exceptions?.some((item) => item.type === 'time_limit')
+    ) {
       setStep({ kind: 'time_exception' })
       return
     }
@@ -241,48 +238,40 @@ export function useVisitEditor(initial: Visit) {
     setError('')
     try {
       await save()
-      const coordinates = await location.request()
-      setStep({ kind: 'confirm_finish', location: coordinates })
-    } catch (cause) {
-      if (cause instanceof AppError && cause.code === 'unauthorized') {
-        setStep({ kind: 'editing' })
-        return
-      }
-      setStep({
-        kind: 'location_error',
-        message: errorMessage(cause),
-        failure: cause instanceof LocationError ? cause.reason : 'service',
-      })
+      setStep({ kind: 'confirm_finish' })
+    } catch {
+      setStep({ kind: 'editing' })
     }
   }
-  const confirmFinish = async (coordinates: Coordinates) => {
+  const reviewInput = () => ({
+    revision: confirmedRevision.current,
+    exceptions: (latest.current.exceptions ?? []).map((item) => ({
+      type: item.type,
+      scope: item.scope,
+      reason: corrections[`${item.type}:${item.scope}`] ?? item.reason,
+      failure: item.failure,
+      revision: item.revision ?? 0,
+    })),
+  })
+  const confirmFinish = async () => {
     if (saving) return
     setStep({ kind: 'validating' })
+    setError('')
     try {
-      let next: Visit
-      if (latest.current.status === 'pending_approval') {
-        if (!repos.visits.submitReview) throw new Error('Falta envío del registro para revisión.')
-        next = await repos.visits.submitReview(visit.id, reviewInput(coordinates))
-      } else next = await repos.visits.complete(visit.id, coordinates)
-      setVisit(next)
-      latest.current = next
+      const current = latest.current
+      const next = current.exceptions?.length
+        ? await repos.visits.submitReview(current.id, reviewInput())
+        : await repos.visits.complete(current.id, {
+            revision: confirmedRevision.current,
+            exceptions: [],
+          })
+      applyConfirmed(next)
       setDirty(false)
-      setStep({ kind: 'success', pending: next.status === 'pending_approval' })
+      setStep({ kind: 'success', pending: next.phase === 'in_review' && Boolean(next.submittedAt) })
     } catch (cause) {
-      if (cause instanceof AppError && cause.code === 'unauthorized') {
-        setError(errorMessage(cause))
-        setStep({ kind: 'editing' })
-        return
-      }
-      if (formExpired(visit) && visit.status !== 'pending_approval') {
-        setStep({ kind: 'time_exception' })
-        return
-      }
-      setStep({
-        kind: 'location_error',
-        message: errorMessage(cause),
-        failure: cause instanceof LocationError ? cause.reason : 'service',
-      })
+      setError(errorMessage(cause))
+      if (cause instanceof AppError && cause.code === 'conflict') setConflict(true)
+      setStep({ kind: 'editing' })
     }
   }
   const issues = pendingItems(visit)
@@ -290,49 +279,12 @@ export function useVisitEditor(initial: Visit) {
     (task) => !pendingItems({ ...visit, tasks: [task] }).length,
   ).length
   const editable = registrationEditable(visit)
-  const reviewInput = (coordinates?: Coordinates, gpsFailure?: string, gpsReason?: string) => {
-    const current = latest.current
-    const exceptions = (current.exceptions ?? []).map((item) => ({
-      type: item.type,
-      reason: corrections[item.type] ?? item.reason,
-      failure: item.failure,
-      revision: item.revision ?? 0,
-    }))
-    if (formExpired(current) && !exceptions.some((item) => item.type === 'time_limit'))
-      exceptions.push({
-        type: 'time_limit',
-        reason: corrections.time_limit ?? '',
-        failure: '',
-        revision: 0,
-      })
-    if (gpsFailure) {
-      const previous = exceptions.find((item) => item.type === 'location')
-      if (previous) {
-        previous.reason = gpsReason ?? ''
-        previous.failure = gpsFailure
-      } else
-        exceptions.push({
-          type: 'location',
-          reason: gpsReason ?? '',
-          failure: gpsFailure,
-          revision: 0,
-        })
-    }
-    return { revision: confirmedRevision.current, location: coordinates, exceptions }
-  }
-  const openForm = async (failure?: string) => {
+  const openForm = async () => {
     setError('')
     setSaving(true)
     try {
-      if (!repos.visits.openForm) throw new Error('Falta apertura de formulario.')
-      const coordinates =
-        visit.origin === 'checklist' && !failure ? await location.request() : undefined
-      const next = await repos.visits.openForm(visit.id, coordinates, failure)
-      latest.current = next
-      confirmedRevision.current = next.revision ?? 0
-      setVisit(next)
+      applyConfirmed(await repos.visits.openForm(visit.id))
     } catch (cause) {
-      setOpeningFailure(cause instanceof LocationError ? cause.reason : undefined)
       setError(errorMessage(cause))
     } finally {
       setSaving(false)
@@ -369,7 +321,8 @@ export function useVisitEditor(initial: Visit) {
     doneTasks,
     editable,
     openForm,
-    openingFailure,
+    applyConfirmed,
+    needsReview,
     conflict,
     remote,
     consultRemote,

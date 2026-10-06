@@ -13,6 +13,9 @@ import {
   upload,
   scheduledMapVisit,
   mapVisit,
+  arrive,
+  openResults,
+  waitUntilScheduled,
 } from './helpers.js'
 import type { APIRequestContext, Page } from '@playwright/test'
 
@@ -42,33 +45,21 @@ async function setup(request: APIRequestContext, origin: 'checklist' | 'ticket')
   const scheduled = object(
     await call(request, '/tickets/' + String(ticket.id) + '/programar/', accountToken, {
       technicianId: tech?.id,
-      scheduledAt: new Date(Date.now() + 3600000).toISOString(),
+      scheduledAt: new Date(Date.now() + 1000).toISOString(),
       priorityId: object(catalogs.priorities[0]).id,
       reason: '',
       revision: 0,
     }),
   )
   if (typeof scheduled.visitId !== 'number') throw new Error('Sin visita.')
+  await waitUntilScheduled(request, scheduled.visitId, token)
   return { id: scheduled.visitId, token, path: '/routes/' }
 }
 async function start(page: Page, id: number, path: string) {
-  await page.goto(path + id)
-  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page
-    .getByRole('button', {
-      name: path === '/checklists/' ? 'Iniciar checklist' : 'Confirmar inicio',
-      exact: true,
-    })
-    .click()
-  await expect(page.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
+  await arrive(page, id, path === '/checklists/' ? 'checklist' : 'ticket')
 }
 async function form(page: Page, origin: 'checklist' | 'ticket') {
-  await page
-    .getByRole('button', {
-      name: origin === 'checklist' ? 'Finalizar checklist' : 'Registrar resolución',
-      exact: true,
-    })
-    .click()
+  await openResults(page, origin)
   if (origin === 'checklist')
     await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
   else
@@ -92,7 +83,11 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await editor.goto(
         origin === 'checklist' ? data.path + data.id + '/start' : data.path + data.id,
       )
-      await expect(editor.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
+      await expect(
+        editor.getByRole('heading', {
+          name: origin === 'checklist' ? 'Recorrido de inspección' : 'Atención en curso',
+        }),
+      ).toBeVisible()
       await form(editor, origin)
       const original = (await visit(request, data.id, data.token)).expiresAt
       await editor.close()
@@ -109,7 +104,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
           .getByLabel('Descripción del trabajo realizado')
           .fill('Local edits remain during network loss.')
       else {
-        await editor.getByRole('button', { name: '! No conforme', exact: true }).click()
+        await editor.getByRole('button', { name: 'No conforme', exact: true }).click()
         await editor
           .getByLabel('Descripción obligatoria')
           .fill('Local edits remain during network loss.')
@@ -128,7 +123,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
         headers: { Authorization: 'Bearer ' + data.token },
       })
       expect(revoked.status()).toBe(204)
-      await editor.getByRole('button', { name: 'Finalizar ' + origin, exact: true }).click()
+      await editor.getByRole('button', { name: 'Finalizar', exact: true }).click()
       await expect(editor.getByRole('dialog', { name: 'Recuperar sesión' })).toBeVisible()
       await editor.getByLabel('Contraseña para recuperar sesión').fill(password)
       await editor.getByRole('button', { name: 'Autenticar y continuar' }).click()
@@ -156,17 +151,22 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await editor
         .getByLabel('Justificación obligatoria')
         .fill('Recovered after device power loss and session expiration.')
-      await editor.getByRole('button', { name: 'Enviar para revisión', exact: true }).click()
+      await editor
+        .getByRole('button', { name: 'Guardar justificación y continuar', exact: true })
+        .click()
+      await editor.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
+      await editor.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
       await expect(editor.getByRole('heading', { name: 'En revisión' })).toBeVisible()
-      if (origin === 'ticket') {
-        await editor.getByRole('button', { name: 'Registrar GPS de cierre', exact: true }).click()
-      } else {
-        const recorded = object(await call(request, `/visitas/${data.id}/`, renewed))
-        expect(object(recorded.endLocation).validated).toBe(true)
-      }
+      const recorded = object(await call(request, `/visitas/${data.id}/`, renewed))
+      expect(object(recorded.endLocation).validated).toBe(true)
+      await expect(editor.getByLabel('Descripción del trabajo realizado')).toHaveCount(0)
       await expect(
-        editor.getByRole('button', { name: 'Registrar GPS de cierre', exact: true }),
-      ).not.toBeVisible()
+        editor.getByRole('button', { name: 'Terminar recorrido', exact: true }),
+      ).toHaveCount(0)
+      await expect(
+        editor.getByRole('button', { name: 'Terminar atención', exact: true }),
+      ).toHaveCount(0)
+      await expect(editor.getByRole('textbox')).toHaveCount(0)
       expect((await visit(request, data.id, renewed)).status).toBe('pending_approval')
       await editor.close()
       const reviewer = await context.newPage()
@@ -197,12 +197,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       const data = await setup(request, origin)
       await login(page)
       await start(page, data.id, data.path)
-      await page
-        .getByRole('button', {
-          name: origin === 'checklist' ? 'Finalizar checklist' : 'Registrar resolución',
-          exact: true,
-        })
-        .click()
+      await openResults(page, origin)
       advance(data.id, 'expire')
       await page.reload()
       await expect(page.getByRole('dialog', { name: 'Justificación por demora' })).toBeVisible()
@@ -214,7 +209,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
         .getByRole('button', { name: 'Guardar justificación y continuar', exact: true })
         .click()
       await expect(page.getByRole('dialog')).toHaveCount(0)
-      await expect(page.getByRole('heading', { name: 'En revisión', exact: true })).toBeVisible()
+      expect((await visit(request, data.id, data.token)).status).toBe('in_progress')
       if (origin === 'checklist')
         await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
       else
@@ -222,10 +217,10 @@ for (const origin of ['checklist', 'ticket'] as const) {
           .getByLabel('Descripción del trabajo realizado')
           .fill('Repaired the installation and checked normal operation.')
       await upload(page)
-      await page.getByRole('button', { name: 'Enviar para revisión', exact: true }).click()
-      await page.getByRole('button', { name: 'Confirmar finalización', exact: true }).click()
+      await page.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
+      await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
       await expect(
-        page.getByRole('button', { name: 'Enviar para revisión', exact: true }),
+        page.getByRole('button', { name: 'Enviar a revisión', exact: true }),
       ).toHaveCount(0)
       const submitted = object(await call(request, '/visitas/' + data.id + '/', data.token))
       expect(submitted.workStatus).toBe('in_review')
@@ -240,6 +235,12 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await reviewer.getByRole('button', { name: 'Confirmar decisión', exact: true }).click()
       await expect(reviewer.getByRole('dialog')).toHaveCount(0)
       await page.reload()
+      await expect(
+        page.getByRole('heading', { name: 'Corrección requerida', exact: true }),
+      ).toBeVisible()
+      expect(object(await call(request, `/visitas/${data.id}/`, data.token)).phase).toBe(
+        'correction_required',
+      )
       await expect(page.getByText('Justificación rechazada:', { exact: false })).toBeVisible()
       await expect(page.locator('.nf-evidence img')).toHaveCount(1)
       await page
@@ -252,17 +253,17 @@ for (const origin of ['checklist', 'ticket'] as const) {
           .getByLabel('Descripción del trabajo realizado')
           .fill('Repaired the installation, tested safety and confirmed stable operation.')
       else {
-        await page.getByRole('button', { name: '! No conforme', exact: true }).click()
+        await page.getByRole('button', { name: 'No conforme', exact: true }).click()
         await page
           .getByLabel('Descripción obligatoria')
           .fill('A damaged protective cover requires replacement.')
         await page.getByRole('button', { name: 'Guardar observación', exact: true }).click()
       }
       await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
-      await page.getByRole('button', { name: 'Enviar para revisión', exact: true }).click()
-      await page.getByRole('button', { name: 'Confirmar finalización', exact: true }).click()
+      await page.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
+      await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
       await expect(
-        page.getByRole('button', { name: 'Enviar para revisión', exact: true }),
+        page.getByRole('button', { name: 'Enviar a revisión', exact: true }),
       ).toHaveCount(0)
       expect((await visit(request, data.id, data.token)).expiresAt).toBe(deadline)
       await reviewer.reload()

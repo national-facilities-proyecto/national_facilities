@@ -13,10 +13,11 @@ export function pendingItems(
       const answer = visit.answers.find((item) => item.taskId === task.id)
       return [
         !answer?.result ? `Resultado pendiente: ${task.title}.` : '',
-        answer?.result === 'no_conforme' && !answer.observation.trim()
+        (answer?.result === 'no_conforme' || answer?.result === 'no_aplica') &&
+        !answer.observation.trim()
           ? `Observación requerida: ${task.title}.`
           : '',
-        task.photoRequired && !answer?.evidenceIds.length
+        task.photoRequired && answer?.result !== 'no_aplica' && !answer?.evidenceIds.length
           ? `Fotografía obligatoria: ${task.title}.`
           : '',
       ].filter(Boolean)

@@ -17,7 +17,7 @@ it('permite seleccionar conforme y no conforme y distingue foto obligatoria', ()
     />,
   )
   fireEvent.click(screen.getByRole('button', { name: '✓ Conforme' }))
-  fireEvent.click(screen.getByRole('button', { name: '! No conforme' }))
+  fireEvent.click(screen.getByRole('button', { name: 'No conforme' }))
   expect(conform).toHaveBeenCalled()
   expect(non).toHaveBeenCalled()
   expect(screen.getByText('Foto obligatoria')).toBeInTheDocument()

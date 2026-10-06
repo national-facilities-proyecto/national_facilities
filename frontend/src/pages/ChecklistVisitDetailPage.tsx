@@ -4,7 +4,7 @@ import { useRepositories } from '../app/RepositoriesProvider'
 import { useQuery } from '../hooks/useQuery'
 import { QueryState } from '../components/feedback/QueryState'
 import { Alert, Badge, Card } from '../components/ui'
-import { visitStatusLabels } from '../types/models'
+import { operationalVisitLabel } from '../types/models'
 import { LazyMap } from '../features/technician/LazyMap'
 import { VisitStart } from '../features/checklists/VisitStart'
 import { formExpired } from '../features/checklists/clock'
@@ -36,7 +36,7 @@ export default function ChecklistVisitDetailPage() {
           <span className="eyebrow">Información de la tienda</span>
           <h1>{store.name}</h1>
           <p>{store.address}</p>
-          <Badge>{visitStatusLabels[visit.status]}</Badge>
+          <Badge>{operationalVisitLabel(visit)}</Badge>
           {visit.quota && (
             <p>
               Visita mensual {visit.quota}
@@ -59,16 +59,20 @@ export default function ChecklistVisitDetailPage() {
       {visit.status === 'available' && <VisitStart visit={visit} store={store} claimBeforeStart />}
       <ClaimHistory visit={visit} />
       {visit.status === 'claimed' && <VisitStart visit={visit} store={store} />}
-      {visit.status === 'in_progress' && (
+      {['physical_work', 'physical_finished', 'results', 'correction_required'].includes(
+        visit.phase ?? '',
+      ) && (
         <Link className="nf-link" to={`/checklists/${visit.id}/start`}>
-          {!visit.formOpenedAt
-            ? 'Retomar ejecución'
-            : formExpired(visit)
-              ? 'Ver registro pendiente'
-              : 'Continuar formulario'}
+          {visit.phase === 'correction_required'
+            ? 'Corregir registro'
+            : !visit.formOpenedAt
+              ? 'Retomar ejecución'
+              : formExpired(visit)
+                ? 'Ver registro pendiente'
+                : 'Continuar formulario'}
         </Link>
       )}
-      {visit.status === 'pending_approval' && (
+      {visit.phase === 'in_review' && visit.submittedAt && (
         <Alert success>
           Excepción enviada para revisión.{' '}
           <Link className="nf-link" to={`/checklists/${visit.id}/start`}>

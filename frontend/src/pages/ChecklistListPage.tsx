@@ -1,3 +1,4 @@
+import { WorkRecovery } from '../features/checklists/WorkRecovery'
 import { useCallback, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useRepositories } from '../app/RepositoriesProvider'
@@ -6,7 +7,7 @@ import { Alert, Badge, Button, Card, EmptyState, PageHeader } from '../component
 import { QueryState } from '../components/feedback/QueryState'
 import { QueryFeedback } from '../components/feedback/QueryFeedback'
 import { LazyMap } from '../features/technician/LazyMap'
-import { visitStatusLabels, type VisitStatus } from '../types/models'
+import { operationalVisitLabel, type Visit, type VisitStatus } from '../types/models'
 import { errorMessage } from '../services/errors'
 
 const sections: {
@@ -15,7 +16,7 @@ const sections: {
   statuses: VisitStatus[]
 }[] = [
   { id: 'available', label: 'Bolsa compartida', statuses: ['available'] },
-  { id: 'own', label: 'Mis trabajos', statuses: ['claimed', 'in_progress'] },
+  { id: 'own', label: 'Mis trabajos', statuses: ['claimed', 'in_progress', 'correction_required'] },
   { id: 'review', label: 'En revisión', statuses: ['pending_approval'] },
   { id: 'completed', label: 'Finalizados', statuses: ['completed'] },
 ]
@@ -45,6 +46,10 @@ export default function ChecklistListPage() {
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
   const { visits, stores } = query.data
   const section = sections.find((item) => item.id === sectionId)!
+  const inSection = (visit: Visit) =>
+    visit.status === 'pending_approval'
+      ? section.id === (visit.phase === 'in_review' && visit.submittedAt ? 'review' : 'own')
+      : section.statuses.includes(visit.status)
   return (
     <>
       <PageHeader
@@ -57,6 +62,7 @@ export default function ChecklistListPage() {
           recuperar los registros existentes del servidor.
         </Alert>
       )}
+      <WorkRecovery />
       <QueryFeedback query={query} />
       <LazyMap
         stores={stores.filter((store) =>
@@ -83,31 +89,27 @@ export default function ChecklistListPage() {
           ))}
         </div>
         <h2>{section.label}</h2>
-        {!visits.some((visit) => section.statuses.includes(visit.status)) && (
-          <EmptyState>No hay visitas en esta sección.</EmptyState>
-        )}
-        {visits
-          .filter((visit) => section.statuses.includes(visit.status))
-          .map((visit) => {
-            const store = stores.find((item) => item.id === visit.storeId)
-            return (
-              <Card key={visit.id}>
-                <Badge>{visitStatusLabels[visit.status]}</Badge>
-                <h3>{store?.name}</h3>
-                {visit.quota && (
-                  <p>
-                    Visita mensual {visit.quota}
-                    {visit.quotaCount ? ` de ${visit.quotaCount}` : ''}
-                  </p>
-                )}
-                <p>{store?.address}</p>
-                <p>Contacto: {store?.contact}</p>
-                <Link className="nf-link" to={`/checklists/${visit.id}`}>
-                  Ver detalle
-                </Link>
-              </Card>
-            )
-          })}
+        {!visits.some(inSection) && <EmptyState>No hay visitas en esta sección.</EmptyState>}
+        {visits.filter(inSection).map((visit) => {
+          const store = stores.find((item) => item.id === visit.storeId)
+          return (
+            <Card key={visit.id}>
+              <Badge>{operationalVisitLabel(visit)}</Badge>
+              <h3>{store?.name}</h3>
+              {visit.quota && (
+                <p>
+                  Visita mensual {visit.quota}
+                  {visit.quotaCount ? ` de ${visit.quotaCount}` : ''}
+                </p>
+              )}
+              <p>{store?.address}</p>
+              <p>Contacto: {store?.contact}</p>
+              <Link className="nf-link" to={`/checklists/${visit.id}`}>
+                Ver detalle
+              </Link>
+            </Card>
+          )
+        })}
       </section>
     </>
   )

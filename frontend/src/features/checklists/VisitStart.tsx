@@ -1,12 +1,11 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { Coordinates, Store, Visit } from '../../types/models'
+import type { Store, Visit } from '../../types/models'
 import { useRepositories } from '../../app/RepositoriesProvider'
-import { useLocationRequest } from '../geolocation/useLocation'
-import { distanceMeters } from '../geolocation/location'
 import { Alert, Button, Card } from '../../components/ui'
 import { errorMessage } from '../../services/errors'
 import { displayDate } from '../../utils/dates'
+import { GpsAction } from './GpsAction'
 
 export function VisitStart({
   visit,
@@ -19,113 +18,62 @@ export function VisitStart({
   claimBeforeStart?: boolean
   onStarted?: () => void
 }) {
-  const { checklists, visits } = useRepositories()
-  const location = useLocationRequest()
+  const { checklists } = useRepositories()
   const navigate = useNavigate()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [current, setCurrent] = useState(visit)
   const [claimed, setClaimed] = useState(!claimBeforeStart)
-  const [coordinates, setCoordinates] = useState<Coordinates>()
-  const distance = coordinates ? Math.round(distanceMeters(coordinates, store)) : null
-  const reserve = () => {
-    if (busy || claimed) return
+  const reserve = async () => {
+    if (busy) return
     setBusy(true)
     setError('')
-    void checklists
-      .claim(visit.id)
-      .then(() => window.location.reload())
-      .catch((cause) => setError(errorMessage(cause)))
-      .finally(() => setBusy(false))
-  }
-  const request = () => {
-    setBusy(true)
-    setError('')
-    void location
-      .request()
-      .then(setCoordinates)
-      .catch((cause) => setError(errorMessage(cause)))
-      .finally(() => setBusy(false))
-  }
-  const confirm = () => {
-    if (!coordinates || busy) return
-    setBusy(true)
-    setError('')
-    void (claimed ? Promise.resolve() : checklists.claim(visit.id).then(() => setClaimed(true)))
-      .then(() => visits.start(visit.id, coordinates))
-      .then(() =>
-        onStarted
-          ? onStarted()
-          : navigate(
-              visit.origin === 'checklist'
-                ? `/checklists/${visit.id}/start`
-                : `/routes/${visit.id}`,
-            ),
-      )
-      .catch((cause) => setError(errorMessage(cause)))
-      .finally(() => setBusy(false))
+    try {
+      setCurrent(await checklists.claim(visit.id))
+      setClaimed(true)
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setBusy(false)
+    }
   }
   return (
-    <Card title={visit.origin === 'checklist' ? 'Iniciar checklist' : 'Iniciar atención'}>
+    <Card title={claimed ? 'Registrar llegada' : 'Tomar checklist'}>
+      <p>{store.name}</p>
       <p>
         {claimed
-          ? 'Solicita una ubicación GPS nueva antes de iniciar.'
-          : 'Al iniciar, la visita quedará asignada a ti.'}
+          ? 'Pendiente de iniciar. Registrar llegada solicita una lectura GPS fresca y comienza el trabajo físico.'
+          : 'Reserva el checklist antes de registrar llegada.'}
       </p>
       <p>
-        Radio permitido:{' '}
-        {visit.radiusMeters === undefined ? 'No registrado' : `${visit.radiusMeters} m`}.
+        Radio publicado:{' '}
+        {current.radiusMeters === undefined ? 'No registrado' : `${current.radiusMeters} m`}.
       </p>
-      {visit.legacy && (
-        <Alert>
-          Esta ejecución histórica requiere revisión de contrato y timestamps; no se reiniciará
-          automáticamente.
-        </Alert>
-      )}
       <p>
-        El inicio registra la ejecución. El formulario y sus cinco minutos se abrirán cuando pulses
-        {visit.origin === 'checklist' ? 'Finalizar checklist.' : 'Registrar resolución.'}
+        El trabajo físico no tiene plazo de cinco minutos. El formulario se abre después de terminar
+        el recorrido o atención.
       </p>
-      {visit.origin === 'checklist' && (
-        <p>
-          {visit.claimExpiresAt
-            ? `Reserva hasta ${displayDate(visit.claimExpiresAt)}. Si no inicias antes, vuelve automáticamente a la bolsa.`
-            : 'La reserva dura dos horas desde el reclamo y deja de vencer al iniciar el trabajo.'}
-        </p>
-      )}
-      {coordinates && (
-        <Alert success>
-          Distancia: {distance} m · Precisión: ±{Math.round(coordinates.accuracy)} m · Captura:{' '}
-          {new Date(coordinates.capturedAt).toLocaleString('es-PE')}.
-        </Alert>
-      )}
+      {current.claimExpiresAt && <p>Reserva hasta {displayDate(current.claimExpiresAt)}.</p>}
       {error && <Alert>{error}</Alert>}
-      <div className="nf-actions">
-        {!claimed && visit.origin === 'checklist' && (
-          <Button variant="secondary" disabled={busy || visit.legacy} onClick={reserve}>
-            Reservar checklist
-          </Button>
-        )}
-        {error && (
-          <Button variant="secondary" disabled={busy} onClick={() => window.location.reload()}>
-            Actualizar visita
-          </Button>
-        )}
-        <Button variant="secondary" disabled={busy} onClick={request}>
-          {busy ? 'Solicitando ubicación…' : 'Obtener ubicación'}
+      {claimed ? (
+        <GpsAction
+          visit={current}
+          scope="arrival"
+          onConfirmed={() => {
+            if (onStarted) onStarted()
+            else
+              void navigate(
+                visit.origin === 'checklist'
+                  ? `/checklists/${visit.id}/start`
+                  : `/routes/${visit.id}`,
+              )
+          }}
+        />
+      ) : (
+        <Button disabled={busy} onClick={() => void reserve()}>
+          Tomar checklist
         </Button>
-        <Button
-          disabled={
-            busy ||
-            !coordinates ||
-            visit.legacy ||
-            visit.radiusMeters === undefined ||
-            (distance !== null && distance > visit.radiusMeters)
-          }
-          onClick={confirm}
-        >
-          {visit.origin === 'checklist' ? 'Iniciar checklist' : 'Confirmar inicio'}
-        </Button>
-      </div>
+      )}
     </Card>
   )
 }

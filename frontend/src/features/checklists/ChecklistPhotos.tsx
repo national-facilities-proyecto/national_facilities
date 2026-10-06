@@ -46,12 +46,12 @@ export function ChecklistPhotos({
     setPhotos((current) => current.filter((photo) => photo.id !== id))
   }
   const associate = async (photo: Evidence) => {
-    if (!onAssociate || !targets[photo.id] || associating.current) return
+    if (!onAssociate || (tasks.length > 0 && !targets[photo.id]) || associating.current) return
     associating.current = true
     setBusy(true)
     setError('')
     try {
-      await onAssociate(photo, Number(targets[photo.id]))
+      await onAssociate(photo, tasks.length ? Number(targets[photo.id]) : 0)
       await discard(photo.id)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -61,13 +61,15 @@ export function ChecklistPhotos({
     }
   }
   return (
-    <Card title="Fotografías del recorrido">
+    <Card title={tasks.length ? 'Fotografías del recorrido' : 'Fotografías de la atención'}>
       <p>
-        Estas fotos se conservan en este navegador para asociarlas a los ítems del formulario final.
+        {tasks.length
+          ? 'Estas fotos se conservan en este navegador para asociarlas a los ítems del formulario final.'
+          : 'Estas fotos se conservan en este navegador para asociarlas al registro de resolución.'}
       </p>
       {!onAssociate && (
         <Button variant="secondary" onClick={() => setCamera(true)}>
-          Tomar fotografía del recorrido
+          {tasks.length ? 'Tomar fotografía del recorrido' : 'Tomar fotografía de la atención'}
         </Button>
       )}
       {error && <Alert>{error}</Alert>}
@@ -78,23 +80,32 @@ export function ChecklistPhotos({
             <figcaption>Fotografía {index + 1} · pendiente de asociación</figcaption>
             {onAssociate && (
               <>
-                <label htmlFor={`${formId}-${photo.id}`}>Ítem para fotografía {index + 1}</label>
-                <select
-                  id={`${formId}-${photo.id}`}
-                  value={targets[photo.id] ?? ''}
-                  disabled={busy}
-                  onChange={(event) =>
-                    setTargets((current) => ({ ...current, [photo.id]: event.target.value }))
-                  }
+                {tasks.length > 0 && (
+                  <>
+                    <label htmlFor={`${formId}-${photo.id}`}>
+                      Ítem para fotografía {index + 1}
+                    </label>
+                    <select
+                      id={`${formId}-${photo.id}`}
+                      value={targets[photo.id] ?? ''}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setTargets((current) => ({ ...current, [photo.id]: event.target.value }))
+                      }
+                    >
+                      <option value="">Selecciona un ítem</option>
+                      {tasks.map((task) => (
+                        <option key={task.id} value={task.id}>
+                          {task.title}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <Button
+                  disabled={busy || (tasks.length > 0 && !targets[photo.id])}
+                  onClick={() => void associate(photo)}
                 >
-                  <option value="">Selecciona un ítem</option>
-                  {tasks.map((task) => (
-                    <option key={task.id} value={task.id}>
-                      {task.title}
-                    </option>
-                  ))}
-                </select>
-                <Button disabled={busy || !targets[photo.id]} onClick={() => void associate(photo)}>
                   Asociar fotografía
                 </Button>
               </>

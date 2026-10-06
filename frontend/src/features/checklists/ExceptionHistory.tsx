@@ -1,4 +1,4 @@
-import type { Visit } from '../../types/models'
+import { exceptionLabel, type Visit } from '../../types/models'
 import { Card } from '../../components/ui'
 import { displayDate } from '../../utils/dates'
 
@@ -10,8 +10,8 @@ export function ExceptionHistory({ visit }: { visit: Visit }) {
         {visit.exceptionHistory.map((entry) => (
           <li key={entry.id}>
             <p>
-              {displayDate(entry.at)} · Usuario #{entry.actorId} ·{' '}
-              {entry.exception.type === 'time_limit' ? 'Tiempo' : 'GPS'} ·{' '}
+              {displayDate(entry.at)} · Usuario #{entry.actorId} · {exceptionLabel(entry.exception)}{' '}
+              ·{' '}
               {entry.kind === 'review'
                 ? entry.exception.approved
                   ? 'Aprobada'

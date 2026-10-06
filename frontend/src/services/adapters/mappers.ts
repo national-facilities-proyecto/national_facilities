@@ -9,7 +9,6 @@ import type {
   EvidenceMeta,
   Catalogs,
   LocationException,
-  Coordinates,
   Dashboard,
   Zone,
   Specialty,
@@ -72,17 +71,25 @@ function task(value: unknown) {
     order: integer(v.order),
   }
 }
-function coordinates(value: unknown): Coordinates {
+function recordedCoordinates(value: unknown) {
   const v = object(value)
-  const result = {
-    latitude: number(v.latitude),
-    longitude: number(v.longitude),
-    accuracy: number(v.accuracy),
-    capturedAt: number(v.capturedAt),
-  }
-  if (Math.abs(result.latitude) > 90 || Math.abs(result.longitude) > 180 || result.accuracy < 0)
+  const latitude = optional(v.latitude, number)
+  const longitude = optional(v.longitude, number)
+  const accuracy = optional(v.accuracy, number)
+  if (
+    (latitude !== undefined && Math.abs(latitude) > 90) ||
+    (longitude !== undefined && Math.abs(longitude) > 180) ||
+    (accuracy !== undefined && accuracy < 0)
+  )
     incompatible()
-  return result
+  return {
+    latitude,
+    longitude,
+    accuracy,
+    capturedAt: optional(v.capturedAt, number),
+    validated: optional(v.validated, boolean),
+    legacy: optional(v.legacy, boolean),
+  }
 }
 export function mapUser(value: unknown): User {
   const v = object(value)
@@ -147,17 +154,33 @@ export function mapClientSpecialty(value: unknown): ClientSpecialty {
 function exception(value: unknown): LocationException {
   const v = object(value)
   return {
-    id: id(v.id),
+    id: optional(v.id, id),
+    scope:
+      v.scope === undefined ? 'legacy' : choice(v.scope, ['arrival', 'closure', 'form', 'legacy']),
+    telemetry: optional(v.telemetry, (raw) => {
+      const t = object(raw)
+      return {
+        latitude: optional(t.latitude, number) ?? null,
+        longitude: optional(t.longitude, number) ?? null,
+        accuracy: optional(t.accuracy, number) ?? null,
+        capturedAt: optional(t.capturedAt, number) ?? null,
+        distanceMeters: optional(t.distanceMeters, number) ?? null,
+        radiusMeters: optional(t.radiusMeters, number) ?? null,
+        failure: string(t.failure),
+        validated: optional(t.validated, boolean) ?? null,
+      }
+    }),
+    decision: v.approved == null ? 'pending' : boolean(v.approved) ? 'approved' : 'rejected',
     type: choice(v.type, ['time_limit', 'location']),
-    revision: integer(v.revision),
+    revision: optional(v.revision, integer),
     authorId: optional(v.authorId, id),
     reason: string(v.reason),
     failure: string(v.failure),
-    requestedAt: date(v.requestedAt),
+    requestedAt: optional(v.requestedAt, date),
     reviewedAt: optional(v.reviewedAt, date),
     reviewerId: optional(v.reviewerId, id),
     approved: optional(v.approved, boolean),
-    reviewReason: string(v.reviewReason),
+    reviewReason: optional(v.reviewReason, string),
   }
 }
 export function mapVisit(value: unknown): Visit {
@@ -181,6 +204,7 @@ export function mapVisit(value: unknown): Visit {
     'claimed',
     'in_progress',
     'pending_approval',
+    'correction_required',
     'completed',
     'cancelled',
   ])
@@ -227,6 +251,25 @@ export function mapVisit(value: unknown): Visit {
       }
     }),
     status,
+    workStatus: visitWorkStatus(status),
+    phase: choice(v.phase, [
+      'available',
+      'reserved',
+      'scheduled',
+      'physical_work',
+      'physical_finished',
+      'results',
+      'in_review',
+      'correction_required',
+      'finished',
+      'not_performed',
+    ]),
+    occupiesTechnician: boolean(v.occupiesTechnician),
+    readOnly: boolean(v.readOnly),
+    gpsExceptionPending: boolean(v.gpsExceptionPending),
+    physicalEndedAt: optional(v.physicalEndedAt, date),
+    notPerformedAt: optional(v.notPerformedAt, date),
+    previousAttemptId: optional(v.previousAttemptId, id),
     tasks: rows(v.tasks).map(task),
     answers: rows(v.answers).map((raw) => {
       const a = object(raw)
@@ -239,8 +282,8 @@ export function mapVisit(value: unknown): Visit {
     }),
     workDescription: string(v.workDescription),
     evidenceIds: ids(v.evidenceIds),
-    startLocation: optional(v.startLocation, coordinates),
-    endLocation: optional(v.endLocation, coordinates),
+    startLocation: optional(v.startLocation, recordedCoordinates),
+    endLocation: optional(v.endLocation, recordedCoordinates),
     startedAt: optional(v.startedAt, date),
     formOpenedAt: optional(v.formOpenedAt, date),
     expiresAt: optional(v.expiresAt, date),
@@ -263,11 +306,16 @@ export function mapVisit(value: unknown): Visit {
           'review',
           'exception_corrected',
           'exception_reopened',
+          'exception_previous',
         ]),
         exception: exception(entry.exception),
       }
     }),
     exception: optional(v.exception, exception),
+    timeExceptionReason: optional(v.timeExceptionReason, string),
+    timeExceptionStatus: optional(v.timeExceptionStatus, (x) =>
+      choice(x, ['pending', 'approved', 'rejected']),
+    ),
     radiusMeters: radius,
     legacy,
     totalSeconds: optional(v.totalSeconds, number),
@@ -282,6 +330,7 @@ export function mapTicket(value: unknown): Ticket {
     'scheduled',
     'in_progress',
     'pending_approval',
+    'correction_required',
     'resolved',
     'closed',
   ])
@@ -418,6 +467,7 @@ export function mapDashboard(value: unknown): Dashboard {
       scheduled: integer(statuses.scheduled),
       in_progress: integer(statuses.in_progress),
       pending_approval: integer(statuses.pending_approval),
+      correction_required: integer(statuses.correction_required),
       resolved: integer(statuses.resolved),
       closed: integer(statuses.closed),
     },

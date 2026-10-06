@@ -78,15 +78,63 @@ export type Answer = {
   evidenceIds: string[]
 }
 export type VisitStatus =
-  'available' | 'claimed' | 'in_progress' | 'pending_approval' | 'completed' | 'cancelled'
+  | 'available'
+  | 'claimed'
+  | 'in_progress'
+  | 'pending_approval'
+  | 'correction_required'
+  | 'completed'
+  | 'cancelled'
+export type VisitPhase =
+  | 'available'
+  | 'reserved'
+  | 'scheduled'
+  | 'physical_work'
+  | 'physical_finished'
+  | 'results'
+  | 'in_review'
+  | 'correction_required'
+  | 'finished'
+  | 'not_performed'
+export type ExceptionScope = 'arrival' | 'closure' | 'form' | 'legacy'
+export type GpsTelemetry = {
+  latitude: number | null
+  longitude: number | null
+  accuracy: number | null
+  capturedAt: number | null
+  distanceMeters: number | null
+  radiusMeters: number | null
+  failure: string
+  validated: boolean | null
+  legacy?: boolean
+}
+export type ExceptionInput = {
+  type: 'location' | 'time_limit'
+  scope: ExceptionScope
+  reason: string
+  failure?: string
+  location?: Coordinates
+  revision?: number
+}
+export const exceptionLabel = (item: Pick<LocationException, 'type' | 'scope'>): string =>
+  item.type === 'time_limit'
+    ? 'Demora en registro'
+    : item.scope === 'arrival'
+      ? 'GPS de llegada'
+      : item.scope === 'closure'
+        ? 'GPS de cierre'
+        : 'GPS histórico (etapa no registrada)'
 export type LocationException = {
   id?: number
   revision?: number
   authorId?: number
   type: 'location' | 'time_limit'
+  scope: ExceptionScope
+  telemetry?: GpsTelemetry
+  decision?: 'pending' | 'approved' | 'rejected'
   reason: string
   failure: string
-  requestedAt: string
+  requestedAt?: string
   reviewedAt?: string
   reviewerId?: number
   approved?: boolean
@@ -96,7 +144,7 @@ export type ExceptionHistoryEntry = {
   id: string
   at: string
   actorId: number
-  kind: 'exception' | 'review' | 'exception_corrected' | 'exception_reopened'
+  kind: 'exception' | 'review' | 'exception_corrected' | 'exception_reopened' | 'exception_previous'
   exception: LocationException
 }
 export type Visit = {
@@ -123,12 +171,20 @@ export type Visit = {
     text: string
   }[]
   status: VisitStatus
+  phase?: VisitPhase
+  workStatus?: WorkStatus
+  occupiesTechnician?: boolean
+  readOnly?: boolean
+  gpsExceptionPending?: boolean
+  physicalEndedAt?: string
+  notPerformedAt?: string
+  previousAttemptId?: number
   tasks: ChecklistTask[]
   answers: Answer[]
   workDescription: string
   evidenceIds: string[]
-  startLocation?: Coordinates
-  endLocation?: Coordinates
+  startLocation?: Partial<Coordinates> & { legacy?: boolean; validated?: boolean | null }
+  endLocation?: Partial<Coordinates> & { legacy?: boolean; validated?: boolean | null }
   startedAt?: string
   formOpenedAt?: string
   submittedAt?: string
@@ -153,28 +209,48 @@ export type Visit = {
 export function registrationEditable(visit: Visit): boolean {
   return Boolean(
     visit.formOpenedAt &&
-    (visit.status === 'in_progress' ||
-      (visit.status === 'pending_approval' &&
-        (!visit.submittedAt || visit.exceptions?.some((item) => item.approved === false)))),
+    !visit.readOnly &&
+    (visit.phase === 'results' || visit.phase === 'correction_required') &&
+    visit.status !== 'completed' &&
+    visit.status !== 'cancelled',
   )
+}
+export function operationalVisitLabel(visit: Visit): string {
+  if (visit.status === 'pending_approval' && !(visit.phase === 'in_review' && visit.submittedAt))
+    return visit.phase === 'physical_work'
+      ? 'Trabajo físico en curso'
+      : visit.phase === 'physical_finished'
+        ? 'Trabajo físico terminado'
+        : 'Registro pendiente de envío'
+  return visit.phase === 'correction_required'
+    ? 'Corrección requerida'
+    : visitStatusLabels[visit.status]
 }
 export type ReviewSubmission = {
   revision: number
-  location?: Coordinates
-  exceptions: {
-    type: 'time_limit' | 'location'
-    reason: string
-    failure?: string
-    revision?: number
-  }[]
+  exceptions: ExceptionInput[]
+}
+export type WorkRecovery = {
+  activeExecution?: Visit
+  reservations: Visit[]
+  corrections: Visit[]
+  inReview: Visit[]
 }
 export type TicketStatus =
-  'open' | 'scheduled' | 'in_progress' | 'pending_approval' | 'resolved' | 'closed'
-export type WorkStatus = 'pending' | 'in_progress' | 'in_review' | 'finished' | 'cancelled'
+  | 'open'
+  | 'scheduled'
+  | 'in_progress'
+  | 'pending_approval'
+  | 'correction_required'
+  | 'resolved'
+  | 'closed'
+export type WorkStatus =
+  'pending' | 'in_progress' | 'in_review' | 'correction_required' | 'finished' | 'cancelled'
 export const workStatusLabels: Record<WorkStatus, string> = {
   pending: 'Pendiente',
   in_progress: 'En proceso',
   in_review: 'En revisión',
+  correction_required: 'Corrección requerida',
   finished: 'Finalizado',
   cancelled: 'No realizada',
 }
@@ -182,6 +258,7 @@ export const workStatusOptions: { value: WorkStatus; label: string }[] = [
   { value: 'pending', label: workStatusLabels.pending },
   { value: 'in_progress', label: workStatusLabels.in_progress },
   { value: 'in_review', label: workStatusLabels.in_review },
+  { value: 'correction_required', label: workStatusLabels.correction_required },
   { value: 'finished', label: workStatusLabels.finished },
 ]
 const ticketWorkStatuses: Record<TicketStatus, WorkStatus> = {
@@ -189,6 +266,7 @@ const ticketWorkStatuses: Record<TicketStatus, WorkStatus> = {
   scheduled: 'pending',
   in_progress: 'in_progress',
   pending_approval: 'in_review',
+  correction_required: 'correction_required',
   resolved: 'finished',
   closed: 'finished',
 }
@@ -197,6 +275,7 @@ const visitWorkStatuses: Record<VisitStatus, WorkStatus> = {
   claimed: 'pending',
   in_progress: 'in_progress',
   pending_approval: 'in_review',
+  correction_required: 'correction_required',
   completed: 'finished',
   cancelled: 'cancelled',
 }
@@ -207,6 +286,7 @@ export const ticketStatusLabels: Record<TicketStatus, string> = {
   scheduled: workStatusLabels.pending,
   in_progress: workStatusLabels.in_progress,
   pending_approval: workStatusLabels.in_review,
+  correction_required: workStatusLabels.correction_required,
   resolved: workStatusLabels.finished,
   closed: workStatusLabels.finished,
 }
@@ -215,6 +295,7 @@ export const visitStatusLabels: Record<VisitStatus, string> = {
   claimed: workStatusLabels.pending,
   in_progress: workStatusLabels.in_progress,
   pending_approval: workStatusLabels.in_review,
+  correction_required: workStatusLabels.correction_required,
   completed: workStatusLabels.finished,
   cancelled: workStatusLabels.cancelled,
 }

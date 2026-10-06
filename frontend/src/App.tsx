@@ -28,6 +28,7 @@ const Scheduling = lazy(() => import('./pages/TechnicalSupervisorVisitsPage'))
 const Incident = lazy(() => import('./pages/TechnicalSupervisorIncidentDetailPage'))
 const Completed = lazy(() => import('./pages/TechnicalSupervisorCompletedPage'))
 const ReviewList = lazy(() => import('./pages/TechnicalSupervisorChecklistsPage'))
+const PendingReviews = lazy(() => import('./pages/PendingReviewsPage'))
 const Review = lazy(() => import('./pages/TechnicalSupervisorChecklistDetailPage'))
 const Admin = lazy(() => import('./features/administration/AdministrationPage'))
 const Reports = lazy(() => import('./pages/ReportsPage'))
@@ -154,6 +155,7 @@ const router = createBrowserRouter([
                   { path: '/technical-supervisor/incidents/:id', element: <Incident /> },
                   { path: '/technical-supervisor/incidents/completed', element: <Completed /> },
                   { path: '/technical-supervisor/checklists', element: <ReviewList /> },
+                  { path: '/technical-supervisor/reviews', element: <PendingReviews /> },
                   { path: '/technical-supervisor/checklists/:id', element: <Review /> },
                 ],
               },

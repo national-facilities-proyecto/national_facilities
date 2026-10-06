@@ -184,6 +184,20 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       },
     },
     visits: {
+      async recovery(options) {
+        const raw = object(await request('/visitas/recuperacion/', { signal: options?.signal }))
+        return {
+          activeExecution: raw.activeExecution == null ? undefined : mapVisit(raw.activeExecution),
+          reservations: rows(raw.reservations).map(mapVisit),
+          corrections: rows(raw.corrections).map(mapVisit),
+          inReview: rows(raw.inReview).map(mapVisit),
+        }
+      },
+      async pendingReviews(options) {
+        return rows(await request('/revisiones/pendientes/', { signal: options?.signal })).map(
+          mapVisit,
+        )
+      },
       async list(options) {
         return rows(await request('/visitas/programadas/', { signal: options?.signal })).map(
           mapVisit,
@@ -195,28 +209,39 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async start(id, location) {
         return mapVisit(await mutate('/visitas/' + id + '/iniciar/', { location }))
       },
-      async openForm(id, location, failure) {
-        return mapVisit(
-          await mutate('/visitas/' + id + '/formulario/', location ? { location } : { failure }),
-        )
+      async openForm(id) {
+        return mapVisit(await mutate('/visitas/' + id + '/formulario/', {}))
       },
       async recordEndGps(id, location) {
         return mapVisit(await mutate('/visitas/' + id + '/ubicacion-cierre/', { location }))
       },
       async submitReview(id, input) {
-        return mapVisit(await mutate('/visitas/' + id + '/enviar-revision/', input))
-      },
-      async complete(id, location) {
-        return mapVisit(await mutate('/visitas/' + id + '/finalizar/', { location }))
-      },
-      async requestException(id, reason, failure) {
         return mapVisit(
-          await mutate('/visitas/' + id + '/excepciones/', { type: 'location', reason, failure }),
+          await mutate('/visitas/' + id + '/enviar-revision/', {
+            revision: input.revision,
+            exceptions: input.exceptions,
+          }),
         )
       },
-      async requestTimeException(id, reason) {
+      async complete(id, input) {
         return mapVisit(
-          await mutate('/visitas/' + id + '/excepciones/', { type: 'time_limit', reason }),
+          await mutate('/visitas/' + id + '/finalizar/', {
+            revision: input.revision,
+            exceptions: input.exceptions,
+          }),
+        )
+      },
+      async requestException(id, input) {
+        return mapVisit(await mutate('/visitas/' + id + '/excepciones/', input))
+      },
+      async requestTimeException(id, reason, revision) {
+        return mapVisit(
+          await mutate('/visitas/' + id + '/excepciones/', {
+            type: 'time_limit',
+            scope: 'form',
+            reason,
+            revision,
+          }),
         )
       },
       async reviewException(id, approved, reason, exceptionId, versions) {
