@@ -463,12 +463,13 @@ test('administración crea una plantilla real y conserva sus tareas al recargar'
   await expect(page.getByText(new RegExp(name)).first()).toBeVisible()
 })
 
-test('administración: cliente, tienda, contrato, usuario, asignación y contraseñas reales', async ({
+test('administración: cliente, tienda, contrato, usuario, cobertura y contraseñas reales', async ({
   page,
   request,
 }) => {
   const suffix = crypto.randomUUID().slice(0, 8)
   const clientName = 'E2E client ' + suffix
+  const zoneName = 'E2E zone ' + suffix
   const storeName = 'E2E store ' + suffix
   const username = 'e2e-' + suffix
   const save = async () => {
@@ -485,6 +486,12 @@ test('administración: cliente, tienda, contrato, usuario, asignación y contras
   await save()
   await page.reload()
   await expect(page.getByText(clientName, { exact: false }).first()).toBeVisible()
+  await page.goto('/admin/zones')
+  await page.getByRole('button', { name: 'Crear registro', exact: true }).click()
+  await page.getByLabel('Cliente', { exact: true }).selectOption({ label: clientName })
+  await page.getByLabel('Nombre de zona', { exact: true }).fill(zoneName)
+  await save()
+  await expect(page.getByText(zoneName, { exact: true }).first()).toBeVisible()
   await page.goto('/admin/stores')
   await page.getByRole('button', { name: 'Crear registro', exact: true }).click()
   await page.getByLabel('Nombre de tienda').fill(storeName)
@@ -493,6 +500,7 @@ test('administración: cliente, tienda, contrato, usuario, asignación y contras
   await page.getByLabel('Latitud').fill('-12.173900')
   await page.getByLabel('Longitud').fill('-77.018100')
   await page.getByLabel('Cliente', { exact: true }).selectOption({ label: clientName })
+  await page.getByLabel('Zona', { exact: true }).selectOption({ label: zoneName })
   await save()
   await page.goto('/admin/contracts')
   await page.getByRole('button', { name: 'Crear registro', exact: true }).click()
@@ -507,7 +515,11 @@ test('administración: cliente, tienda, contrato, usuario, asignación y contras
   await dialog.getByLabel('Contraseña inicial (obligatoria al crear)').fill(initialPassword)
   await dialog.getByLabel('Nombre completo').fill('New Technician ' + suffix)
   await dialog.getByLabel('Correo', { exact: true }).fill(username + '@test.invalid')
-  await dialog.getByLabel(storeName, { exact: true }).check()
+  await dialog.getByRole('button', { name: 'Añadir cobertura', exact: true }).click()
+  await dialog
+    .getByLabel('Cliente de cobertura 1', { exact: true })
+    .selectOption({ label: clientName })
+  await dialog.getByLabel('Zona de cobertura 1', { exact: true }).selectOption({ label: zoneName })
   await save()
   const adminToken = await access(request, 'admin')
   const raw = await call(request, '/admin/usuarios/', adminToken)
