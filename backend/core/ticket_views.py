@@ -25,13 +25,13 @@ class ScheduleInputSerializer(serializers.Serializer):
     technicianId = serializers.IntegerField(min_value=1)
     scheduledAt = serializers.DateTimeField()
     priorityId = serializers.PrimaryKeyRelatedField(queryset=NivelUrgencia.objects.all())
-    reason = serializers.CharField(max_length=500, allow_blank=True)
+    reason = serializers.CharField(max_length=500, allow_blank=True, required=False, default="")
     revision = serializers.IntegerField(min_value=0)
 
 
 class TicketListCreateView(APIView):
     def get(self, request):
-        return Response([ticket_data(t) for t in visible_tickets(request.user).order_by("-creado_en", "-pk")])
+        return Response([ticket_data(t, user=request.user) for t in visible_tickets(request.user).order_by("-creado_en", "-pk")])
 
     def post(self, request):
         if rol_de(request.user) != "store_supervisor":
@@ -56,13 +56,13 @@ class TicketListCreateView(APIView):
                 evidence.ticket = ticket
                 evidence.save(update_fields=["ticket"])
             Evento.objects.create(ticket=ticket, actor=request.user, tipo="report", texto="Incidencia reportada")
-            return ticket_data(ticket)
+            return ticket_data(ticket, user=request.user)
         return Response(idempotent(request, work), status=201)
 
 
 class TicketDetailView(APIView):
     def get(self, request, pk):
-        return Response(ticket_data(get_object_or_404(visible_tickets(request.user), pk=pk)))
+        return Response(ticket_data(get_object_or_404(visible_tickets(request.user), pk=pk), user=request.user))
 
 
 class ScheduleView(APIView):
@@ -70,31 +70,38 @@ class ScheduleView(APIView):
         if rol_de(request.user) != "account_supervisor":
             raise PermissionDenied("Solo el supervisor de cuenta puede programar.")
         def work():
+            serializer = ScheduleInputSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
+            # Mismo orden de bloqueo que llegada/evidencias: técnico -> ticket -> visita.
+            technician = get_object_or_404(Usuario.objects.select_for_update(no_key=True), pk=data["technicianId"])
             if Ticket.objects.filter(pk=pk, tienda__zona_id=None,
                 tienda__cliente_id__in=request.user.coberturas.filter(activo=True, zona__activo=True).values("cliente_id")).exists():
                 raise ValidationError({"storeId": "La tienda no tiene zona. Administración debe asignarla antes de programar."})
             ticket = get_object_or_404(visible_tickets(request.user).select_for_update(of=("self",)), pk=pk)
-            serializer = ScheduleInputSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
             if ticket.revision != data["revision"]:
                 raise Conflict("Otra programación fue registrada. Actualiza el ticket.")
             if TICKET_WORK_STATUS.get(ticket.estado) != "pending":
                 raise Conflict("Solo se puede programar o cambiar de técnico un ticket en estado Pendiente.")
             scheduled = data["scheduledAt"]
+            prior_visits = list(ticket.visitas_generadas.select_for_update().filter(vigente=True))
+            if any(previous.iniciado_en for previous in prior_visits):
+                raise Conflict("La atención ya inició; no se reasigna ni reprograma esa ejecución.")
+            same = (ticket.tecnico_asignado_id == technician.pk and ticket.fecha_programada == scheduled and ticket.urgencia_id == data["priorityId"].pk)
+            if same and prior_visits:
+                return ticket_data(ticket, user=request.user)
             if scheduled < timezone.now():
                 raise ValidationError({"scheduledAt": "La programación debe ser futura."})
-            technician = get_object_or_404(Usuario.objects.filter(is_active=True).select_for_update(), pk=data["technicianId"])
             if ticket.tienda.zona_id is None:
                 raise ValidationError({"storeId": "La tienda no tiene zona. Administración debe asignarla antes de programar."})
-            if rol_de(technician) != "technician" or not tecnicos_elegibles_para(ticket.tienda).filter(pk=technician.pk).exists():
+            if not technician.is_active or rol_de(technician) != "technician" or not tecnicos_elegibles_para(ticket.tienda).filter(pk=technician.pk).exists():
                 raise ValidationError({"technicianId": "Técnico sin cobertura activa para el Cliente + Zona de la tienda."})
-            if ticket.tecnico_asignado_id and len(data["reason"].strip()) < 10:
+            source = prior_visits[0] if prior_visits else ticket.visitas_generadas.order_by("-pk").first()
+            if source and not same and len(data["reason"].strip()) < 10:
                 raise ValidationError({"reason": "Reprogramar o reasignar requiere motivo de al menos 10 caracteres."})
-            contract = applicable_contract(ticket.tienda, timezone.localdate(scheduled))
+            contract = applicable_contract(ticket.tienda, timezone.localdate(scheduled)) if source is None else None
             old = {"technicianId": ticket.tecnico_asignado_id, "scheduledAt": ticket.fecha_programada.isoformat() if ticket.fecha_programada else None,
                    "priorityId": ticket.urgencia_id}
-            prior_visits = list(ticket.visitas_generadas.select_for_update().filter(vigente=True))
             for previous in prior_visits:
                 if previous.iniciado_en:
                     raise Conflict("La atención ya inició; conserva su técnico y ejecución. Solo se reasigna estando Pendiente.")
@@ -104,7 +111,15 @@ class ScheduleView(APIView):
                 event(request.user, previous, "invalidate", "Programación sustituida", {"reason": data["reason"]})
             visit = Visita(tienda=ticket.tienda, origen="ticket", ticket_origen=ticket, tecnico=technician,
                            fecha_programada=scheduled, estado="programada")
-            snapshot(visit, contract)
+            if source is None:
+                snapshot(visit, contract)
+            else:
+                if not source.radio_metros or not source.tienda_snapshot:
+                    raise Conflict("La programación histórica carece de snapshot; requiere revisión explícita.")
+                visit.contrato_id = source.contrato_id
+                visit.radio_metros = source.radio_metros
+                visit.tienda_snapshot = source.tienda_snapshot
+                visit.minimo_mensual_snapshot = source.minimo_mensual_snapshot
             visit.save()
             ReasignacionTicket.objects.create(ticket=ticket, tecnico_anterior=ticket.tecnico_asignado,
                 tecnico_nuevo=technician, reasignado_por=request.user, motivo=data["reason"],
@@ -112,6 +127,7 @@ class ScheduleView(APIView):
                 urgencia_anterior=ticket.urgencia, urgencia_nueva=data["priorityId"])
             ticket.tecnico_asignado = technician
             ticket.fecha_programada = scheduled
+            ticket.asignado_en = timezone.now()
             ticket.urgencia = data["priorityId"]
             ticket.estado = "programado"
             ticket.revision += 1
@@ -119,7 +135,7 @@ class ScheduleView(APIView):
             event(request.user, visit, "schedule", "Ticket programado" if not old["technicianId"] else "Ticket reprogramado / reasignado",
                   {"previous": old, "next": {"technicianId": technician.pk, "scheduledAt": scheduled.isoformat(),
                     "priorityId": ticket.urgencia_id}, "reason": data["reason"]})
-            return ticket_data(ticket)
+            return ticket_data(ticket, user=request.user)
         return Response(idempotent(request, work))
 
 
@@ -131,5 +147,5 @@ class CloseTicketView(APIView):
                 raise Conflict("La resolución o su revisión todavía no fue aceptada.")
             # Compatibilidad: Finalizado es terminal; no crea una segunda etapa
             # ni inventa una fecha adicional de fin físico o confirmación.
-            return ticket_data(ticket)
+            return ticket_data(ticket, user=request.user)
         return Response(idempotent(request, work))

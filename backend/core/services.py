@@ -1,14 +1,15 @@
 from datetime import timedelta
 import hashlib
 import json
-import math
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, F
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
-from .models import Visita, Ticket, Operacion, Evento, Evidencia, Tienda, Contrato, Checklist, PlantillaChecklist
+from .models import Visita, Ticket, Operacion, Evento, Evidencia, Tienda, Contrato, Checklist, PlantillaChecklist, Usuario
 from .permissions import rol_de, tiendas_visibles_para, visitas_continuables_para
+from .gps import validate_gps, evaluate_gps, DEVICE_FAILURES
+from .workflow import FORM_DURATION
 
 
 class Conflict(APIException):
@@ -25,9 +26,10 @@ def idempotent(request, work):
     with transaction.atomic():
         operation, _ = Operacion.objects.get_or_create(
             usuario=request.user, clave=key,
-            defaults={"accion": request.path, "huella": fingerprint})
+            defaults={"accion": request.method + " " + request.path, "huella": fingerprint})
         operation = Operacion.objects.select_for_update().get(pk=operation.pk)
-        if operation.accion != request.path or operation.huella != fingerprint:
+        legacy_post = operation.accion == request.path and request.method == "POST"
+        if (operation.accion != request.method + " " + request.path and not legacy_post) or operation.huella != fingerprint:
             raise Conflict("La clave ya se usó para una operación diferente.")
         if operation.respuesta is not None:
             cached = operation.respuesta
@@ -39,10 +41,10 @@ def idempotent(request, work):
                 raise PermissionDenied("La ejecución ya no está disponible para este usuario.")
             if cached.get("origin") in ("ticket", "checklist"):
                 from .serializers import visit_data
-                return visit_data(visible_visits(request.user).get(pk=cached["id"]))
+                return visit_data(visible_visits(request.user).get(pk=cached["id"]), user=request.user)
             if request.path.startswith("/api/tickets/") and cached.get("id"):
                 from .serializers import ticket_data
-                return ticket_data(get_object_or_404(visible_tickets(request.user), pk=cached["id"]))
+                return ticket_data(get_object_or_404(visible_tickets(request.user), pk=cached["id"]), user=request.user)
             return operation.respuesta
         data = work()
         # Serializers pueden contener Decimal, UUID o ReturnDict.
@@ -57,8 +59,9 @@ def visible_visits(user):
     if rol_de(user) == "technician":
         today = timezone.localdate()
         month = today.replace(day=1)
-        queryset = queryset.filter(vigente=True).filter(
-            Q(tecnico=user) | Q(origen="checklist", tecnico__isnull=True, periodo=month, estado="programada"))
+        queryset = queryset.filter(
+            Q(tecnico=user, vigente=True) | Q(tecnico=user, estado="no_realizada", no_realizada_en__isnull=False) |
+            Q(origen="checklist", vigente=True, tecnico__isnull=True, periodo=month, estado="programada"))
     if rol_de(user) == "store_supervisor":
         queryset = queryset.filter(origen="ticket")
     return queryset
@@ -75,13 +78,18 @@ def visible_tickets(user):
 def locked_visit(user, pk, owner=True):
     # Todas las acciones de un ticket toman primero el ticket y luego la visita,
     # igual que programación. Reevalúa el alcance después de esperar el bloqueo.
+    if owner:
+        # Orden común: usuario (NO KEY UPDATE) -> ticket -> visita -> evidencia.
+        live_user = Usuario.objects.select_for_update(no_key=True).get(pk=user.pk)
+        if not live_user.is_active or rol_de(live_user) != "technician":
+            raise PermissionDenied("La cuenta no admite ejecución técnica.")
     reference = get_object_or_404(visible_visits(user), pk=pk)
     if reference.ticket_origen_id:
         Ticket.objects.select_for_update().get(pk=reference.ticket_origen_id)
     visit = get_object_or_404(visible_visits(user).select_for_update(of=("self",)), pk=pk)
     if owner and (rol_de(user) != "technician" or visit.tecnico_id != user.pk or not visit.vigente):
         raise PermissionDenied("Solo el técnico vigente puede ejecutar esta visita.")
-    if owner and not visit.tienda.activo:
+    if owner and not visit.iniciado_en and not visit.tienda.activo:
         raise PermissionDenied("La tienda está inactiva.")
     return visit
 
@@ -89,36 +97,6 @@ def locked_visit(user, pk, owner=True):
 def event(user, visit, kind, text, data=None):
     Evento.objects.create(actor=user, visita=visit, ticket=visit.ticket_origen,
                           tipo=kind, texto=text, datos=data or {})
-
-
-def validate_gps(data, visit):
-    if not isinstance(data, dict):
-        raise ValidationError({"location": "Se requiere una lectura GPS."})
-    values = {}
-    for key in ("latitude", "longitude", "accuracy", "capturedAt"):
-        value = data.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-            raise ValidationError({"location": f"{key}: debe ser un número finito."})
-        values[key] = value
-    if abs(values["latitude"]) > 90 or abs(values["longitude"]) > 180 or values["accuracy"] < 0:
-        raise ValidationError({"location": "Coordenadas o precisión inválidas."})
-    # Alineado con los controles GPS ya existentes del frontend de esta rama.
-    now_ms = timezone.now().timestamp() * 1000
-    if now_ms - values["capturedAt"] > 60000 or values["capturedAt"] > now_ms + 5000:
-        raise ValidationError({"location": "La lectura GPS caducó. Solicita una nueva."})
-    radius = visit.radio_metros
-    if not radius or not visit.tienda_snapshot:
-        raise Conflict("Esta ejecución histórica carece de contrato/GPS registrado; requiere revisión.")
-    if values["accuracy"] > min(radius, 100):
-        raise ValidationError({"location": "Precisión insuficiente para el radio contractual."})
-    lat = float(visit.tienda_snapshot["latitude"])
-    lon = float(visit.tienda_snapshot["longitude"])
-    rad = math.pi / 180
-    a = math.sin((lat-values["latitude"])*rad/2)**2 + math.cos(lat*rad)*math.cos(values["latitude"]*rad)*math.sin((lon-values["longitude"])*rad/2)**2
-    distance = 6371000 * 2 * math.atan2(math.sqrt(a), math.sqrt(max(0, 1-a)))
-    if distance > radius:
-        raise ValidationError({"location": f"Fuera del radio permitido: {distance:.1f} m / {radius} m."})
-    return {**values, "distanceMeters": round(distance, 2), "radiusMeters": radius, "validated": True}
 
 
 def require_execution(visit, form=False):
@@ -129,15 +107,20 @@ def require_execution(visit, form=False):
 
 
 def registration_editable(visit):
-    return bool(visit.iniciado_en and visit.formulario_abierto_en and (
-        (visit.estado == "en_curso" and not visit.enviado_en) or
-        (visit.estado == "pendiente_validacion" and (
-            not visit.enviado_en or visit.excepciones.filter(decision="rejected").exists()))))
+    return bool(visit.iniciado_en and visit.terminado_en and visit.formulario_abierto_en and (
+        (visit.estado == "en_curso" and not visit.enviado_en) or visit.estado == "correccion_requerida"))
 
 
 def require_registration_editable(visit):
     if not registration_editable(visit):
-        raise Conflict("El registro enviado está protegido. Una revisión rechazada permite corregirlo en la misma ejecución.")
+        raise Conflict("El registro solo es editable tras el fin físico o en Corrección requerida; En revisión es solo lectura.")
+
+
+def require_evidence_editable(visit):
+    if not visit.iniciado_en or visit.estado not in ("en_curso", "correccion_requerida"):
+        raise Conflict("La ejecución no admite cambios de evidencia.")
+    if visit.estado == "en_curso" and visit.enviado_en:
+        raise Conflict("El registro enviado está protegido.")
 
 
 def audit_exception(user, visit, exception, kind, text):
@@ -148,63 +131,177 @@ def audit_exception(user, visit, exception, kind, text):
 
 
 def prepare_registration_edit(user, visit):
-    """Reabrir tras rechazo conserva el envío y decisiones anteriores en eventos."""
-    if visit.estado != "pendiente_validacion" or not visit.enviado_en:
+    # El envío anterior y las aprobaciones independientes nunca se borran.
+    if visit.estado == "correccion_requerida":
+        from .serializers import visit_data
+        snapshot = visit_data(visit)
+        event(user, visit, "correction_edit", "Edición de la misma ejecución tras rechazo",
+            {"submittedAt": visit.enviado_en.isoformat() if visit.enviado_en else None,
+             "draftRevision": visit.borrador_revision, "workDescription": visit.descripcion_trabajo,
+             "answers": snapshot["answers"], "evidenceIds": snapshot["evidenceIds"]})
+
+
+def set_ticket_state(visit, state, completed_at=None):
+    if visit.ticket_origen_id:
+        values = {"estado": state}
+        if completed_at is not None:
+            values["resuelto_en"] = completed_at
+        Ticket.objects.filter(pk=visit.ticket_origen_id).update(**values)
+
+
+def persist_arrival(user, visit, location):
+    visit.iniciado_en = timezone.now()
+    ensure_startable(user, visit, at=visit.iniciado_en)
+    visit.ubicacion_inicio = location
+    visit.estado = "en_curso"
+    if location["validated"]:
+        visit.latitud_inicio = location["latitude"]
+        visit.longitud_inicio = location["longitude"]
+        visit.distancia_inicio_metros = location["distanceMeters"]
+        visit.proximidad_inicio_validada = True
+    visit.save()
+    set_ticket_state(visit, "en_proceso")
+    event(user, visit, "start", "Llegada registrada" if location["validated"] else "Llegada bajo excepción pendiente", {"location": location})
+
+
+def persist_physical_end(user, visit, location):
+    # Nunca se sustituye un cierre físico ya confirmado, ni siquiera al corregir.
+    if visit.terminado_en:
         return
-    require_registration_editable(visit)
-    from .serializers import visit_data
-    snapshot = visit_data(visit)
-    event(user, visit, "correction_started", "Corrección del registro tras rechazo",
-          {"submittedAt": visit.enviado_en.isoformat(), "draftRevision": visit.borrador_revision,
-           "workDescription": visit.descripcion_trabajo, "answers": snapshot["answers"],
-           "evidenceIds": snapshot["evidenceIds"], "location": visit.ubicacion_cierre})
-    visit.enviado_en = None
-    visit.save(update_fields=["enviado_en"])
-    for exception in visit.excepciones.filter(decision="approved"):
-        # La aprobación anterior no autoriza contenido corregido posterior.
-        exception.revision += 1
-        exception.decision = "pending"
-        exception.revisada_en = None
-        exception.revisor = None
-        exception.motivo_decision = ""
-        exception.save()
-        audit_exception(user, visit, exception, "exception_reopened", "Nueva revisión del contenido corregido: "+exception.tipo)
+    require_execution(visit)
+    visit.terminado_en = timezone.now()
+    visit.ubicacion_cierre = location
+    if location["validated"]:
+        visit.latitud_cierre = location["latitude"]
+        visit.longitud_cierre = location["longitude"]
+        visit.distancia_medida_metros = location["distanceMeters"]
+        visit.proximidad_validada = True
+    visit.save()
+    event(user, visit, "physical_end", "Recorrido terminado" if visit.origen == "checklist" else "Atención terminada",
+          {"physicalEndedAt": visit.terminado_en.isoformat(), "location": location})
 
 
 def request_or_correct_exception(user, visit, data):
     from .models import Excepcion
+    scope = data["scope"]
+    existing = visit.excepciones.filter(tipo=data["type"], scope=scope).first()
+    if visit.estado not in ("programada", "en_curso", "correccion_requerida"):
+        raise Conflict("Solo se solicitan excepciones antes del envío o durante Corrección requerida.")
+    if scope == "legacy" and not existing:
+        raise ValidationError({"scope": "Legacy se reserva para corregir una excepción histórica existente."})
+    telemetry = existing.telemetria if existing else None
     if data["type"] == "time_limit":
-        if timezone.now() < visit.formulario_vence_en:
-            raise ValidationError({"reason": "El formulario todavía está dentro del plazo."})
-    elif data.get("failure") not in ("denied", "timeout", "unavailable"):
-        raise ValidationError({"failure": "Solo se admite GPS no disponible al cierre."})
-    existing = visit.excepciones.filter(tipo=data["type"]).first()
+        if not visit.formulario_vence_en or timezone.now() < visit.formulario_vence_en:
+            raise ValidationError({"reason": "El formulario todavía no ha vencido o no está abierto."})
+        if not visit.iniciado_en or not visit.terminado_en:
+            raise Conflict("La demora corresponde al registro posterior al trabajo físico.")
+    else:
+        if scope == "arrival" and not existing:
+            if visit.iniciado_en:
+                raise Conflict("La llegada ya está registrada; no se reemplaza su evidencia física.")
+            ensure_startable(user, visit)
+        if scope == "closure" and not existing:
+            require_execution(visit)
+            if visit.terminado_en:
+                raise Conflict("El cierre físico ya está confirmado; no se reemplaza.")
+            if visit.formulario_abierto_en:
+                raise Conflict("El formulario histórico carece de fin físico registrado; requiere revisión sin inventar timestamps.")
+        if "location" in data or not existing:
+            telemetry = evaluate_gps(data.get("location"), visit, data.get("failure", ""))
+            if telemetry["validated"] or telemetry["failure"] not in (*DEVICE_FAILURES, "out_of_radius", "low_accuracy"):
+                raise ValidationError({"location": "Solicita una lectura fresca normal o una excepción por fallo GPS, radio o precisión."})
+    if existing and data["type"] == "location" and "location" not in data:
+        # Conservar la lectura histórica no descarta una corrección explícita de causa.
+        failure = data.get("failure", existing.fallo)
+    else:
+        failure = telemetry["failure"] if telemetry else data.get("failure", existing.fallo if existing else "")
     if existing:
-        same = existing.motivo == data["reason"] and existing.fallo == data.get("failure", "")
-        if same and existing.decision != "rejected":
+        same = existing.motivo == data["reason"] and existing.fallo == failure and existing.telemetria == telemetry
+        if same:
+            if existing.decision == "rejected":
+                raise ValidationError({"reason": "La excepción rechazada exige una corrección real y versionada."})
             return existing
-        require_registration_editable(visit)
         if data.get("revision") != existing.revision:
-            raise Conflict("La justificación cambió; recarga la revisión antes de corregirla.")
-        prepare_registration_edit(user, visit)
+            raise Conflict("La excepción cambió; consulta su versión antes de corregirla.")
+        audit_exception(user, visit, existing, "exception_previous", "Versión y decisión anteriores a la corrección")
         existing.revision += 1
-        existing.motivo = data["reason"]
-        existing.fallo = data.get("failure", "")
+        existing.motivo, existing.fallo, existing.telemetria = data["reason"], failure, telemetry
         existing.autor = user
         existing.solicitada_en = timezone.now()
         existing.decision = "pending"
-        existing.revisada_en = None
-        existing.revisor = None
+        existing.revisada_en = existing.revisor = None
         existing.motivo_decision = ""
         existing.save()
-        audit_exception(user, visit, existing, "exception_corrected", "Justificación corregida: "+existing.tipo)
+        audit_exception(user, visit, existing, "exception_corrected", "Excepción corregida: " + scope)
         return existing
-    exception = Excepcion.objects.create(visita=visit, tipo=data["type"], autor=user,
-        motivo=data["reason"], fallo=data.get("failure", ""))
-    audit_exception(user, visit, exception, "exception", "Solicitud de revisión: "+exception.tipo)
+    exception = Excepcion.objects.create(visita=visit, tipo=data["type"], scope=scope, telemetria=telemetry,
+        autor=user, motivo=data["reason"], fallo=failure)
+    audit_exception(user, visit, exception, "exception", "Excepción solicitada: " + scope)
+    if scope == "arrival":
+        persist_arrival(user, visit, telemetry)
+    elif scope == "closure":
+        persist_physical_end(user, visit, telemetry)
     return exception
 
 
+@transaction.atomic
+def request_exception(user, pk, raw):
+    from .input_serializers import ExceptionInputSerializer
+    visit = locked_visit(user, pk)
+    serializer = ExceptionInputSerializer(data=raw)
+    serializer.is_valid(raise_exception=True)
+    request_or_correct_exception(user, visit, serializer.validated_data)
+    return visit
+
+
+def validate_persisted_closure(visit):
+    if not visit.terminado_en:
+        raise Conflict("Registra primero el fin físico y su GPS de cierre o excepción.")
+    normal = bool(visit.ubicacion_cierre and visit.ubicacion_cierre.get("validated") is True)
+    if not normal and not visit.excepciones.filter(tipo="location", scope="closure").exists():
+        raise ValidationError({"location": "No hay cierre GPS validado ni excepción de cierre registrada."})
+
+
+def finalize(user, visit, kind):
+    visit.completado_en = timezone.now()
+    visit.estado = "completada"
+    visit.save(update_fields=["estado", "completado_en"])
+    set_ticket_state(visit, "resuelto", visit.completado_en)
+    event(user, visit, kind, "Finalización aceptada", {"draftRevision": visit.borrador_revision,
+          "submittedAt": visit.enviado_en.isoformat(), "physicalEndedAt": visit.terminado_en.isoformat()})
+
+
+def accept_submission(user, visit, review=False):
+    require_registration_editable(visit)
+    validate_content(visit)
+    validate_persisted_closure(visit)
+    accepted_at = timezone.now()
+    if accepted_at >= visit.formulario_vence_en and not visit.excepciones.filter(tipo="time_limit", scope__in=("form", "legacy")).exists():
+        raise Conflict({"detail": "Venció el formulario. Completa el borrador y registra una excepción de tiempo.", "code": "form_expired"})
+    if visit.excepciones.filter(decision="rejected").exists():
+        raise ValidationError({"exceptions": "Corrige realmente todas las excepciones rechazadas antes de reenviar."})
+    pending = visit.excepciones.filter(decision="pending").exists()
+    if pending and not review:
+        raise Conflict("Existen excepciones pendientes; envía explícitamente a revisión.")
+    if review and not visit.excepciones.exists():
+        raise ValidationError({"exceptions": "Sin excepciones corresponde finalización normal."})
+    previous_submission = visit.enviado_en
+    visit.enviado_en = accepted_at
+    visit.save(update_fields=["enviado_en"])
+    event(user, visit, "review_submission" if pending else "submission", "Registro completo enviado explícitamente",
+          {"draftRevision": visit.borrador_revision, "submittedAt": accepted_at.isoformat(),
+           "previousSubmittedAt": previous_submission.isoformat() if previous_submission else None,
+           "exceptionVersions": [{"id": e.pk, "revision": e.revision, "decision": e.decision} for e in visit.excepciones.all()]})
+    if pending:
+        visit.estado = "pendiente_validacion"
+        visit.save(update_fields=["estado"])
+        set_ticket_state(visit, "pendiente_validacion")
+    else:
+        finalize(user, visit, "complete")
+    return visit
+
+
+@transaction.atomic
 def submit_review(user, pk, raw):
     from .input_serializers import ReviewSubmissionSerializer
     visit = locked_visit(user, pk)
@@ -212,89 +309,76 @@ def submit_review(user, pk, raw):
     serializer.is_valid(raise_exception=True)
     data = serializer.validated_data
     if data["revision"] != visit.borrador_revision:
-        raise Conflict("Existe un registro más reciente. Conserva tu editor y concilia antes de enviar.")
-    if visit.estado == "completada":
+        raise Conflict("Existe un registro más reciente; concilia antes de enviar.")
+    if visit.estado in ("completada", "pendiente_validacion") and visit.enviado_en:
         return visit
-    if visit.estado == "pendiente_validacion" and visit.enviado_en and not visit.excepciones.filter(decision="rejected").exists():
-        return visit  # Reintento aceptado, sin segundo envío ni decisiones nuevas.
     require_registration_editable(visit)
-    validate_content(visit)
-    types = [item["type"] for item in data["exceptions"]]
-    if len(types) != len(set(types)):
-        raise ValidationError({"exceptions": "No repitas el tipo de justificación."})
-    if timezone.now() >= visit.formulario_vence_en and "time_limit" not in types:
-        raise ValidationError({"exceptions": "Incluye la justificación por demora; el plazo original no cambia."})
-    if data.get("location") is not None:
-        location = validate_gps(data["location"], visit)
-    else:
-        location = None
-        if "location" not in types:
-            raise ValidationError({"location": "Solicita GPS de cierre o justifica su indisponibilidad."})
-    # Comprueba todas las versiones antes de reabrir otras aprobaciones.
-    existing = {e.tipo: e for e in visit.excepciones.all()}
+    pairs = [(item["type"], item["scope"]) for item in data["exceptions"]]
+    if len(pairs) != len(set(pairs)):
+        raise ValidationError({"exceptions": "No repitas tipo y etapa de excepción."})
     for item in data["exceptions"]:
-        if item["type"] in existing and item.get("revision") != existing[item["type"]].revision:
-            raise Conflict("La revisión cambió; consulta su estado actual antes de reenviar.")
-    prepare_registration_edit(user, visit)
-    for item in data["exceptions"]:
-        # La reapertura propia de esta transacción puede incrementar una aprobación.
-        current = visit.excepciones.filter(tipo=item["type"]).first()
-        request_or_correct_exception(user, visit, {**item, **({"revision": current.revision} if current else {})})
-    if visit.excepciones.filter(decision="rejected").exists():
-        raise ValidationError({"exceptions": "Corrige todas las justificaciones rechazadas antes de reenviar."})
-    if location:
-        visit.ubicacion_cierre = location
-        visit.latitud_cierre = location["latitude"]
-        visit.longitud_cierre = location["longitude"]
-        visit.distancia_medida_metros = location["distanceMeters"]
-        visit.proximidad_validada = True
-    accepted_at = timezone.now()
-    if accepted_at >= visit.formulario_vence_en and not visit.excepciones.filter(tipo="time_limit").exists():
-        raise Conflict("Venció el plazo durante el envío. Incluye la justificación por demora sin reiniciar el reloj.")
-    visit.enviado_en = accepted_at
-    visit.estado = "pendiente_validacion"
-    visit.save()
-    if visit.ticket_origen_id:
-        Ticket.objects.filter(pk=visit.ticket_origen_id).update(estado="pendiente_validacion")
-    event(user, visit, "review_submission", "Registro completo enviado para revisión",
-          {"draftRevision": visit.borrador_revision, "submittedAt": visit.enviado_en.isoformat(), "location": location})
-    return visit
+        request_or_correct_exception(user, visit, item)
+    return accept_submission(user, visit, review=True)
 
 
+@transaction.atomic
 def record_end_gps(user, pk, data):
     visit = locked_visit(user, pk)
-    if not visit.iniciado_en or not visit.formulario_abierto_en or visit.estado not in ("en_curso", "pendiente_validacion"):
-        raise Conflict("La visita no admite registro de GPS de cierre.")
+    require_execution(visit)
+    if visit.terminado_en:
+        return visit
+    if visit.formulario_abierto_en:
+        raise Conflict("El formulario histórico ya está abierto sin fin físico registrado; requiere revisión, no timestamps inventados.")
     location = validate_gps(data.get("location"), visit)
-    visit.ubicacion_cierre = location
-    visit.latitud_cierre = location["latitude"]
-    visit.longitud_cierre = location["longitude"]
-    visit.distancia_medida_metros = location["distanceMeters"]
-    visit.proximidad_validada = True
-    visit.save(update_fields=["ubicacion_cierre", "latitud_cierre", "longitud_cierre", "distancia_medida_metros", "proximidad_validada"])
-    event(user, visit, "end_gps", "Lectura GPS de cierre registrada", {"location": location})
-    finalize_reviewed_visit(user, visit)
+    persist_physical_end(user, visit, location)
     return visit
 
 
 def finalize_reviewed_visit(user, visit):
-    """Una aprobación nunca puede ocultar otra excepción pendiente."""
     if visit.estado != "pendiente_validacion" or not visit.enviado_en:
+        return
+    if visit.excepciones.filter(decision="rejected").exists():
+        visit.estado = "correccion_requerida"
+        visit.save(update_fields=["estado"])
+        set_ticket_state(visit, "correccion_requerida")
         return
     if visit.excepciones.exclude(decision="approved").exists():
         return
-    time_required = visit.enviado_en >= visit.formulario_vence_en
-    time_ok = not time_required or visit.excepciones.filter(tipo="time_limit", decision="approved").exists()
-    gps_ok = bool(visit.ubicacion_cierre) or visit.excepciones.filter(tipo="location", decision="approved").exists()
-    if not time_ok or not gps_ok:
-        return
     validate_content(visit)
-    visit.completado_en = timezone.now()
-    visit.estado = "completada"
-    visit.save(update_fields=["estado", "completado_en"])
-    if visit.ticket_origen_id:
-        Ticket.objects.filter(pk=visit.ticket_origen_id).update(estado="resuelto", resuelto_en=visit.completado_en)
-    event(user, visit, "review_complete", "Finalización aceptada tras revisión de todas las excepciones")
+    validate_persisted_closure(visit)
+    if visit.formulario_vence_en and visit.enviado_en >= visit.formulario_vence_en and not visit.excepciones.filter(
+            tipo="time_limit", scope__in=("form", "legacy"), decision="approved").exists():
+        raise Conflict("El registro enviado fuera de plazo requiere una excepción de tiempo aprobada.")
+    finalize(user, visit, "review_complete")
+
+
+@transaction.atomic
+def review_exception(user, pk, raw):
+    from .input_serializers import ReviewInputSerializer
+    if rol_de(user) != "account_supervisor":
+        raise PermissionDenied("Solo Supervisor NF puede decidir excepciones.")
+    visit = locked_visit(user, pk, owner=False)
+    serializer = ReviewInputSerializer(data=raw)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+    if visit.estado != "pendiente_validacion" or not visit.enviado_en:
+        raise Conflict("Solo se decide sobre un registro completo enviado y realmente En revisión.")
+    validate_content(visit)
+    validate_persisted_closure(visit)
+    exception = get_object_or_404(visit.excepciones.select_for_update(), pk=data["exceptionId"])
+    if data["revision"] != visit.borrador_revision or data["exceptionRevision"] != exception.revision:
+        raise Conflict("El contenido o la excepción cambió; recarga antes de decidir.")
+    decision = "approved" if data["approved"] else "rejected"
+    if exception.decision != "pending":
+        if exception.decision == decision and exception.motivo_decision == data["reason"]:
+            return visit
+        raise Conflict("La excepción ya tiene una decisión registrada.")
+    exception.decision, exception.revisor = decision, user
+    exception.motivo_decision, exception.revisada_en = data["reason"], timezone.now()
+    exception.save()
+    audit_exception(user, visit, exception, "review", "Decisión NF: " + exception.scope + " / " + decision)
+    finalize_reviewed_visit(user, visit)
+    return visit
 
 
 def claim_visit(user, pk):
@@ -325,68 +409,56 @@ def claim_visit(user, pk):
     return visit
 
 
+def ensure_startable(user, visit, at=None):
+    at = at or timezone.now()
+    if visit.estado != "programada":
+        raise Conflict("Estado incompatible con registrar llegada.")
+    if visit.origen == "checklist":
+        if visit.periodo != timezone.localdate(at).replace(day=1):
+            raise Conflict("El checklist debe iniciarse dentro de su mes.")
+        if not visit.reclamo_vence_en or at >= visit.reclamo_vence_en:
+            raise Conflict("La reserva venció o no tiene fecha comprobable.")
+        checklist = getattr(visit, "checklist", None)
+        if checklist is None or not checklist.tareas_snapshot:
+            raise Conflict("La obligación no tiene tareas históricas publicadas; requiere revisión explícita.")
+    else:
+        if not visit.ticket_origen_id:
+            raise Conflict("La atención histórica no tiene una incidencia vinculada.")
+        if at < visit.fecha_programada:
+            raise Conflict("No puede registrar llegada antes de scheduledAt; NF debe reprogramar primero.")
+    if Visita.objects.filter(tecnico_id=user.pk, iniciado_en__isnull=False, enviado_en__isnull=True,
+            estado__in=("en_curso", "pendiente_validacion")).exclude(pk=visit.pk).exists():
+        raise Conflict("Ya tienes una ejecución activa; termina o envía el registro completo antes de iniciar otra.")
+    # La configuración actual no sustituye al radio y snapshot ya publicados.
+    if not visit.radio_metros or not visit.tienda_snapshot:
+        raise Conflict("La ejecución histórica carece de reglas publicadas comprobables.")
+
+
+@transaction.atomic
 def start_visit(user, pk, data):
     visit = locked_visit(user, pk)
     if visit.iniciado_en:
         if visit.estado != "en_curso":
-            raise Conflict("Esta visita ya no admite otro inicio.")
+            raise Conflict("Esta ejecución no admite otro inicio.")
         return visit
-    if visit.estado != "programada":
-        raise Conflict("Estado incompatible con el inicio; no se inventan timestamps históricos.")
-    if visit.origen == "checklist" and visit.periodo != timezone.localdate().replace(day=1):
-        raise Conflict("El checklist debe iniciarse dentro de su mes; no tiene un día obligatorio.")
-    if visit.origen == "checklist" and (not visit.reclamo_vence_en or visit.reclamo_vence_en <= timezone.now()):
-        raise Conflict("La reserva venció o no tiene una fecha comprobable. Actualiza la visita.")
-    if not visit.contrato_id:
-        raise Conflict("La visita no tiene contrato aplicable.")
-    today = timezone.localdate()
-    contract = visit.contrato
-    if not contract.activo or contract.fecha_inicio > today or (contract.fecha_fin and contract.fecha_fin < today):
-        raise ValidationError({"contract": "El contrato no está vigente."})
+    ensure_startable(user, visit)
     location = validate_gps(data.get("location"), visit)
-    visit.iniciado_en = timezone.now()
-    if visit.origen == "checklist" and visit.periodo != timezone.localdate(visit.iniciado_en).replace(day=1):
-        raise Conflict("El período mensual terminó antes de aceptar el inicio.")
-    if visit.origen == "checklist" and visit.iniciado_en >= visit.reclamo_vence_en:
-        raise Conflict("La reserva venció antes de aceptar el inicio. Actualiza la bolsa.")
-    visit.ubicacion_inicio = location
-    visit.latitud_inicio = location["latitude"]
-    visit.longitud_inicio = location["longitude"]
-    visit.distancia_inicio_metros = location["distanceMeters"]
-    visit.proximidad_inicio_validada = True
-    visit.estado = "en_curso"
-    visit.save(update_fields=["iniciado_en", "ubicacion_inicio", "latitud_inicio", "longitud_inicio",
-                              "distancia_inicio_metros", "proximidad_inicio_validada", "estado"])
-    if visit.ticket_origen_id:
-        ticket = Ticket.objects.select_for_update().get(pk=visit.ticket_origen_id)
-        ticket.estado = "en_proceso"
-        ticket.save(update_fields=["estado"])
-    event(user, visit, "start", "Trabajo iniciado", {"location": location})
+    persist_arrival(user, visit, location)
     return visit
 
 
+@transaction.atomic
 def open_form(user, pk, data=None):
     visit = locked_visit(user, pk)
+    if visit.formulario_abierto_en and registration_editable(visit):
+        return visit
     require_execution(visit)
-    if not visit.formulario_abierto_en:
-        if visit.origen == "checklist" and not (data or {}).get("location") and (data or {}).get("failure") in ("denied", "timeout", "unavailable"):
-            event(user, visit, "end_gps_unavailable", "GPS no disponible al terminar el recorrido; el envío requiere GPS o revisión",
-                  {"failure": data["failure"]})
-        elif visit.origen == "checklist":
-            location = validate_gps((data or {}).get("location"), visit)
-            visit.ubicacion_cierre = location
-            visit.latitud_cierre = location["latitude"]
-            visit.longitud_cierre = location["longitude"]
-            visit.distancia_medida_metros = location["distanceMeters"]
-            visit.proximidad_validada = True
-            visit.save(update_fields=["ubicacion_cierre", "latitud_cierre", "longitud_cierre",
-                                      "distancia_medida_metros", "proximidad_validada"])
-            event(user, visit, "end_gps", "Lectura GPS al terminar el recorrido del checklist", {"location": location})
-        visit.formulario_abierto_en = timezone.now()
-        visit.formulario_vence_en = visit.formulario_abierto_en + timedelta(minutes=5)
-        visit.save(update_fields=["formulario_abierto_en", "formulario_vence_en"])
-        event(user, visit, "open_form", "Primera apertura del formulario",
-              {"deadline": visit.formulario_vence_en.isoformat()})
+    validate_persisted_closure(visit)
+    visit.formulario_abierto_en = timezone.now()
+    visit.formulario_vence_en = visit.formulario_abierto_en + FORM_DURATION
+    visit.save(update_fields=["formulario_abierto_en", "formulario_vence_en"])
+    event(user, visit, "open_form", "Primera apertura del registro final",
+          {"openedAt": visit.formulario_abierto_en.isoformat(), "deadline": visit.formulario_vence_en.isoformat()})
     return visit
 
 
@@ -403,22 +475,25 @@ def validate_content(visit):
         if not evidence_ids(visit):
             errors.append("Adjunta evidencia de la resolución.")
     else:
-        checklist = visit.checklist
+        checklist = getattr(visit, "checklist", None)
+        if checklist is None:
+            raise ValidationError({"content": "No hay checklist histórico publicado para esta ejecución."})
         answers = {answer.item_id: answer for answer in checklist.respuestas.all()}
         if not checklist.tareas_snapshot:
             errors.append("La plantilla histórica no tiene un snapshot de tareas validado.")
         for task in checklist.tareas_snapshot:
             answer = answers.get(task["id"])
-            if not answer or not answer.resultado:
+            if not answer or answer.resultado not in ("ok", "observado", "no_aplica"):
                 errors.append(f"Resultado obligatorio: {task['title']}.")
-            if answer and answer.resultado == "observado" and not answer.observacion.strip():
+            if answer and answer.resultado in ("observado", "no_aplica") and not answer.observacion.strip():
                 errors.append(f"Observación obligatoria: {task['title']}.")
-            if task["photoRequired"] and not evidence_ids(visit, task["id"]):
+            if task["photoRequired"] and (not answer or answer.resultado != "no_aplica") and not evidence_ids(visit, task["id"]):
                 errors.append(f"Fotografía obligatoria: {task['title']}.")
     if errors:
         raise ValidationError({"content": errors})
 
 
+@transaction.atomic
 def save_draft(user, pk, data):
     from .input_serializers import DraftSerializer
     from .models import RespuestaItem
@@ -463,33 +538,59 @@ def save_draft(user, pk, data):
     return visit
 
 
+@transaction.atomic
 def complete_visit(user, pk, data):
+    from .input_serializers import CompletionSerializer
     visit = locked_visit(user, pk)
+    serializer = CompletionSerializer(data=data)
+    serializer.is_valid(raise_exception=True)
+    raw = serializer.validated_data
+    if raw["revision"] != visit.borrador_revision:
+        raise Conflict("La versión del registro cambió; no puedes finalizar contenido que no revisaste.")
     if visit.estado == "completada":
         return visit
-    require_execution(visit, form=True)
-    if timezone.now() >= visit.formulario_vence_en:
-        raise Conflict({"detail": "Venció el formulario. Conserva el borrador y envía una justificación.", "code": "form_expired"})
-    validate_content(visit)
-    location = validate_gps(data.get("location"), visit)
-    now = timezone.now()
-    if now >= visit.formulario_vence_en:
-        raise Conflict("El formulario venció durante la validación. Conserva el borrador y envía una justificación.")
-    visit.ubicacion_cierre = location
-    visit.latitud_cierre = location["latitude"]
-    visit.longitud_cierre = location["longitude"]
-    visit.distancia_medida_metros = location["distanceMeters"]
-    visit.proximidad_validada = True
-    visit.enviado_en = now
-    visit.completado_en = now
-    visit.estado = "completada"
-    visit.save()
+    if raw["exceptions"]:
+        raise ValidationError({"exceptions": "Registra las excepciones y envía explícitamente a revisión."})
+    return accept_submission(user, visit)
+
+
+@transaction.atomic
+def not_performed(user, pk, raw):
+    from rest_framework import serializers
+    class Input(serializers.Serializer):
+        reason = serializers.CharField(min_length=10, max_length=500)
+    role = rol_de(user)
+    if role not in ("technician", "account_supervisor"):
+        raise PermissionDenied("Solo técnico propietario o Supervisor NF puede registrar No realizado.")
+    visit = locked_visit(user, pk, owner=role == "technician")
+    serializer = Input(data=raw)
+    serializer.is_valid(raise_exception=True)
+    if visit.estado not in ("programada", "en_curso", "correccion_requerida") or visit.completado_en:
+        raise Conflict("La ejecución no admite No realizado.")
+    if not visit.iniciado_en and (role != "account_supervisor" or visit.origen != "ticket"):
+        raise Conflict("Antes de llegada, NF cancela una atención; la reserva de checklist se libera al vencer.")
+    if visit.origen == "checklist" and (not hasattr(visit, "checklist") or not visit.checklist.tareas_snapshot):
+        raise Conflict("La obligación histórica no tiene tareas publicadas; requiere revisión explícita.")
+    visit.estado, visit.vigente = "no_realizada", False
+    visit.justificacion = serializer.validated_data["reason"]
+    visit.no_realizada_en = timezone.now()
+    visit.save(update_fields=["estado", "vigente", "justificacion", "no_realizada_en"])
+    event(user, visit, "not_performed", "Intento no realizado; no declara cumplimiento",
+          {"reason": visit.justificacion, "at": visit.no_realizada_en.isoformat(),
+           "evidenceIds": evidence_ids(visit), "startedAt": visit.iniciado_en.isoformat() if visit.iniciado_en else None})
     if visit.ticket_origen_id:
-        ticket = Ticket.objects.select_for_update().get(pk=visit.ticket_origen_id)
-        ticket.estado = "resuelto"
-        ticket.resuelto_en = now
-        ticket.save(update_fields=["estado", "resuelto_en"])
-    event(user, visit, "complete", "Resultados enviados y finalización aceptada", {"location": location})
+        Ticket.objects.filter(pk=visit.ticket_origen_id).update(estado="abierto", tecnico_asignado=None,
+            fecha_programada=None, revision=F("revision") + 1)
+    else:
+        next_visit = Visita.objects.create(tienda_id=visit.tienda_id, origen="checklist", periodo=visit.periodo,
+            cuota=visit.cuota, intento_anterior=visit, contrato_id=visit.contrato_id, radio_metros=visit.radio_metros,
+            tienda_snapshot=visit.tienda_snapshot, minimo_mensual_snapshot=visit.minimo_mensual_snapshot,
+            fecha_programada=visit.fecha_programada)
+        checklist = visit.checklist
+        Checklist.objects.create(visita=next_visit, plantilla_id=checklist.plantilla_id,
+            plantilla_version=checklist.plantilla_version, tareas_snapshot=checklist.tareas_snapshot)
+        event(user, next_visit, "retry_published", "Nuevo intento de la misma obligación publicada",
+              {"previousVisitId": visit.pk, "quota": visit.cuota})
     return visit
 
 
@@ -512,7 +613,7 @@ def asegurar_bolsa_mes_actual(user=None):
     stores = stores.filter(activo=True, cliente_id__in=contracts.values("cliente_id"))
     created_count = 0
     for store in stores.order_by("pk").select_for_update(of=("self",)):
-        published = list(Visita.objects.filter(tienda=store, origen="checklist", periodo=period).order_by("cuota"))
+        published = list(Visita.objects.filter(tienda=store, origen="checklist", periodo=period, vigente=True).order_by("cuota"))
         if published:
             if [visit.cuota for visit in published] != list(range(1, len(published) + 1)):
                 raise Conflict("Las visitas mensuales publicadas tienen cuotas inconsistentes; requieren revisión.")
@@ -524,7 +625,7 @@ def asegurar_bolsa_mes_actual(user=None):
             raise Conflict("El contrato necesita una plantilla activa con tareas.")
         for quota in range(1, contract.frecuencia_visitas_mensual + 1):
             visit, created = Visita.objects.get_or_create(
-                tienda=store, origen="checklist", periodo=period, cuota=quota,
+                tienda=store, origen="checklist", periodo=period, cuota=quota, vigente=True,
                 defaults={"fecha_programada": timezone.now(), "estado": "programada"})
             if created:
                 snapshot(visit, contract)

@@ -8,10 +8,10 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla,
                      Usuario, Rol, AsignacionTienda, Visita, Ticket, Evidencia,
                      CategoriaProblema, NivelUrgencia, Zona, CoberturaUsuario, ClienteEspecialidad)
-from .permissions import ROLES
+from .permissions import ROLES, rol_de
 from .auth_views import identity
 from .services import evidence_ids
-from .workflow import VISIT_WORK_STATUS, TICKET_WORK_STATUS
+from .workflow import VISIT_WORK_STATUS, TICKET_WORK_STATUS, FORM_DURATION
 
 
 # Una sola representación de identidad para ambos flujos de autenticación.
@@ -404,97 +404,121 @@ def iso(value):
 
 
 def exception_data(exc):
-    return {"id": exc.pk, "revision": exc.revision, "type": exc.tipo, "reason": exc.motivo, "failure": exc.fallo, "authorId": exc.autor_id,
+    return {"id": exc.pk, "revision": exc.revision, "type": exc.tipo, "scope": exc.scope, "telemetry": exc.telemetria, "reason": exc.motivo, "failure": exc.fallo, "authorId": exc.autor_id,
             "requestedAt": iso(exc.solicitada_en), "reviewedAt": iso(exc.revisada_en),
             "reviewerId": exc.revisor_id, "approved": None if exc.decision == "pending" else exc.decision == "approved",
             "reviewReason": exc.motivo_decision}
 
 
-def legacy_location(latitude, longitude, captured_at):
+def legacy_location(latitude, longitude):
     if latitude is None or longitude is None:
         return None
-    return {"latitude": float(latitude), "longitude": float(longitude), "accuracy": 0,
-            "capturedAt": captured_at.timestamp() * 1000 if captured_at else None}
+    return {"latitude": float(latitude), "longitude": float(longitude), "accuracy": None, "capturedAt": None, "validated": None, "legacy": True}
 
 
-def visit_data(visit):
-    from .claims import CLAIM_DURATION
+def visit_data(visit, user=None):
     from django.utils import timezone
     checklist = getattr(visit, "checklist", None)
     tasks = checklist.tareas_snapshot if checklist else []
-    if checklist and not tasks and checklist.plantilla_version is None:
-        tasks = ItemPlantillaSerializer(checklist.plantilla.items.filter(activo=True), many=True).data
     answers = [answer_data(a) for a in checklist.respuestas.all()] if checklist else []
     # Evidencia confirmada se recupera incluso si el último guardado del editor falló.
     for task in tasks:
         if not any(a["taskId"] == task["id"] for a in answers):
             answers.append({"taskId": task["id"], "result": None, "observation": "", "evidenceIds": evidence_ids(visit, task["id"])})
     status = {"en_curso": "in_progress", "completada": "completed", "pendiente_validacion": "pending_approval",
-              "no_realizada": "cancelled"}.get(visit.estado, "claimed" if visit.tecnico_id else "available")
+              "no_realizada": "cancelled", "correccion_requerida": "correction_required"}.get(visit.estado, "claimed" if visit.tecnico_id else "available")
     exceptions = [exception_data(e) for e in visit.excepciones.order_by("pk")]
     location_exception = None
     if visit.excepcion_ubicacion:
         location_exception = {"type": "location", "reason": visit.justificacion_excepcion,
                               "failure": visit.descripcion_fallo_ubicacion,
-                              "requestedAt": iso(visit.completado_en), "reviewedAt": None,
+                              "scope": "legacy", "telemetry": None, "requestedAt": None, "reviewedAt": None,
                               "reviewerId": visit.excepcion_revisada_por_id,
                               "approved": visit.excepcion_aprobada,
                               "reviewReason": visit.comentario_revision_ubicacion or None}
     time_exception_status = None
+    time_exception_reason = visit.justificacion_excepcion_tiempo
     if visit.excepcion_tiempo:
         time_exception_status = ("pending" if visit.excepcion_tiempo_aprobada is None
                                  else "approved" if visit.excepcion_tiempo_aprobada else "rejected")
+    timed = next((e for e in exceptions if e["type"] == "time_limit" and e["scope"] == "form"), None)
+    if timed is None:
+        timed = next((e for e in exceptions if e["type"] == "time_limit"), None)
+    if timed:
+        time_exception_status = "pending" if timed["approved"] is None else "approved" if timed["approved"] else "rejected"
+        time_exception_reason = timed["reason"]
     radius = visit.radio_metros
-    if radius is None:
-        contract = visit.contrato or visit.tienda.cliente.contratos.filter(activo=True).order_by("-fecha_inicio").first()
-        radius = contract.radio_validacion_metros if contract else 100
     def duration(end, start):
         return (end-start).total_seconds() if end and start else None
-    return {"id": visit.pk, "storeId": visit.tienda_id, "technicianId": visit.tecnico_id, "ticketId": visit.ticket_origen_id,
+    data = {"id": visit.pk, "storeId": visit.tienda_id, "technicianId": visit.tecnico_id, "ticketId": visit.ticket_origen_id,
             "period": iso(visit.periodo), "quota": visit.cuota if visit.origen == "checklist" and visit.periodo else None,
-            "quotaCount": Visita.objects.filter(tienda_id=visit.tienda_id, origen="checklist", periodo=visit.periodo).count() if visit.origen == "checklist" and visit.periodo else None,
+            "quotaCount": Visita.objects.filter(tienda_id=visit.tienda_id, origen="checklist", periodo=visit.periodo).values("cuota").distinct().count() if visit.origen == "checklist" and visit.periodo else None,
             "origin": visit.origen, "scheduledAt": iso(visit.fecha_programada), "status": status,
             "workStatus": VISIT_WORK_STATUS[visit.estado], "tasks": tasks,
             "answers": answers, "workDescription": visit.descripcion_trabajo or (checklist.reporte_general if checklist else ""), "evidenceIds": evidence_ids(visit),
-            "startLocation": visit.ubicacion_inicio or legacy_location(visit.latitud_inicio, visit.longitud_inicio, visit.iniciado_en),
-            "endLocation": visit.ubicacion_cierre or legacy_location(visit.latitud_cierre, visit.longitud_cierre, visit.completado_en),
-            "startedAt": iso(visit.iniciado_en), "formOpenedAt": iso(visit.formulario_abierto_en),
+            "startLocation": visit.ubicacion_inicio or legacy_location(visit.latitud_inicio, visit.longitud_inicio),
+            "endLocation": visit.ubicacion_cierre or legacy_location(visit.latitud_cierre, visit.longitud_cierre),
+            "startedAt": iso(visit.iniciado_en), "physicalEndedAt": iso(visit.terminado_en),
+            "notPerformedAt": iso(visit.no_realizada_en), "previousAttemptId": visit.intento_anterior_id, "formOpenedAt": iso(visit.formulario_abierto_en),
             "claimedAt": iso(visit.reclamada_en), "claimExpiresAt": iso(visit.reclamo_vence_en),
             "claimHistory": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
                 "kind": e.tipo, "technicianId": e.datos.get("technicianId", e.actor_id),
-                "claimedAt": e.datos.get("claimedAt", iso(e.fecha)),
-                "expiresAt": e.datos.get("expiresAt", iso(e.fecha + CLAIM_DURATION)), "text": e.texto}
+                "claimedAt": e.datos.get("claimedAt"),
+                "expiresAt": e.datos.get("expiresAt"), "text": e.texto}
                 for e in visit.eventos.filter(tipo__in=["claim", "claim_release"]).order_by("pk")],
             "expiresAt": iso(visit.formulario_vence_en), "submittedAt": iso(visit.enviado_en), "completedAt": iso(visit.completado_en),
             "revision": visit.borrador_revision, "radiusMeters": radius, "storeSnapshot": visit.tienda_snapshot or None,
-            "serverNow": iso(timezone.now()), "timeLimitSeconds": 300 if visit.formulario_abierto_en else None,
-            "timeLimitExceeded": bool(visit.excepcion_tiempo or (visit.formulario_vence_en and timezone.now() >= visit.formulario_vence_en and not visit.completado_en)),
-            "timeExceptionReason": visit.justificacion_excepcion_tiempo, "timeExceptionStatus": time_exception_status,
+            "serverNow": iso(timezone.now()), "timeLimitSeconds": int(FORM_DURATION.total_seconds()) if visit.formulario_abierto_en else None,
+            "timeLimitExceeded": bool(timed or visit.excepcion_tiempo or (visit.formulario_vence_en and timezone.now() >= visit.formulario_vence_en and not visit.completado_en)),
+            "timeExceptionReason": time_exception_reason, "timeExceptionStatus": time_exception_status,
             "exceptions": exceptions, "exception": exceptions[-1] if exceptions else location_exception,
             "exceptionHistory": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
                 "kind": e.tipo, "exception": e.datos["exception"]}
                 for e in visit.eventos.order_by("pk") if "exception" in e.datos],
             "totalSeconds": duration(visit.enviado_en, visit.iniciado_en),
-            "executionSeconds": duration(visit.formulario_abierto_en, visit.iniciado_en),
+            "executionSeconds": duration(visit.terminado_en, visit.iniciado_en),
             "registrationSeconds": duration(visit.enviado_en, visit.formulario_abierto_en),
-            "legacy": not bool(visit.tienda_snapshot), "active": visit.vigente}
+            "legacy": not bool(visit.tienda_snapshot) or bool(visit.formulario_abierto_en and not visit.terminado_en), "active": visit.vigente}
+    data["gpsExceptionPending"] = any(e["type"] == "location" and e["approved"] is None for e in exceptions)
+    data["occupiesTechnician"] = bool(visit.iniciado_en and not visit.enviado_en and visit.estado in ("en_curso", "pendiente_validacion"))
+    data["readOnly"] = visit.estado in ("pendiente_validacion", "completada", "no_realizada")
+    data["phase"] = ("correction_required" if visit.estado == "correccion_requerida" else
+        "in_review" if visit.estado == "pendiente_validacion" and visit.enviado_en else
+        "finished" if visit.estado == "completada" else "not_performed" if visit.estado == "no_realizada" else
+        "results" if visit.formulario_abierto_en else "physical_finished" if visit.terminado_en else
+        "physical_work" if visit.iniciado_en else "reserved" if visit.origen == "checklist" and visit.tecnico_id else
+        "scheduled" if visit.origen == "ticket" else "available")
+    if user is not None and rol_de(user) == "store_supervisor":
+        public_fields = ("id", "storeId", "technicianId", "ticketId", "origin", "scheduledAt", "status",
+            "workStatus", "startedAt", "completedAt", "workDescription", "evidenceIds", "active")
+        return {key: data[key] for key in public_fields}
+    return data
 
 
-def ticket_data(ticket):
+def ticket_data(ticket, user=None):
     visit = ticket.visitas_generadas.filter(vigente=True).first()
-    return {"id": ticket.pk, "storeId": ticket.tienda_id, "reporterId": ticket.reportado_por_id,
+    data = {"id": ticket.pk, "storeId": ticket.tienda_id, "reporterId": ticket.reportado_por_id,
             "category": ticket.categoria.nombre, "categoryId": ticket.categoria_id,
             "priority": ticket.urgencia.nombre, "priorityId": ticket.urgencia_id,
             "description": ticket.descripcion,
             "workStatus": TICKET_WORK_STATUS[ticket.estado],
-            "status": {"abierto": "open", "programado": "scheduled", "en_proceso": "in_progress", "pendiente_validacion": "pending_approval", "resuelto": "resolved", "cerrado": "closed"}[ticket.estado],
+            "status": {"abierto": "open", "programado": "scheduled", "en_proceso": "in_progress", "pendiente_validacion": "pending_approval", "resuelto": "resolved", "cerrado": "closed", "correccion_requerida": "correction_required"}[ticket.estado],
             "createdAt": iso(ticket.creado_en), "technicianId": ticket.tecnico_asignado_id,
-            "scheduledAt": iso(ticket.fecha_programada), "resolvedAt": iso(ticket.resuelto_en), "closedAt": iso(ticket.cerrado_en),
+            "scheduledAt": iso(ticket.fecha_programada), "startedAt": iso(visit.iniciado_en) if visit else None, "resolvedAt": iso(ticket.resuelto_en), "closedAt": iso(ticket.cerrado_en),
             "resolution": visit.descripcion_trabajo if visit else "", "visitId": visit.pk if visit else None,
             "revision": ticket.revision,
             "evidenceIds": [str(e.client_id) for e in ticket.archivos.filter(eliminada_en__isnull=True)],
             "technicalEvidenceIds": evidence_ids(visit) if visit else [],
-            "history": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id, "text": e.texto, "data": e.datos} for e in ticket.eventos.order_by("pk")]}
+            "history": [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
+                "actorName": (e.actor.get_full_name() or e.actor.username) if e.actor else None,
+                "text": e.texto, "data": e.datos} for e in ticket.eventos.select_related("actor").order_by("pk")]}
+    if user is not None and rol_de(user) == "store_supervisor":
+        labels = {"report": "Incidencia reportada", "schedule": "Atención programada", "complete": "Atención finalizada",
+                  "review_complete": "Atención finalizada", "not_performed": "Atención pendiente de programación"}
+        data["history"] = [{"id": str(e.pk), "at": iso(e.fecha), "actorId": e.actor_id,
+            "actorName": (e.actor.get_full_name() or e.actor.username) if e.actor else None,
+            "text": labels[e.tipo]} for e in ticket.eventos.select_related("actor").filter(tipo__in=labels).order_by("pk")]
+    return data
 
 
 def evidence_data(evidence):
@@ -506,7 +530,7 @@ def evidence_data(evidence):
 
 class VisitaDetailSerializer(serializers.BaseSerializer):
     def to_representation(self, instance):
-        return visit_data(instance)
+        return visit_data(instance, user=getattr(self.context.get("request"), "user", None))
 
 
 VisitaSerializer = VisitaDetailSerializer
@@ -514,7 +538,7 @@ VisitaSerializer = VisitaDetailSerializer
 
 class TicketSerializer(serializers.BaseSerializer):
     def to_representation(self, instance):
-        return ticket_data(instance)
+        return ticket_data(instance, user=getattr(self.context.get("request"), "user", None))
 
 
 class TicketCreateSerializer(serializers.Serializer):

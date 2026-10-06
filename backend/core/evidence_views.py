@@ -17,7 +17,7 @@ from .models import Evidencia, Usuario
 from .permissions import rol_de, tiendas_visibles_para
 from .serializers import evidence_data
 from .services import (Conflict, locked_visit, require_registration_editable,
-                       prepare_registration_edit, visible_visits, visible_tickets)
+                       prepare_registration_edit, require_evidence_editable, visible_visits, visible_tickets)
 
 
 class UploadSerializer(serializers.Serializer):
@@ -82,7 +82,7 @@ class EvidenceUploadView(APIView):
         task_id = data.get("taskId")
         if data.get("visitId"):
             visit = locked_visit(request.user, data["visitId"])
-            require_registration_editable(visit)
+            require_evidence_editable(visit)
             if visit.origen == "checklist":
                 checklist = visit.checklist
                 if task_id not in {t["id"] for t in checklist.tareas_snapshot}:
@@ -110,6 +110,9 @@ class EvidenceUploadView(APIView):
             if evidence.foto and evidence.foto.name:
                 evidence.foto.storage.delete(evidence.foto.name)
             raise
+        if visit:
+            visit.borrador_revision += 1
+            visit.save(update_fields=["borrador_revision"])
         return Response(evidence_data(evidence), status=201)
 
 
@@ -120,18 +123,23 @@ class EvidenceDetailView(APIView):
 
     @transaction.atomic
     def delete(self, request, pk):
-        evidence = get_object_or_404(Evidencia.objects.select_for_update(), client_id=pk, autor=request.user)
+        Usuario.objects.select_for_update(no_key=True).get(pk=request.user.pk)
+        reference = get_object_or_404(visible_evidence(request.user), client_id=pk, autor=request.user)
+        visit_id = reference.visita_id or (reference.checklist.visita_id if reference.checklist_id else None)
+        visit = locked_visit(request.user, visit_id) if visit_id else None
+        evidence = get_object_or_404(Evidencia.objects.select_for_update(), pk=reference.pk)
         if evidence.eliminada_en:
             return Response(status=204)
         if evidence.ticket_id:
             raise Conflict("El reporte original conserva sus evidencias.")
-        visit_id = evidence.visita_id or (evidence.checklist.visita_id if evidence.checklist_id else None)
-        if visit_id:
-            visit = locked_visit(request.user, visit_id)
-            require_registration_editable(visit)
+        if visit:
+            require_evidence_editable(visit)
             prepare_registration_edit(request.user, visit)
         evidence.eliminada_en = timezone.now()
         evidence.save(update_fields=["eliminada_en"])
+        if visit:
+            visit.borrador_revision += 1
+            visit.save(update_fields=["borrador_revision"])
         return Response(status=204)
 
 

@@ -44,7 +44,7 @@ class DashboardView(APIView):
     permission_classes = [EsSupervisorCuenta]
     def get(self, request):
         period, end, stores, visits, tickets = report_scope(request)
-        checklists = visits.filter(origen="checklist")
+        checklists = visits.filter(origen="checklist", vigente=True)
         completed = checklists.filter(estado="completada").count()
         required = 0
         risks = []
@@ -77,10 +77,10 @@ class DashboardView(APIView):
                 count = per_store.get(store.pk, 0)
                 risks.append({"storeId": store.pk, "store": store.nombre, "clientId": client.pk,
                     "client": client.razon_social, "completed": count, "required": minimum, "missing": max(0, minimum-count)})
-        status_map = {"abierto": "open", "programado": "scheduled", "en_proceso": "in_progress", "pendiente_validacion": "pending_approval", "resuelto": "resolved", "cerrado": "closed"}
+        status_map = {"abierto": "open", "programado": "scheduled", "en_proceso": "in_progress", "pendiente_validacion": "pending_approval", "correccion_requerida": "correction_required", "resuelto": "resolved", "cerrado": "closed"}
         durations = [(t.resuelto_en-t.creado_en).total_seconds()/3600 for t in tickets if t.resuelto_en]
         return Response({"period": period.isoformat(), "compliance": completed/required*100 if required else None,
-            "pendingVisits": max(0, required-completed), "pendingExceptions": visits.filter(excepciones__decision="pending").distinct().count(),
+            "pendingVisits": max(0, required-completed), "pendingExceptions": visits.filter(estado="pendiente_validacion", enviado_en__isnull=False, excepciones__decision="pending").distinct().count(),
             "ticketsByStatus": {translated: tickets.filter(estado=state).count() for state, translated in status_map.items()},
             "averageHours": sum(durations)/len(durations) if durations else None, "risks": risks,
             "risksReason": None,
@@ -95,7 +95,7 @@ class ExportView(APIView):
         period, end, stores, visits, tickets = report_scope(request)
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["visita", "tienda", "origen", "contrato", "periodo", "cuota", "cuotas_mes", "estado", "estado_interno", "inicio_real", "primera_apertura", "vencimiento",
+        writer.writerow(["visita", "tienda", "origen", "contrato", "periodo", "cuota", "cuotas_mes", "estado", "estado_interno", "inicio_real", "fin_fisico", "primera_apertura", "vencimiento",
                          "envio_aceptado", "finalizacion_aprobada", "duracion_intervencion_s", "previo_formulario_s",
                          "registro_s", "excepcion_tiempo", "excepcion_gps"])
         def safe(value):
@@ -103,12 +103,14 @@ class ExportView(APIView):
             return "'"+text if text.startswith(("=", "+", "-", "@", "\t", "\r")) else text
         for visit in visits.order_by("pk"):
             data = visit_data(visit)
-            exceptions = {e.tipo: e.decision for e in visit.excepciones.all()}
+            exceptions = list(visit.excepciones.order_by("pk"))
+            def decisions(kind):
+                return "; ".join(f"{e.scope}:{e.decision}" for e in exceptions if e.tipo == kind)
             writer.writerow([safe(value) for value in [visit.pk, visit.tienda_snapshot.get("name", visit.tienda.nombre), visit.origen,
                 visit.contrato_id, data["period"], data["quota"], data["quotaCount"], WORK_STATUS_LABELS[data["workStatus"]], visit.estado,
-                data["startedAt"], data["formOpenedAt"], data["expiresAt"], data["submittedAt"], data["completedAt"],
+                data["startedAt"], data["physicalEndedAt"], data["formOpenedAt"], data["expiresAt"], data["submittedAt"], data["completedAt"],
                 data["totalSeconds"], data["executionSeconds"], data["registrationSeconds"],
-                exceptions.get("time_limit", ""), exceptions.get("location", "")]])
+                decisions("time_limit"), decisions("location")]])
         response = HttpResponse("\ufeff"+output.getvalue(), content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="intervenciones-{period:%Y-%m}.csv"'
         response["Cache-Control"] = "private, no-store"

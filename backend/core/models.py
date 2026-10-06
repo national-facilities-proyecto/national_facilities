@@ -235,6 +235,7 @@ class Visita(models.Model):
         ("en_curso", "En proceso"),
         ("completada", "Finalizado"),
         ("pendiente_validacion", "En revisión"),
+        ("correccion_requerida", "Corrección requerida"),
         ("no_realizada", "No realizada"),
     ]
     ORIGEN_CHOICES = [
@@ -263,6 +264,10 @@ class Visita(models.Model):
     reclamada_en = models.DateTimeField(null=True, blank=True)
     reclamo_vence_en = models.DateTimeField(null=True, blank=True)
     iniciado_en = models.DateTimeField(null=True, blank=True)
+    terminado_en = models.DateTimeField(null=True, blank=True)
+    no_realizada_en = models.DateTimeField(null=True, blank=True)
+    intento_anterior = models.OneToOneField("self", on_delete=models.PROTECT, null=True, blank=True,
+                                          related_name="siguiente_intento")
     formulario_abierto_en = models.DateTimeField(null=True, blank=True)
     formulario_vence_en = models.DateTimeField(null=True, blank=True)
     enviado_en = models.DateTimeField(null=True, blank=True)
@@ -294,10 +299,8 @@ class Visita(models.Model):
     )
     comentario_revision_tiempo = models.TextField(blank=True)
 
-    # Excepción por ubicación no disponible (permiso denegado o sin señal
-    # GPS). El técnico puede cerrar igual dejando esta justificación; la
-    # visita queda en estado "pendiente_validacion" hasta que el
-    # supervisor de cuenta la revise y la apruebe o rechace.
+    # Campos históricos conservados. V2 registra cada etapa y decisión en
+    # Excepcion; solicitar una excepción nunca equivale a enviar a revisión.
     excepcion_ubicacion = models.BooleanField(default=False)
     justificacion_excepcion = models.TextField(blank=True)
     descripcion_fallo_ubicacion = models.TextField(blank=True)
@@ -309,7 +312,13 @@ class Visita(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["tienda", "periodo", "cuota"], condition=Q(origen="checklist", periodo__isnull=False), name="visita_cuota_mensual_unica"),
+            models.UniqueConstraint(fields=["tienda", "periodo", "cuota"], condition=Q(origen="checklist", periodo__isnull=False, vigente=True), name="visita_cuota_mensual_unica"),
+            models.UniqueConstraint(fields=["tecnico"], condition=Q(tecnico__isnull=False, iniciado_en__isnull=False,
+                enviado_en__isnull=True, estado__in=["en_curso", "pendiente_validacion"]), name="tecnico_una_ejecucion_activa"),
+            models.CheckConstraint(condition=Q(terminado_en__isnull=True) | Q(iniciado_en__isnull=False,
+                terminado_en__gte=F("iniciado_en")), name="visita_fin_fisico_despues_inicio"),
+            models.CheckConstraint(condition=Q(terminado_en__isnull=True) | Q(formulario_abierto_en__isnull=True) |
+                Q(formulario_abierto_en__gte=F("terminado_en")), name="visita_formulario_despues_fin"),
             models.UniqueConstraint(fields=["ticket_origen"], condition=Q(origen="ticket", vigente=True, ticket_origen__isnull=False), name="ticket_una_visita_vigente"),
             models.CheckConstraint(condition=Q(reclamada_en__isnull=True, reclamo_vence_en__isnull=True) | Q(origen="checklist", reclamada_en__isnull=False, reclamo_vence_en__isnull=False, reclamo_vence_en=F("reclamada_en") + timedelta(hours=2)), name="visita_reclamo_dos_horas"),
             models.CheckConstraint(condition=Q(formulario_abierto_en__isnull=True, formulario_vence_en__isnull=True) | Q(iniciado_en__isnull=False, formulario_abierto_en__isnull=False, formulario_vence_en__isnull=False, formulario_abierto_en__gte=F("iniciado_en"), formulario_vence_en=F("formulario_abierto_en") + timedelta(minutes=5)), name="visita_formulario_plazo_original"),
@@ -335,7 +344,7 @@ class Checklist(models.Model):
 class RespuestaItem(models.Model):
     RESULTADO_CHOICES = [
         ("ok", "Conforme"),
-        ("observado", "Observado"),
+        ("observado", "No conforme"),
         ("no_aplica", "No aplica"),
     ]
 
@@ -420,6 +429,7 @@ class Ticket(models.Model):
         ("programado", "Pendiente"),
         ("en_proceso", "En proceso"),
         ("pendiente_validacion", "En revisión"),
+        ("correccion_requerida", "Corrección requerida"),
         ("resuelto", "Finalizado"),
         ("cerrado", "Finalizado"),
     ]
@@ -482,6 +492,9 @@ class ReasignacionTicket(models.Model):
 class Excepcion(models.Model):
     visita = models.ForeignKey(Visita, on_delete=models.PROTECT, related_name="excepciones")
     tipo = models.CharField(max_length=20, choices=[("time_limit", "Tiempo"), ("location", "GPS")])
+    scope = models.CharField(max_length=10, choices=[("arrival", "Llegada"), ("closure", "Cierre"),
+        ("form", "Formulario"), ("legacy", "Origen no registrado")], default="legacy")
+    telemetria = models.JSONField(null=True, blank=True)
     autor = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name="excepciones_solicitadas")
     motivo = models.TextField()
     fallo = models.CharField(max_length=50, blank=True)
@@ -493,7 +506,11 @@ class Excepcion(models.Model):
     revision = models.PositiveIntegerField(default=0)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["visita", "tipo"], name="visita_tipo_excepcion_unica")]
+        constraints = [
+            models.UniqueConstraint(fields=["visita", "tipo", "scope"], name="visita_tipo_scope_excepcion_unica"),
+            models.CheckConstraint(condition=Q(scope="legacy") | Q(tipo="location", scope__in=["arrival", "closure"]) |
+                Q(tipo="time_limit", scope="form"), name="excepcion_scope_corresponde_tipo"),
+        ]
 
 
 class Evento(models.Model):

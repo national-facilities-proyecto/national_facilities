@@ -20,7 +20,7 @@ from .evidence_views import EvidenceUploadView as EvidenciaListCreateView, Evide
 from .ticket_views import TicketListCreateView, TicketDetailView, ScheduleView as TicketScheduleView
 from .report_views import DashboardView, ExportView as ReporteVisitasExportView, ReportListView as ReporteVisitasListView
 from .services import (idempotent, visible_visits, claim_visit, start_visit,
-                       open_form, save_draft, complete_visit, locked_visit, Conflict, event, validate_content, record_end_gps, finalize_reviewed_visit, asegurar_bolsa_mes_actual)
+                       open_form, save_draft, complete_visit, locked_visit, Conflict, event, validate_content, record_end_gps, finalize_reviewed_visit, asegurar_bolsa_mes_actual, request_exception, review_exception, not_performed)
 from .generation import generate_month
 from .claims import release_expired_claims
 from .input_serializers import ExceptionInputSerializer, ReviewInputSerializer
@@ -89,7 +89,7 @@ class VisitListView(APIView):
         release_expired_claims(tiendas_visibles_para(request.user))
         if self.origin:
             visits = visits.filter(origen=self.origin)
-        return Response([visit_data(v) for v in visits])
+        return Response([visit_data(v, user=request.user) for v in visits])
 
 
 class ChecklistListView(VisitListView):
@@ -104,7 +104,7 @@ class VisitPoolListView(VisitListView):
     permission_classes = [EsTecnico]
     def get(self, request):
         asegurar_bolsa_mes_actual(request.user)
-        return Response([visit_data(v) for v in visible_visits(request.user).filter(origen="checklist", tecnico__isnull=True, estado="programada")])
+        return Response([visit_data(v, user=request.user) for v in visible_visits(request.user).filter(origen="checklist", tecnico__isnull=True, estado="programada")])
 
 
 class GenerateMonthInput(serializers.Serializer):
@@ -130,7 +130,7 @@ class GenerateMonthView(APIView):
 class VisitDetailView(APIView):
     def get(self, request, pk):
         release_expired_claims(tiendas_visibles_para(request.user))
-        return Response(visit_data(get_object_or_404(visible_visits(request.user), pk=pk)))
+        return Response(visit_data(get_object_or_404(visible_visits(request.user), pk=pk), user=request.user))
 
 
 class VisitActionView(APIView):
@@ -158,86 +158,71 @@ class VisitActionView(APIView):
                 visit = submit_review(request.user, pk, request.data)
             else:
                 raise ValidationError("Acción inválida.")
-            return visit_data(visit)
+            return visit_data(visit, user=request.user)
         return Response(idempotent(request, work))
 
 
 class ExceptionRequestView(APIView):
     permission_classes = [EsTecnico]
     exception_type = None
+
     def post(self, request, pk):
         def work():
-            from django.utils import timezone
-            visit = locked_visit(request.user, pk)
-            if not visit.iniciado_en or not visit.formulario_abierto_en or visit.estado not in ("en_curso", "pendiente_validacion"):
-                raise Conflict("No hay un formulario en ejecución o pendiente.")
             payload = request.data.copy()
-            exception_type = self.exception_type
-            if exception_type is None:
-                # Los alias de urls.py conservan el tipo indicado por su URL.
-                endpoint = request.path.rstrip("/").rsplit("/", 1)[-1]
-                exception_type = {"excepcion-ubicacion": "location", "excepcion-tiempo": "time_limit"}.get(endpoint)
+            endpoint = request.path.rstrip("/").rsplit("/", 1)[-1]
+            exception_type = self.exception_type or {"excepcion-ubicacion": "location", "excepcion-tiempo": "time_limit"}.get(endpoint)
             if exception_type:
                 if payload.get("type") not in (None, exception_type):
                     raise ValidationError({"type": "El tipo de excepción no corresponde a esta ruta."})
                 payload["type"] = exception_type
-            serializer = ExceptionInputSerializer(data=payload)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
-            if data["type"] == "location":
-                validate_content(visit)
-            from .services import request_or_correct_exception
-            request_or_correct_exception(request.user, visit, data)
-            visit.estado = "pendiente_validacion"
-            newly_submitted = False
-            if not visit.enviado_en:
-                try:
-                    validate_content(visit)
-                    visit.enviado_en = timezone.now()
-                    newly_submitted = True
-                except ValidationError:
-                    pass  # Un borrador incompleto sigue pendiente; no inventa un envío aceptado.
-            visit.save(update_fields=["estado", "enviado_en"])
-            if newly_submitted:
-                event(request.user, visit, "review_submission", "Registro completo enviado para revisión",
-                      {"draftRevision": visit.borrador_revision, "submittedAt": visit.enviado_en.isoformat()})
-            if visit.ticket_origen_id:
-                Ticket.objects.filter(pk=visit.ticket_origen_id).update(estado="pendiente_validacion")
-            return visit_data(visit)
+            visit = request_exception(request.user, pk, payload)
+            return visit_data(visit, user=request.user)
         return Response(idempotent(request, work))
 
 
 class ExceptionReviewView(APIView):
     permission_classes = [EsSupervisorCuenta]
+
     def post(self, request, pk):
         def work():
-            from django.utils import timezone
-            visit = locked_visit(request.user, pk, owner=False)
-            serializer = ReviewInputSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
-            exception = get_object_or_404(visit.excepciones.select_for_update(), pk=data["exceptionId"])
-            if data["revision"] != visit.borrador_revision or data["exceptionRevision"] != exception.revision:
-                raise Conflict("El contenido o la justificación cambió. Recarga antes de tomar una decisión.")
-            decision = "approved" if data["approved"] else "rejected"
-            if exception.decision != "pending":
-                if exception.decision != decision or exception.motivo_decision != data["reason"]:
-                    raise Conflict("La excepción ya tiene una decisión registrada.")
-                return visit_data(visit)
-            if data["approved"]:
-                validate_content(visit)
-                if not visit.enviado_en:
-                    raise ValidationError({"content": "El técnico todavía debe enviar el registro completo para revisión."})
-            exception.decision = decision
-            exception.revisor = request.user
-            exception.motivo_decision = data["reason"]
-            exception.revisada_en = timezone.now()
-            exception.save()
-            from .services import audit_exception
-            audit_exception(request.user, visit, exception, "review", "Justificación "+exception.tipo+": "+decision)
-            finalize_reviewed_visit(request.user, visit)
-            return visit_data(visit)
+            visit = review_exception(request.user, pk, request.data)
+            return visit_data(visit, user=request.user)
         return Response(idempotent(request, work))
+
+
+class PendingReviewsView(APIView):
+    permission_classes = [EsSupervisorCuenta]
+
+    def get(self, request):
+        # La integridad del contenido se comprueba además para registros legacy.
+        visits = visible_visits(request.user).filter(estado="pendiente_validacion", enviado_en__isnull=False,
+            terminado_en__isnull=False, excepciones__decision="pending").distinct().order_by("enviado_en", "pk")
+        result = []
+        for visit in visits:
+            try:
+                validate_content(visit)
+                from .services import validate_persisted_closure
+                validate_persisted_closure(visit)
+            except (ValidationError, Conflict):
+                continue
+            result.append(visit_data(visit, user=request.user))
+        return Response(result)
+
+
+class WorkRecoveryView(APIView):
+    permission_classes = [EsTecnico]
+
+    def get(self, request):
+        release_expired_claims(tiendas_visibles_para(request.user))
+        visits = visible_visits(request.user).filter(tecnico=request.user, vigente=True)
+        active = visits.filter(iniciado_en__isnull=False, enviado_en__isnull=True,
+            estado__in=("en_curso", "pendiente_validacion")).first()
+        return Response({
+            "activeExecution": visit_data(active, user=request.user) if active else None,
+            "reservations": [visit_data(v, user=request.user) for v in visits.filter(origen="checklist", estado="programada", iniciado_en__isnull=True)],
+            "corrections": [visit_data(v, user=request.user) for v in visits.filter(estado="correccion_requerida")],
+            "inReview": [visit_data(v, user=request.user) for v in visits.filter(estado="pendiente_validacion", enviado_en__isnull=False)],
+        })
 
 
 class AdminViewSet(ModelViewSet):
@@ -392,26 +377,11 @@ class EvidenciaDetailView(EvidenceDetailView):
         return super().delete(request, self.client_id(request, pk))
 
 
-class VisitaNoRealizadaInput(serializers.Serializer):
-    reason = serializers.CharField(min_length=10, max_length=500)
-
-
 class VisitaNoRealizadaView(APIView):
-    permission_classes = [EsTecnico]
-
     def post(self, request, pk):
-        release_expired_claims(tiendas_visibles_para(request.user))
         def work():
-            visit = locked_visit(request.user, pk)
-            if visit.estado != "programada" or visit.iniciado_en or visit.formulario_abierto_en or visit.enviado_en or visit.completado_en:
-                raise Conflict("Solo una visita pendiente sin iniciar puede marcarse como no realizada.")
-            serializer = VisitaNoRealizadaInput(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            visit.estado = "no_realizada"
-            visit.justificacion = serializer.validated_data["reason"]
-            visit.save(update_fields=["estado", "justificacion"])
-            event(request.user, visit, "not_performed", "Visita no realizada", {"reason": visit.justificacion})
-            return visit_data(visit)
+            visit = not_performed(request.user, pk, request.data)
+            return visit_data(visit, user=request.user)
         return Response(idempotent(request, work))
 
 

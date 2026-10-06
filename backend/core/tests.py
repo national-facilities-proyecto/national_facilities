@@ -64,6 +64,8 @@ class IntegrationTests(TestCase):
             exception = Excepcion.objects.get(pk=payload["exceptionId"])
             payload.setdefault("revision", exception.visita.borrador_revision)
             payload.setdefault("exceptionRevision", exception.revision)
+        if path.endswith("/finalizar/"):
+            payload.setdefault("revision", Visita.objects.get(pk=int(path.split("/")[1])).borrador_revision)
         return self.client.post("/api/"+path, payload, format="json", HTTP_IDEMPOTENCY_KEY=key or str(uuid.uuid4()))
 
     def gps(self):
@@ -88,8 +90,23 @@ class IntegrationTests(TestCase):
             self.assertEqual(self.post(f"visitas/pool/{visit.pk}/tomar/").status_code, 200)
         return self.post(f"visitas/{visit.pk}/iniciar/", {"location": self.gps()})
 
+    def close(self, visit):
+        return self.post(f"visitas/{visit.pk}/ubicacion-cierre/", {"location": self.gps()})
+
     def open(self, visit):
-        return self.post(f"visitas/{visit.pk}/formulario/", {"location": self.gps()})
+        visit.refresh_from_db()
+        if not visit.terminado_en:
+            closed = self.close(visit)
+            self.assertEqual(closed.status_code, 200, closed.data)
+        return self.post(f"visitas/{visit.pk}/formulario/")
+
+    def expire(self, visit):
+        opened = timezone.now()-timedelta(minutes=6)
+        Visita.objects.filter(pk=visit.pk).update(iniciado_en=opened-timedelta(minutes=8),
+            terminado_en=opened-timedelta(seconds=1), formulario_abierto_en=opened,
+            formulario_vence_en=opened+timedelta(minutes=5))
+        visit.refresh_from_db()
+        return visit.formulario_vence_en
 
     def upload(self, visit, evidence_id=None):
         data = {"id": evidence_id or str(uuid.uuid4()), "foto": image_file(), "source": "gallery",
@@ -102,7 +119,8 @@ class IntegrationTests(TestCase):
         response = self.upload(visit)
         self.assertEqual(response.status_code, 201, response.data)
         evidence_id = response.data["id"]
-        draft = {"revision": 0, "answers": [], "workDescription": "", "evidenceIds": []}
+        visit.refresh_from_db()
+        draft = {"revision": visit.borrador_revision, "answers": [], "workDescription": "", "evidenceIds": []}
         if visit.origen == "checklist":
             draft["answers"] = [{"taskId": self.item.pk, "result": "conforme", "observation": "", "evidenceIds": [evidence_id]}]
         else:
@@ -138,7 +156,7 @@ class IntegrationTests(TestCase):
         self.start(visit)
         self.open(visit)
         self.draft(visit)
-        self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()}).status_code, 200)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {}).status_code, 200)
         self.assertEqual(Visita.objects.filter(estado="completada").count(), 1)
         self.login_as("account")
         dashboard = self.client.get("/api/dashboard/")
@@ -179,7 +197,7 @@ class IntegrationTests(TestCase):
         self.start(checklist)
         self.open(checklist)
         self.draft(checklist)
-        self.assertEqual(self.post(f"visitas/{checklist.pk}/finalizar/", {"location": self.gps()}).status_code, 200)
+        self.assertEqual(self.post(f"visitas/{checklist.pk}/finalizar/", {}).status_code, 200)
         self.login_as("account")
         initial = self.client.get("/api/dashboard/")
         self.assertTrue(all(row["completed"] == 0 for row in initial.data["risks"]))
@@ -193,13 +211,9 @@ class IntegrationTests(TestCase):
             self.open(visit)
             self.draft(visit)
             if index < 2:
-                self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()}).status_code, 200)
+                self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {}).status_code, 200)
             else:
-                visit.refresh_from_db()
-                visit.iniciado_en = timezone.now()-timedelta(minutes=10)
-                visit.formulario_abierto_en = timezone.now()-timedelta(minutes=6)
-                visit.formulario_vence_en = visit.formulario_abierto_en+timedelta(minutes=5)
-                visit.save()
+                self.expire(visit)
                 self.assertEqual(self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Connection failure during registration"}).status_code, 200)
         self.login_as("account")
         dashboard = self.client.get("/api/dashboard/")
@@ -348,7 +362,7 @@ class IntegrationTests(TestCase):
         clock = {"now": visit.reclamo_vence_en-timedelta(seconds=1)}
         def gps_crossing_deadline(*args):
             clock["now"] = visit.reclamo_vence_en
-            return self.gps()
+            return {**self.gps(), "validated": True}
         with patch("core.services.timezone.now", side_effect=lambda: clock["now"]), \
              patch("core.services.validate_gps", side_effect=gps_crossing_deadline):
             with self.assertRaises(Conflict), transaction.atomic():
@@ -393,10 +407,11 @@ class IntegrationTests(TestCase):
                 recovered = other_session.get(f"/api/visitas/{visit.pk}/")
                 self.assertEqual(recovered.status_code, 200)
                 self.assertEqual(recovered.data["expiresAt"], opened.data["expiresAt"])
-                self.assertEqual(recovered.data["revision"], 1)
+                self.assertEqual(recovered.data["revision"], 2)
                 self.assertEqual(other_session.get(f"/api/evidencias/{evidence_id}/archivo/").status_code, 200)
                 key = str(uuid.uuid4())
-                body = {"location": self.gps()}
+                visit.refresh_from_db()
+                body = {"revision": visit.borrador_revision}
                 complete = self.post(f"visitas/{visit.pk}/finalizar/", body, key)
                 self.assertEqual(complete.status_code, 200, complete.data)
                 replay = self.post(f"visitas/{visit.pk}/finalizar/", body, key)
@@ -415,12 +430,12 @@ class IntegrationTests(TestCase):
         self.start(visit)
         self.open(visit)
         _, draft = self.draft(visit)
-        draft["revision"] = 1
+        draft["revision"] = 2
         draft["answers"][0].update(result="no_conforme", observation="Observed damaged insulation")
         key = str(uuid.uuid4())
         response = self.post(f"visitas/{visit.pk}/borrador/", draft, key)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.post(f"visitas/{visit.pk}/borrador/", draft, key).data["revision"], 2)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/borrador/", draft, key).data["revision"], 3)
         self.assertEqual(self.post(f"visitas/{visit.pk}/borrador/", draft).status_code, 409)
         self.assertEqual(RespuestaItem.objects.count(), 1)
         self.assertEqual(RespuestaItem.objects.get().observacion, "Observed damaged insulation")
@@ -432,123 +447,92 @@ class IntegrationTests(TestCase):
             visit = self.visit(origin)
             self.start(visit)
             self.open(visit)
-            deadline = timezone.now()-timedelta(seconds=1)
-            opened = deadline - timedelta(minutes=5)
-            Visita.objects.filter(pk=visit.pk).update(iniciado_en=opened-timedelta(minutes=8), formulario_abierto_en=opened, formulario_vence_en=deadline)
-            self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()}).status_code, 409)
+            deadline = self.expire(visit)
+            self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {}).status_code, 400)
             response = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Phone powered off during registration"})
             self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(response.data["workStatus"], "in_progress")
+            self.assertIsNone(response.data["submittedAt"])
             visit.refresh_from_db()
             self.assertEqual(visit.formulario_vence_en, deadline)
-            self.assertIsNone(visit.completado_en)
-            self.assertEqual(visit.estado, "pendiente_validacion")
             self.login_as("account")
-            exception_id = response.data["exceptions"][0]["id"]
-            reviewed = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": exception_id, "approved": True, "reason": "Reviewed loss of connection"})
-            self.assertEqual(reviewed.status_code, 400)
-            self.assertEqual(visit.excepciones.get().decision, "pending")
+            reviewed = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": response.data["exceptions"][0]["id"], "approved": True, "reason": "Reviewed loss of connection"})
+            self.assertEqual(reviewed.status_code, 409)
             self.login_as("tech")
+            self.assertEqual(self.post(f"visitas/{visit.pk}/enviar-revision/", {"revision": 0}).status_code, 400)
+            self.assertEqual(self.post(f"visitas/{visit.pk}/no-realizada/", {"reason": "Attempt cannot be completed today"}).status_code, 200)
 
     def test_expired_incomplete_registration_can_be_completed_rejected_corrected_and_approved(self):
         for origin in ("checklist", "ticket"):
             visit = self.visit(origin)
             self.start(visit)
             self.open(visit)
-            opened = timezone.now()-timedelta(minutes=6)
-            deadline = opened+timedelta(minutes=5)
-            Visita.objects.filter(pk=visit.pk).update(iniciado_en=opened-timedelta(minutes=8),
-                formulario_abierto_en=opened, formulario_vence_en=deadline)
-            response = self.client.get(f"/api/visitas/{visit.pk}/")
-            self.assertEqual(response.data["workStatus"], "in_progress")
-            reason = "Phone lost connection during registration"
-            requested = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": reason})
-            self.assertEqual(requested.data["workStatus"], "in_review")
+            deadline = self.expire(visit)
+            requested = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Phone lost connection during registration"})
+            self.assertEqual(requested.data["workStatus"], "in_progress")
             self.assertIsNone(requested.data["submittedAt"])
-            exception = requested.data["exceptions"][0]
+            exception_id = requested.data["exceptions"][0]["id"]
             self.login_as("account")
-            rejected = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": exception["id"], "approved": False,
-                "reason": "Explain the connectivity failure in more detail"})
-            self.assertEqual(rejected.status_code, 200, rejected.data)
-            self.assertEqual(rejected.data["workStatus"], "in_review")
+            premature = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": exception_id, "approved": False, "reason": "Explain connectivity failure in detail"})
+            self.assertEqual(premature.status_code, 409)
             self.login_as("tech")
-            evidence_id, draft = self.draft(visit)
+            _, draft = self.draft(visit)
             visit.refresh_from_db()
-            body = {"revision": visit.borrador_revision, "location": self.gps(), "exceptions": [{"type": "time_limit",
-                "reason": "Network outage prevented uploading photographs on time", "revision": exception["revision"]}]}
+            body = {"revision": visit.borrador_revision}
             key = str(uuid.uuid4())
             submitted = self.post(f"visitas/{visit.pk}/enviar-revision/", body, key)
             self.assertEqual(submitted.status_code, 200, submitted.data)
+            self.assertEqual(submitted.data["workStatus"], "in_review")
             self.assertEqual(self.post(f"visitas/{visit.pk}/enviar-revision/", body, key).status_code, 200)
-            self.assertEqual(visit.eventos.filter(tipo="review_submission").count(), 1)
-            self.assertEqual(submitted.data["expiresAt"], deadline.isoformat())
-            self.assertEqual(visit.excepciones.count(), 1)
-            self.assertEqual(Evidencia.objects.filter(visita=visit).count(), 1)
-            self.assertEqual(self.post(f"visitas/{visit.pk}/borrador/", {**draft, "revision": visit.borrador_revision}).status_code, 409)
+            self.assertEqual(self.post(f"visitas/{visit.pk}/borrador/", {**draft, "revision": submitted.data["revision"]}).status_code, 409)
             self.login_as("account")
-            review = {"exceptionId": exception["id"], "approved": True, "reason": "Verified corrected content and justification"}
-            self.assertEqual(self.post(f"visitas/{visit.pk}/revisar/", {**review, "revision": 0}).status_code, 409)
-            self.assertEqual(self.post(f"visitas/{visit.pk}/revisar/", {**review, "exceptionRevision": 0}).status_code, 409)
-            approved = self.post(f"visitas/{visit.pk}/revisar/", review)
-            self.assertEqual(approved.status_code, 200, approved.data)
+            rejected = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": exception_id, "approved": False, "reason": "Describe the failure and recovery in detail"})
+            self.assertEqual(rejected.data["workStatus"], "correction_required")
+            self.login_as("tech")
+            self.assertEqual(self.post(f"visitas/{visit.pk}/enviar-revision/", body).status_code, 400)
+            corrected = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Network outage prevented uploading photographs on time", "revision": 0})
+            self.assertEqual(corrected.status_code, 200, corrected.data)
+            resubmitted = self.post(f"visitas/{visit.pk}/enviar-revision/", body)
+            self.assertEqual(resubmitted.status_code, 200, resubmitted.data)
+            self.login_as("account")
+            approved = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": exception_id, "approved": True, "reason": "Verified corrected justification and content"})
             self.assertEqual(approved.data["workStatus"], "finished")
-            decisions = [e["exception"] for e in approved.data["exceptionHistory"] if e["kind"] == "review"]
-            self.assertEqual([e["approved"] for e in decisions], [False, True])
-            self.assertEqual(decisions[0]["reason"], reason)
-            self.assertNotEqual(decisions[0]["reason"], decisions[1]["reason"])
-            if origin == "ticket":
-                visit.ticket_origen.refresh_from_db()
-                from .serializers import ticket_data
-                self.assertEqual(ticket_data(visit.ticket_origen)["workStatus"], "finished")
-                self.login_as("store")
-                closed = self.post(f"tickets/{visit.ticket_origen_id}/cerrar/")
-                self.assertEqual(closed.status_code, 200, closed.data)
-                self.assertEqual(closed.data["workStatus"], "finished")
-                visit.ticket_origen.refresh_from_db()
-                self.assertEqual(visit.ticket_origen.estado, "resuelto")
-                self.assertIsNone(visit.ticket_origen.cerrado_en)
+            self.assertEqual(approved.data["expiresAt"], deadline.isoformat())
+            self.assertEqual(visit.eventos.filter(tipo="review_submission").count(), 2)
+            decisions = [e["exception"]["approved"] for e in approved.data["exceptionHistory"] if e["kind"] == "review"]
+            self.assertEqual(decisions, [False, True])
             self.login_as("tech")
 
-    def test_correction_reopens_prior_approval_without_losing_time_or_gps_history(self):
+    def test_correction_preserves_independent_gps_approval_and_original_timestamps(self):
         visit = self.visit()
-        self.start(visit)
+        self.post(f"visitas/pool/{visit.pk}/tomar/")
+        gps = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "location", "scope": "arrival", "failure": "denied", "reason": "GPS permission unavailable on device"})
+        self.assertEqual(gps.status_code, 200, gps.data)
         self.open(visit)
-        evidence_id, draft = self.draft(visit)
-        gps = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "location", "failure": "denied", "reason": "GPS permission unavailable on device"})
-        opened = timezone.now()-timedelta(minutes=6)
-        Visita.objects.filter(pk=visit.pk).update(iniciado_en=opened-timedelta(minutes=8),
-            formulario_abierto_en=opened, formulario_vence_en=opened+timedelta(minutes=5))
+        _, draft = self.draft(visit)
+        self.expire(visit)
         timed = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Session expired during image upload"})
+        visit.refresh_from_db()
+        body = {"revision": visit.borrador_revision}
+        self.assertEqual(self.post(f"visitas/{visit.pk}/enviar-revision/", body).status_code, 200)
         self.login_as("account")
-        self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": gps.data["exceptions"][0]["id"], "approved": True,
-            "reason": "Confirmed unavailable GPS with evidence"})
-        rejected = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": timed.data["exceptions"][-1]["id"], "approved": False,
-            "reason": "Describe the technical observation more precisely"})
-        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": gps.data["exceptions"][0]["id"], "approved": True, "reason": "Confirmed unavailable GPS with evidence"})
+        rejected = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": timed.data["exceptions"][-1]["id"], "approved": False, "reason": "Explain the delay in more detail"})
+        self.assertEqual(rejected.data["workStatus"], "correction_required")
         self.login_as("tech")
-        corrected = self.post(f"visitas/{visit.pk}/borrador/", {**draft, "revision": 1,
-            "answers": [{"taskId": self.item.pk, "result": "no_conforme", "observation": "Insulation needs replacement", "evidenceIds": [evidence_id]}]})
+        corrected = self.post(f"visitas/{visit.pk}/borrador/", {**draft, "revision": body["revision"], "workDescription": "More precise technical description"})
         self.assertEqual(corrected.status_code, 200, corrected.data)
-        self.assertIsNone(corrected.data["submittedAt"])
-        self.assertEqual(corrected.data["exceptions"][0]["approved"], None)
-        self.assertEqual(corrected.data["exceptions"][1]["approved"], False)
-        body = {"revision": corrected.data["revision"], "exceptions": [
-            {"type": e["type"], "reason": e["reason"], "failure": e["failure"], "revision": e["revision"]}
-            for e in corrected.data["exceptions"]]}
-        invalid = self.post(f"visitas/{visit.pk}/enviar-revision/", {**body, "location": {**self.gps(), "latitude": 91}})
-        self.assertEqual(invalid.status_code, 400)
-        self.assertEqual(visit.excepciones.get(tipo="time_limit").decision, "rejected")
-        submitted = self.post(f"visitas/{visit.pk}/enviar-revision/", body)
-        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertEqual(corrected.data["submittedAt"], rejected.data["submittedAt"])
+        self.assertTrue(corrected.data["exceptions"][0]["approved"])
+        self.assertEqual(corrected.data["exceptions"][0]["revision"], 0)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Recovered after a documented network outage", "revision": 0}).status_code, 200)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/enviar-revision/", {"revision": corrected.data["revision"]}).status_code, 200)
         self.login_as("account")
-        first = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": timed.data["exceptions"][-1]["id"], "approved": True,
-            "reason": "Reviewed complete corrected description"})
-        self.assertEqual(first.data["workStatus"], "in_review")
-        last = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": gps.data["exceptions"][0]["id"], "approved": True,
-            "reason": "Reviewed GPS exception for corrected record"})
-        self.assertEqual(last.data["workStatus"], "finished")
-        self.assertEqual(len(last.data["exceptions"]), 2)
-        self.assertEqual(visit.eventos.filter(tipo="review").count(), 4)
-        self.assertTrue(any(e["kind"] == "exception_reopened" for e in last.data["exceptionHistory"]))
+        accepted = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": timed.data["exceptions"][-1]["id"], "approved": True, "reason": "Reviewed corrected delay justification"})
+        self.assertEqual(accepted.data["workStatus"], "finished")
+        for key in ("startedAt", "physicalEndedAt", "formOpenedAt", "expiresAt"):
+            self.assertEqual(accepted.data[key], rejected.data[key])
+        self.assertEqual(visit.eventos.filter(tipo="review").count(), 3)
 
     def test_gps_validation_and_content(self):
         visit = self.visit()
@@ -564,12 +548,12 @@ class IntegrationTests(TestCase):
         ]:
             self.assertEqual(self.post(f"visitas/{visit.pk}/iniciar/", {"location": gps}).status_code, 400)
         self.assertEqual(self.start(visit).status_code, 200)
-        self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()}).status_code, 409)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {}).status_code, 409)
         self.open(visit)
-        self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()}).status_code, 400)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {}).status_code, 400)
 
-    def test_deadline_is_enforced_at_acceptance_for_both_origins(self):
-        from .services import validate_gps
+    def test_deadline_is_enforced_at_acceptance_without_new_gps_for_both_origins(self):
+        from .services import validate_content
         for origin in ("checklist", "ticket"):
             visit = self.visit(origin)
             self.start(visit)
@@ -578,17 +562,14 @@ class IntegrationTests(TestCase):
             visit.refresh_from_db()
             deadline = visit.formulario_vence_en
             with patch("core.services.timezone.now", return_value=deadline):
-                self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()}).status_code, 409)
+                self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {}).status_code, 409)
             clock = [deadline-timedelta(seconds=1)]
-            def validate_then_expire(data, current):
-                location = validate_gps(data, current)
+            def content_then_expire(current):
+                validate_content(current)
                 clock[0] = deadline
-                return location
-            with patch("core.services.timezone.now", side_effect=lambda: clock[0]), patch("core.services.validate_gps", side_effect=validate_then_expire):
-                self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()}).status_code, 409)
-            visit.refresh_from_db()
-            self.assertIsNone(visit.enviado_en)
-            self.assertIsNone(visit.completado_en)
+            with patch("core.services.timezone.now", side_effect=lambda: clock[0]), patch("core.services.validate_content", side_effect=content_then_expire):
+                self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/", {}).status_code, 409)
+            self.assertEqual(self.post(f"visitas/{visit.pk}/no-realizada/", {"reason": "Attempt cannot be completed today"}).status_code, 200)
 
     def test_foreign_resource_permissions(self):
         visit = self.visit()
@@ -618,8 +599,8 @@ class IntegrationTests(TestCase):
         invalid = {"id": str(uuid.uuid4()), "foto": SimpleUploadedFile("file.jpg", b"not an image", content_type="image/jpeg"),
                    "source": "gallery", "capturedAt": timezone.now().isoformat(), "visitId": visit.pk, "taskId": self.item.pk}
         self.assertEqual(self.client.post("/api/evidencias/", invalid, format="multipart").status_code, 400)
-        self.post(f"visitas/{visit.pk}/borrador/", {"revision": 0, "answers": [{"taskId": self.item.pk, "result": "conforme", "observation": "", "evidenceIds": [evidence_id]}], "workDescription": "", "evidenceIds": []})
-        self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()})
+        self.post(f"visitas/{visit.pk}/borrador/", {"revision": 1, "answers": [{"taskId": self.item.pk, "result": "conforme", "observation": "", "evidenceIds": [evidence_id]}], "workDescription": "", "evidenceIds": []})
+        self.post(f"visitas/{visit.pk}/finalizar/", {})
         self.assertEqual(self.client.delete(f"/api/evidencias/{evidence_id}/").status_code, 409)
         self.assertEqual(self.upload(visit).status_code, 409)
         # Una evidencia histórica puede estar asociada solo mediante checklist.
@@ -659,7 +640,8 @@ class IntegrationTests(TestCase):
         self.assertEqual(self.post(f"visitas/{old_visit}/iniciar/", {"location": self.gps()}).status_code, 404)
         self.login_as("othertech")
         current = Visita.objects.get(pk=second.data["visitId"])
-        self.assertEqual(self.start(current).status_code, 200)
+        with patch("core.services.timezone.now", return_value=current.fecha_programada):
+            self.assertEqual(self.start(current).status_code, 200)
         self.login_as("account")
         scheduled.update(technicianId=self.users["tech"].pk, revision=2)
         for state in ("en_proceso", "pendiente_validacion", "resuelto", "cerrado"):
@@ -750,48 +732,39 @@ class IntegrationTests(TestCase):
         for origin in ("checklist", "ticket"):
             visit = self.visit(origin)
             self.start(visit)
-            self.post(f"visitas/{visit.pk}/formulario/", {"failure": "unavailable"})
+            gps = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "location", "scope": "closure", "failure": "denied", "reason": "GPS permission unavailable at physical closure"})
+            self.assertEqual(gps.status_code, 200, gps.data)
+            self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/").status_code, 200)
             self.draft(visit)
-            gps = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "location", "failure": "denied", "reason": "GPS permission unavailable on device"})
-            self.assertEqual(gps.status_code, 200)
-            opened = timezone.now()-timedelta(minutes=6)
-            Visita.objects.filter(pk=visit.pk).update(iniciado_en=opened-timedelta(minutes=8), formulario_abierto_en=opened, formulario_vence_en=opened+timedelta(minutes=5))
+            self.expire(visit)
             timed = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Recovered after session expiration"})
-            self.assertEqual(timed.status_code, 200)
-            self.assertEqual(len(timed.data["exceptions"]), 2)
+            visit.refresh_from_db()
+            self.assertEqual(self.post(f"visitas/{visit.pk}/enviar-revision/", {"revision": visit.borrador_revision}).status_code, 200)
             self.login_as("account")
-            body = {"exceptionId": gps.data["exceptions"][0]["id"], "approved": True, "reason": "Reviewed complete content and GPS issue"}
-            first = self.post(f"visitas/{visit.pk}/revisar/", body)
-            self.assertEqual(first.status_code, 200, first.data)
+            first = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": gps.data["exceptions"][0]["id"], "approved": True, "reason": "Reviewed complete content and GPS issue"})
             self.assertEqual(first.data["status"], "pending_approval")
-            self.assertEqual(self.post(f"visitas/{visit.pk}/revisar/", body).status_code, 200)
-            body["exceptionId"] = timed.data["exceptions"][-1]["id"]
-            second = self.post(f"visitas/{visit.pk}/revisar/", body)
-            self.assertEqual(second.status_code, 200, second.data)
+            second = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": timed.data["exceptions"][-1]["id"], "approved": True, "reason": "Reviewed complete content and delay issue"})
             self.assertEqual(second.data["status"], "completed")
-            self.assertIsNone(second.data["endLocation"])
-            self.assertTrue(all(e["reviewerId"] == self.users["account"].pk for e in second.data["exceptions"]))
+            self.assertIsNone(second.data["endLocation"]["latitude"])
+            self.assertFalse(second.data["endLocation"]["validated"])
             self.assertEqual(visit.eventos.filter(tipo="review").count(), 2)
-            if origin == "ticket":
-                visit.ticket_origen.refresh_from_db()
-                self.assertEqual(visit.ticket_origen.estado, "resuelto")
             self.login_as("tech")
 
-    def test_time_approval_then_real_gps_can_finish(self):
+    def test_time_approval_uses_previously_persisted_gps_and_cannot_replace_it(self):
         visit = self.visit()
         self.start(visit)
-        self.post(f"visitas/{visit.pk}/formulario/", {"failure": "unavailable"})
+        self.open(visit)
         self.draft(visit)
-        opened = timezone.now()-timedelta(minutes=6)
-        Visita.objects.filter(pk=visit.pk).update(iniciado_en=opened-timedelta(minutes=8), formulario_abierto_en=opened, formulario_vence_en=opened+timedelta(minutes=5))
-        response = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Device powered off during registration"})
+        self.expire(visit)
+        requested = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "time_limit", "reason": "Device powered off during registration"})
+        visit.refresh_from_db()
+        original = visit.ubicacion_cierre.copy()
+        self.post(f"visitas/{visit.pk}/enviar-revision/", {"revision": visit.borrador_revision})
+        self.assertEqual(self.close(visit).status_code, 409)
         self.login_as("account")
-        review = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": response.data["exceptions"][0]["id"], "approved": True, "reason": "Checked complete content and timing issue"})
-        self.assertEqual(review.data["status"], "pending_approval")
-        self.login_as("tech")
-        gps = self.post(f"visitas/{visit.pk}/ubicacion-cierre/", {"location": self.gps()})
-        self.assertEqual(gps.status_code, 200, gps.data)
-        self.assertEqual(gps.data["status"], "completed")
+        approved = self.post(f"visitas/{visit.pk}/revisar/", {"exceptionId": requested.data["exceptions"][0]["id"], "approved": True, "reason": "Checked complete content and timing issue"})
+        self.assertEqual(approved.data["status"], "completed")
+        self.assertEqual(approved.data["endLocation"], original)
 
     def test_database_constraints_and_report_scope(self):
         visit = self.visit()
@@ -802,7 +775,7 @@ class IntegrationTests(TestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             Visita.objects.filter(pk=visit.pk).update(formulario_vence_en=timezone.now()+timedelta(minutes=10))
         self.draft(visit)
-        self.post(f"visitas/{visit.pk}/finalizar/", {"location": self.gps()})
+        self.post(f"visitas/{visit.pk}/finalizar/", {})
         self.contract.activo = False
         self.contract.save()
         self.login_as("account")
@@ -852,7 +825,7 @@ class IntegrationTests(TestCase):
         self.assertEqual(visit.formulario_vence_en-visit.formulario_abierto_en, timedelta(minutes=5))
         self.assertGreater(visit.formulario_abierto_en-visit.iniciado_en, timedelta(minutes=29))
         self.assertTrue(visit.ubicacion_cierre["validated"])
-        self.assertTrue(visit.eventos.filter(tipo="end_gps").exists())
+        self.assertTrue(visit.eventos.filter(tipo="physical_end").exists())
         self.assertIsNone(visit.enviado_en)
         self.assertIsNone(visit.completado_en)
         deadline = visit.formulario_vence_en
@@ -871,38 +844,35 @@ class IntegrationTests(TestCase):
         visit = self.visit()
         self.start(visit)
         gps = {**self.gps(), "latitude": 0, "longitude": 0}
-        response = self.post(f"visitas/{visit.pk}/formulario/", {"location": gps})
+        response = self.post(f"visitas/{visit.pk}/ubicacion-cierre/", {"location": gps})
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/").status_code, 409)
         visit.refresh_from_db()
+        self.assertIsNone(visit.terminado_en)
         self.assertIsNone(visit.formulario_abierto_en)
-        self.assertIsNone(visit.formulario_vence_en)
         self.assertIsNone(visit.ubicacion_cierre)
 
-    def test_checklist_unavailable_gps_keeps_existing_exception_path(self):
+    def test_checklist_unavailable_gps_uses_explicit_closure_exception_without_submission(self):
         visit = self.visit()
         self.start(visit)
-        self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/", {"failure": "denied"}).status_code, 200)
-        visit.refresh_from_db()
-        self.assertIsNone(visit.ubicacion_cierre)
-        self.assertIsNone(visit.completado_en)
-        self.assertTrue(visit.eventos.filter(tipo="end_gps_unavailable").exists())
-        self.draft(visit)
-        response = self.post(f"visitas/{visit.pk}/excepciones/", {
-            "type": "location", "failure": "denied", "reason": "GPS permission unavailable after finishing the walkthrough.",
-        })
+        response = self.post(f"visitas/{visit.pk}/excepciones/", {"type": "location", "scope": "closure", "failure": "denied", "reason": "GPS permission unavailable after finishing the walkthrough"})
         self.assertEqual(response.status_code, 200, response.data)
-        visit.refresh_from_db()
-        self.assertEqual(visit.estado, "pendiente_validacion")
-        self.assertIsNone(visit.completado_en)
+        self.assertEqual(response.data["workStatus"], "in_progress")
+        self.assertIsNone(response.data["submittedAt"])
+        self.assertIsNone(response.data["formOpenedAt"])
+        self.assertIsNotNone(response.data["physicalEndedAt"])
+        self.assertIsNone(response.data["endLocation"]["latitude"])
+        self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/").status_code, 200)
 
-    def test_ticket_form_opening_does_not_require_checklist_close_gps(self):
+    def test_ticket_form_requires_its_own_physical_end_before_opening(self):
         visit = self.visit("ticket")
         self.start(visit)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/").status_code, 409)
+        self.assertEqual(self.close(visit).status_code, 200)
         self.assertEqual(self.post(f"visitas/{visit.pk}/formulario/").status_code, 200)
         visit.refresh_from_db()
-        self.assertIsNone(visit.ubicacion_cierre)
+        self.assertTrue(visit.ubicacion_cierre["validated"])
         self.assertEqual(visit.formulario_vence_en-visit.formulario_abierto_en, timedelta(minutes=5))
-
 
 class ConcurrencyTests(TransactionTestCase):
     def setUp(self):
@@ -962,8 +932,11 @@ class ConcurrencyTests(TransactionTestCase):
         visit.tecnico = self.users["tech"]
         visit.iniciado_en = timezone.now()-timedelta(minutes=10)
         visit.estado = "en_curso"
+        visit.terminado_en = timezone.now()-timedelta(seconds=1)
+        from .gps import validate_gps
+        visit.ubicacion_cierre = validate_gps({"latitude": float(self.store.latitud), "longitude": float(self.store.longitud), "accuracy": 8, "capturedAt": timezone.now().timestamp()*1000}, visit)
         visit.save()
-        results = self.parallel(lambda client, name: client.post(f"/api/visitas/{visit.pk}/formulario/", {"location": {"latitude": float(self.store.latitud), "longitude": float(self.store.longitud), "accuracy": 8, "capturedAt": timezone.now().timestamp()*1000}}, format="json",
+        results = self.parallel(lambda client, name: client.post(f"/api/visitas/{visit.pk}/formulario/", {}, format="json",
             HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4())).data, ["tech", "tech"])
         self.assertEqual(results[0]["expiresAt"], results[1]["expiresAt"])
         visit.refresh_from_db()
@@ -975,6 +948,9 @@ class ConcurrencyTests(TransactionTestCase):
         opened = timezone.now()
         visit.tecnico = self.users["tech"]
         visit.iniciado_en = opened-timedelta(minutes=8)
+        visit.terminado_en = opened
+        from .gps import validate_gps
+        visit.ubicacion_cierre = validate_gps({"latitude": float(self.store.latitud), "longitude": float(self.store.longitud), "accuracy": 8, "capturedAt": timezone.now().timestamp()*1000}, visit)
         visit.formulario_abierto_en = opened
         visit.formulario_vence_en = opened+timedelta(minutes=5)
         visit.estado = "en_curso"
@@ -1003,7 +979,7 @@ class ConcurrencyTests(TransactionTestCase):
         evidence = Evidencia.objects.create(visita=visit, checklist=visit.checklist, item=self.item, autor=self.users["tech"], foto=image_file())
         RespuestaItem.objects.create(checklist=visit.checklist, item=self.item, resultado="ok")
         gps = {"latitude": float(self.store.latitud), "longitude": float(self.store.longitud), "accuracy": 8, "capturedAt": timezone.now().timestamp()*1000}
-        results = self.parallel(lambda client, name: client.post(f"/api/visitas/{visit.pk}/finalizar/", {"location": gps}, format="json", HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4())).data, ["tech", "tech"])
+        results = self.parallel(lambda client, name: client.post(f"/api/visitas/{visit.pk}/finalizar/", {"revision": 0}, format="json", HTTP_IDEMPOTENCY_KEY=str(uuid.uuid4())).data, ["tech", "tech"])
         self.assertEqual(results[0]["completedAt"], results[1]["completedAt"])
         self.assertEqual(visit.eventos.filter(tipo="complete").count(), 1)
 
@@ -1026,7 +1002,7 @@ class ConcurrencyTests(TransactionTestCase):
         ticket = Ticket.objects.create(tienda=self.store, categoria=self.category, urgencia=self.urgency,
             reportado_por=self.users["store"], tecnico_asignado=self.users["tech"], estado="programado", descripcion="Reported issue")
         visit = Visita(tienda=self.store, origen="ticket", tecnico=self.users["tech"], ticket_origen=ticket,
-                       fecha_programada=timezone.now()+timedelta(hours=1))
+                       fecha_programada=timezone.now()-timedelta(seconds=1))
         snapshot(visit, self.contract)
         visit.save()
         gps = {"latitude": float(self.store.latitud), "longitude": float(self.store.longitud),

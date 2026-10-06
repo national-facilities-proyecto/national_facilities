@@ -85,4 +85,4 @@ def visitas_continuables_para(usuario):
         return Visita.objects.none()
     # Solo la ejecución propia iniciada; no amplía la cobertura de trabajos nuevos.
     return Visita.objects.filter(tecnico=usuario, vigente=True, iniciado_en__isnull=False,
-        estado__in=("en_curso", "pendiente_validacion"))
+        estado__in=("en_curso", "pendiente_validacion", "correccion_requerida"))

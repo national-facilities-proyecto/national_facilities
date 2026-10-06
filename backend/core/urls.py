@@ -37,6 +37,8 @@ urlpatterns = [
     path("visitas/", views.VisitListView.as_view(), name="visitas-list"),
     path("visitas/pool/", views.VisitPoolListView.as_view(), name="visitas-pool"),
     path("visitas/programadas/", views.ScheduledVisitListView.as_view(), name="visitas-programadas"),
+    path("visitas/recuperacion/", views.WorkRecoveryView.as_view(), name="visitas-recuperacion"),
+    path("revisiones/pendientes/", views.PendingReviewsView.as_view(), name="revisiones-pendientes"),
     path("visitas/<int:pk>/", views.VisitDetailView.as_view(), name="visita-detail"),
     path("visitas/pool/<int:pk>/tomar/", views.VisitActionView.as_view(action="claim"), name="visita-tomar"),
     path("visitas/<int:pk>/iniciar/", views.VisitActionView.as_view(action="start"), name="visita-iniciar"),
