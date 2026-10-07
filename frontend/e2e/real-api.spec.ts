@@ -982,7 +982,7 @@ test('No realizado atención: reabre incidencia, NF reprograma otro intento y pu
       technicianId,
       scheduledAt: new Date(Date.now() + 3600000).toISOString(),
       priorityId,
-      reason: '',
+      reason: 'Reprogramación posterior a atención no realizada.',
       revision: reopened.revision,
     }),
   )
