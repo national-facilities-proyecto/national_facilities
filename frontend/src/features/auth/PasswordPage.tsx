@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from './AuthProvider'
 import { Alert, Button, Card, Input, PageHeader } from '../../components/ui'
 import { AppError, errorMessage } from '../../services/errors'
+import { roleHomes } from './session'
 export default function PasswordPage() {
   const auth = useAuth()
+  const navigate = useNavigate()
   const [currentPassword, setCurrentPassword] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -31,14 +33,20 @@ export default function PasswordPage() {
               setError('Usa al menos 8 caracteres y confirma la misma contraseña.')
               return
             }
+            const firstLogin = !auth.session?.user.passwordInitialized
+            const home = auth.session ? roleHomes[auth.session.user.role] : '/'
             setBusy(true)
             void auth
               .changePassword(password, currentPassword, confirmation)
               .then(() => {
-                setMessage('Cambio registrado correctamente.')
                 setPassword('')
                 setConfirmation('')
                 setCurrentPassword('')
+                if (firstLogin) {
+                  navigate(home, { replace: true })
+                  return
+                }
+                setMessage('Cambio registrado correctamente.')
               })
               .catch((cause) => {
                 setError(errorMessage(cause))
