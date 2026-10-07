@@ -352,10 +352,7 @@ test('indicador real: dos tickets por tienda, checklist separado y contrato dupl
     .getByLabel('Confirmar contraseña', { exact: true })
     .fill('Monthly-test-new-secure-2026!')
   await reportPage.getByRole('button', { name: 'Guardar contraseña', exact: true }).click()
-  await expect(
-    reportPage.getByText('Cambio registrado correctamente.', { exact: false }),
-  ).toBeVisible()
-  await reportPage.goto('/supervisor/tickets')
+  await expect(reportPage).toHaveURL(/\/supervisor\/tickets$/)
   await expect(
     reportPage.getByRole('heading', { name: 'Mis incidencias', exact: true }),
   ).toBeVisible()
