@@ -43,7 +43,7 @@ export default function PasswordPage() {
                 setConfirmation('')
                 setCurrentPassword('')
                 if (firstLogin) {
-                  navigate(home, { replace: true })
+                  void navigate(home, { replace: true })
                   return
                 }
                 setMessage('Cambio registrado correctamente.')
