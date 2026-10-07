@@ -35,6 +35,8 @@ export function useVisitEditor(initial: Visit) {
   const version = useRef(0)
   const latest = useRef(visit)
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
+  const queuedWrites = useRef(0)
+  const evidenceRevisionConflict = useRef(false)
   const mounted = useRef(true)
   const back = visit.origin === 'checklist' ? '/checklists' : '/routes'
   const mustComplete = false
@@ -96,32 +98,35 @@ export function useVisitEditor(initial: Visit) {
     setDirty(true)
     setError('')
   }
-  const save = useCallback(async () => {
+  const persistDraft = useCallback(async () => {
+    if (evidenceRevisionConflict.current)
+      throw new AppError(
+        'conflict',
+        'Consulta y concilia la versión del servidor antes de guardar.',
+      )
     const capturedVersion = version.current
     const snapshot = latest.current
+    const confirmed = await repos.checklists.saveDraft(snapshot.id, {
+      answers: snapshot.answers,
+      workDescription: snapshot.workDescription,
+      evidenceIds: snapshot.evidenceIds,
+      revision: confirmedRevision.current,
+    })
+    confirmedRevision.current = confirmed.revision ?? confirmedRevision.current
+    if (mounted.current && capturedVersion === version.current) {
+      latest.current = confirmed
+      setVisit(confirmed)
+      setDirty(false)
+      setError('')
+    }
+  }, [repos])
+  const enqueueWrite = useCallback(async (work: () => Promise<void>) => {
+    queuedWrites.current++
     setSaving(true)
-    const request = saveQueue.current
-      .catch(() => undefined)
-      .then(async () => {
-        const confirmed = await repos.checklists.saveDraft(snapshot.id, {
-          answers: snapshot.answers,
-          workDescription: snapshot.workDescription,
-          evidenceIds: snapshot.evidenceIds,
-          revision: confirmedRevision.current,
-        })
-        confirmedRevision.current = confirmed.revision ?? confirmedRevision.current
-        if (mounted.current && capturedVersion === version.current) {
-          latest.current = confirmed
-          setVisit(confirmed)
-        }
-      })
+    const request = saveQueue.current.catch(() => undefined).then(work)
     saveQueue.current = request
     try {
       await request
-      if (mounted.current && capturedVersion === version.current) {
-        setDirty(false)
-        setError('')
-      }
     } catch (cause) {
       if (mounted.current) {
         setError(errorMessage(cause))
@@ -130,9 +135,11 @@ export function useVisitEditor(initial: Visit) {
       if (cause instanceof AppError && cause.code === 'conflict') setConflict(true)
       throw cause
     } finally {
-      if (mounted.current) setSaving(false)
+      queuedWrites.current--
+      if (mounted.current) setSaving(queuedWrites.current > 0)
     }
-  }, [repos])
+  }, [])
+  const save = useCallback(() => enqueueWrite(persistDraft), [enqueueWrite, persistDraft])
   const consultRemote = async () => {
     try {
       setRemote(await repos.visits.get(visit.id))
@@ -143,6 +150,7 @@ export function useVisitEditor(initial: Visit) {
   const acceptRemote = () => {
     if (!remote) return
     confirmedRevision.current = remote.revision ?? 0
+    evidenceRevisionConflict.current = false
     latest.current = remote
     version.current++
     setVisit(remote)
@@ -164,6 +172,7 @@ export function useVisitEditor(initial: Visit) {
       }
     })
     confirmedRevision.current = remote.revision ?? 0
+    evidenceRevisionConflict.current = false
     setConflict(false)
     setRemote(undefined)
     update({ ...remote, answers, workDescription: local.workDescription })
@@ -191,28 +200,73 @@ export function useVisitEditor(initial: Visit) {
   const capture = async (photo: Evidence, taskIdOverride?: number) => {
     const taskId = taskIdOverride ?? (step.kind === 'camera' ? step.taskId : undefined)
     setPendingPhoto({ photo, taskId })
-    const oldIds = taskId
-      ? (latest.current.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
-      : latest.current.evidenceIds
-    await repos.evidence.put({ ...photo, taskId, visitId: latest.current.id })
-    if (taskId) patchAnswer(taskId, { evidenceIds: [...new Set([...oldIds, photo.id])] })
-    else update({ evidenceIds: [...new Set([...oldIds, photo.id])] })
-    await save()
+    await enqueueWrite(async () => {
+      await syncEvidenceRevision(
+        () => repos.evidence.put({ ...photo, taskId, visitId: latest.current.id }),
+        photo.id,
+        true,
+        taskId,
+      )
+      const oldIds = taskId
+        ? (latest.current.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
+        : latest.current.evidenceIds
+      if (taskId) patchAnswer(taskId, { evidenceIds: [...new Set([...oldIds, photo.id])] })
+      else update({ evidenceIds: [...new Set([...oldIds, photo.id])] })
+      await persistDraft()
+    })
     setPendingPhoto(undefined)
   }
+  const syncEvidenceRevision = async (
+    mutation: () => Promise<void>,
+    id: string,
+    associated: boolean,
+    taskId?: number,
+  ) => {
+    if (evidenceRevisionConflict.current)
+      throw new AppError(
+        'conflict',
+        'Consulta y concilia la versión del servidor antes de cambiar fotografías.',
+      )
+    const previousRevision = confirmedRevision.current
+    await mutation()
+    const refreshed = await repos.visits.get(latest.current.id)
+    // El mock representa un borrador sin guardados como revisión 0; la API debe dar su versión.
+    const refreshedRevision = refreshed.revision ?? (repos.source === 'mock' ? 0 : undefined)
+    const ids = taskId
+      ? (refreshed.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
+      : refreshed.evidenceIds
+    // POST idempotente no incrementa la revisión. GET debe confirmar la asociación.
+    // Las evidencias del repositorio mock son locales y tampoco mutan el borrador.
+    const unchanged =
+      refreshedRevision === previousRevision &&
+      (repos.source === 'mock' || ids.includes(id) === associated)
+    if (
+      registrationEditable(refreshed) &&
+      typeof refreshedRevision === 'number' &&
+      (refreshedRevision === previousRevision + 1 || unchanged)
+    ) {
+      confirmedRevision.current = refreshedRevision
+      return
+    }
+    evidenceRevisionConflict.current = true
+    setRemote(refreshed)
+    setConflict(true)
+    throw new AppError(
+      'conflict',
+      'La revisión cambió durante la mutación de evidencia. Tu editor se conserva; consulta y concilia la versión del servidor antes de guardar.',
+    )
+  }
   const remove = (id: string, taskId?: number) => {
-    void repos.evidence
-      .remove(id)
-      .then(() => {
-        if (taskId) {
-          const answer = latest.current.answers.find((item) => item.taskId === taskId)
-          patchAnswer(taskId, {
-            evidenceIds: answer?.evidenceIds.filter((item) => item !== id) ?? [],
-          })
-        } else update({ evidenceIds: latest.current.evidenceIds.filter((item) => item !== id) })
-        void save().catch(() => undefined)
-      })
-      .catch((cause) => setError(errorMessage(cause)))
+    void enqueueWrite(async () => {
+      await syncEvidenceRevision(() => repos.evidence.remove(id), id, false, taskId)
+      if (taskId) {
+        const answer = latest.current.answers.find((item) => item.taskId === taskId)
+        patchAnswer(taskId, {
+          evidenceIds: answer?.evidenceIds.filter((item) => item !== id) ?? [],
+        })
+      } else update({ evidenceIds: latest.current.evidenceIds.filter((item) => item !== id) })
+      await persistDraft()
+    }).catch((cause) => setError(errorMessage(cause)))
   }
   const applyConfirmed = (next: Visit) => {
     latest.current = next
