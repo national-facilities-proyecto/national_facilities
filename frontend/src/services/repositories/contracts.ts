@@ -58,6 +58,7 @@ export interface VisitRepository {
   recordEndGps(id: number, location: Coordinates): Promise<Visit>
   submitReview(id: number, input: ReviewSubmission): Promise<Visit>
   complete(id: number, input: ReviewSubmission): Promise<Visit>
+  markNotPerformed(id: number, reason: string): Promise<Visit>
   requestException(id: number, input: ExceptionInput): Promise<Visit>
   requestTimeException(id: number, reason: string, revision?: number): Promise<Visit>
   recovery(options?: RequestOptions): Promise<WorkRecovery>

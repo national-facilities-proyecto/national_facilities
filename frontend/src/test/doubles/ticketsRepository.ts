@@ -141,7 +141,7 @@ export function createTicketsRepository(): NonNullable<Repositories['tickets']> 
           text: `${ticket.technicianId ? 'Reprogramación / reasignación' : 'Programación'}: ${technician.name}, ${scheduledAt}. ${reason.trim()}`,
         })
         Object.assign(ticket, { technicianId, scheduledAt, priority, status: 'scheduled' })
-        let visit = db.visits.find((item) => item.ticketId === id)
+        let visit = db.visits.find((item) => item.ticketId === id && item.status !== 'cancelled')
         if (visit) Object.assign(visit, { technicianId, scheduledAt, status: 'claimed' })
         else {
           visit = {
@@ -166,6 +166,7 @@ export function createTicketsRepository(): NonNullable<Repositories['tickets']> 
           }
           db.visits.push(visit)
         }
+        ticket.visitId = visit.id
         return ticket
       })
     },

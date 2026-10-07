@@ -79,6 +79,67 @@ function audit(
 }
 export function createVisitsRepository(): Repositories['visits'] {
   const repository: Repositories['visits'] = {
+    async markNotPerformed(id, reason) {
+      return mutate((db) => {
+        const user = currentUser(db)
+        allow(user, ['technician', 'account_supervisor'])
+        const visit = getVisit(db, id, user.role === 'technician')
+        required(
+          ['claimed', 'in_progress', 'correction_required'].includes(visit.status) &&
+            !visit.completedAt,
+          'La ejecución no admite No realizado.',
+        )
+        required(
+          visit.startedAt || (user.role === 'account_supervisor' && visit.origin === 'ticket'),
+          'Registra llegada antes de marcar No realizado.',
+        )
+        required(
+          reason.trim().length >= 10 && reason.trim().length <= 500,
+          'Explica el motivo en 10 a 500 caracteres.',
+        )
+        required(
+          visit.origin !== 'checklist' || visit.tasks.length,
+          'La obligación histórica requiere tareas publicadas.',
+        )
+        const ticket = visit.ticketId ? getTicket(db, visit.ticketId) : undefined
+        visit.status = 'cancelled'
+        visit.notPerformedAt = new Date().toISOString()
+        if (ticket) {
+          ticket.status = 'open'
+          ticket.technicianId = undefined
+          ticket.scheduledAt = undefined
+          ticket.visitId = undefined
+          ticket.revision = (ticket.revision ?? 0) + 1
+          ticket.history.push({
+            id: crypto.randomUUID(),
+            actorId: user.id,
+            at: visit.notPerformedAt,
+            text: `Intento no realizado. ${reason.trim()}`,
+          })
+        } else {
+          // El double simula la publicación backend; la UI solo consume sus respuestas.
+          db.visits.push({
+            id: Math.max(0, ...db.visits.map((item) => item.id)) + 1,
+            origin: 'checklist',
+            storeId: visit.storeId,
+            storeSnapshot: structuredClone(visit.storeSnapshot),
+            scheduledAt: visit.scheduledAt,
+            period: visit.period,
+            quota: visit.quota,
+            quotaCount: visit.quotaCount,
+            previousAttemptId: visit.id,
+            status: 'available',
+            radiusMeters: visit.radiusMeters,
+            tasks: structuredClone(visit.tasks),
+            answers: [],
+            evidenceIds: [],
+            workDescription: '',
+            revision: 0,
+          })
+        }
+        return operationalVisit(visit)
+      })
+    },
     async list(options) {
       return (await listVisits('ticket', options)).map(operationalVisit)
     },

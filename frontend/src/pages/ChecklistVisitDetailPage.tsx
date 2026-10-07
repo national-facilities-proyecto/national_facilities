@@ -86,6 +86,12 @@ export default function ChecklistVisitDetailPage() {
           <VisitRecord visit={visit} />
         </>
       )}
+      {visit.phase === 'not_performed' && (
+        <>
+          <Alert>No realizado no cuenta como trabajo completado.</Alert>
+          <VisitRecord visit={visit} />
+        </>
+      )}
       {visit.exception?.approved === false && (
         <Alert>Excepción rechazada: {visit.exception.reviewReason}</Alert>
       )}

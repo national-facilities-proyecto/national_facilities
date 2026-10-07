@@ -50,6 +50,35 @@ function transport(response: unknown = rawVisit) {
   vi.stubGlobal('fetch', fetcher)
   return { repo: createHttpRepositories('http://api.test').visits, fetcher }
 }
+it('No realizado envía únicamente reason y conserva el estado y cronología del backend', async () => {
+  const response = {
+    ...rawVisit,
+    status: 'cancelled',
+    workStatus: 'cancelled',
+    phase: 'not_performed',
+    readOnly: true,
+    occupiesTechnician: false,
+    notPerformedAt: '2026-10-05T10:02:00Z',
+  }
+  const { repo, fetcher } = transport(response)
+  const result = await repo.markNotPerformed(1, 'El acceso a la tienda permanece cerrado.')
+  expect(fetcher.mock.calls[0][0]).toBe('http://api.test/visitas/1/no-realizada/')
+  expect(fetcher.mock.calls[0][1].method).toBe('POST')
+  expect(JSON.parse(fetcher.mock.calls[0][1].body as string)).toEqual({
+    reason: 'El acceso a la tienda permanece cerrado.',
+  })
+  expect(result).toMatchObject({
+    phase: 'not_performed',
+    status: 'cancelled',
+    readOnly: true,
+    occupiesTechnician: false,
+    startedAt: rawVisit.startedAt,
+    physicalEndedAt: rawVisit.physicalEndedAt,
+    formOpenedAt: rawVisit.formOpenedAt,
+    expiresAt: rawVisit.expiresAt,
+    notPerformedAt: response.notPerformedAt,
+  })
+})
 it('apertura, envío normal y revisión no transportan GPS', async () => {
   const { repo, fetcher } = transport()
   await repo.openForm(1)

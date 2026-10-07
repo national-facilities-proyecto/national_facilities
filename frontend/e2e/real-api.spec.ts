@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import {
   access,
   api,
@@ -84,7 +84,11 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
     { headers: { Authorization: 'Bearer ' + token } },
   )
   expect(evidence.ok()).toBe(true)
-  expect(Date.parse(String(object(await evidence.json()).capturedAt))).toBeLessThan(
+  const cameraEvidence = object(await evidence.json())
+  expect(cameraEvidence.mimeType).toBe('image/webp')
+  expect(string(cameraEvidence.name)).toMatch(/\.webp$/)
+  expect(cameraEvidence.source).toBe('camera')
+  expect(Date.parse(String(cameraEvidence.capturedAt))).toBeLessThan(
     Date.parse(current.formOpenedAt ?? ''),
   )
   await page
@@ -208,6 +212,17 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
   await page.getByRole('button', { name: 'Enviar reporte', exact: true }).click()
   await expect(page.getByRole('heading', { name: /Ticket #/ })).toBeVisible()
   const id = Number(page.url().split('/').at(-1))
+  const reporterToken = await access(request, 'store')
+  const reported = object(await call(request, `/tickets/${id}/`, reporterToken))
+  const reportEvidenceIds = reported.evidenceIds
+  if (!Array.isArray(reportEvidenceIds)) throw new Error('Sin evidencias del reporte.')
+  expect(reportEvidenceIds).toHaveLength(1)
+  const galleryEvidence = object(
+    await call(request, `/evidencias/${string(reportEvidenceIds[0])}/`, reporterToken),
+  )
+  expect(galleryEvidence.mimeType).toBe('image/webp')
+  expect(string(galleryEvidence.name)).toBe('original.webp')
+  expect(galleryEvidence.source).toBe('gallery')
   await page.context().clearCookies()
   await page.evaluate(() => sessionStorage.clear())
   await page.goto('/login')
@@ -824,4 +839,175 @@ test('V2: llegada y cierre excepcionales separados, envío explícito y revisió
   await expect(reviewer.getByText('GPS de llegada:', { exact: false }).first()).toBeVisible()
   await expect(reviewer.getByText('GPS de cierre:', { exact: false }).first()).toBeVisible()
   await reviewer.close()
+})
+
+async function confirmNotPerformed(page: Page) {
+  await page.getByRole('button', { name: 'Marcar como no realizado', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Marcar como no realizado', exact: true })
+  await expect(
+    dialog.getByText('No realizado no cuenta como trabajo completado.', { exact: true }),
+  ).toBeVisible()
+  await expect(
+    dialog.getByRole('button', { name: 'Confirmar no realizado', exact: true }),
+  ).toBeDisabled()
+  await dialog
+    .getByLabel('Motivo', { exact: true })
+    .fill('El equipo está inaccesible y el intento requiere nueva programación.')
+  await dialog.getByRole('button', { name: 'Confirmar no realizado', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'No realizado', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Finalizar', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Enviar a revisión', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Terminar recorrido', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Terminar atención', exact: true })).toHaveCount(0)
+}
+
+test('No realizado checklist: libera ejecución y publica otro intento de la misma obligación real', async ({
+  page,
+  request,
+}) => {
+  const id = checklistCase()
+  const token = await access(request, 'tech')
+  await login(page)
+  await arrive(page, id)
+  const before = object(await call(request, `/visitas/${id}/`, token))
+  await confirmNotPerformed(page)
+  const old = object(await call(request, `/visitas/${id}/`, token))
+  expect(old.phase).toBe('not_performed')
+  expect(old.status).toBe('cancelled')
+  expect(old.readOnly).toBe(true)
+  expect(old.occupiesTechnician).toBe(false)
+  expect(old.startedAt).toBe(before.startedAt)
+  expect(old.notPerformedAt).toEqual(expect.any(String))
+  for (const field of [
+    'physicalEndedAt',
+    'endLocation',
+    'formOpenedAt',
+    'expiresAt',
+    'submittedAt',
+    'completedAt',
+  ])
+    expect(old[field]).toBeNull()
+  expect(object(await call(request, '/visitas/recuperacion/', token)).activeExecution).toBeNull()
+  const raw = await call(request, '/checklists/', token)
+  if (!Array.isArray(raw)) throw new Error('Listado checklist inválido.')
+  const retries = raw.map(object).filter((item) => item.previousAttemptId === id)
+  expect(retries).toHaveLength(1)
+  const replacement = retries[0]
+  if (typeof replacement.id !== 'number') throw new Error('Sin ID backend del nuevo intento.')
+  expect(replacement.id).not.toBe(id)
+  expect(replacement.status).toBe('available')
+  for (const field of [
+    'storeId',
+    'period',
+    'quota',
+    'quotaCount',
+    'tasks',
+    'storeSnapshot',
+    'radiusMeters',
+  ])
+    expect(replacement[field]).toEqual(before[field])
+  await page.getByRole('link', { name: 'Ver obligaciones pendientes', exact: true }).click()
+  const actualLink = page
+    .getByRole('region', { name: 'Visitas de checklist', exact: true })
+    .locator(`a[href="/checklists/${replacement.id}"]`)
+  await expect(actualLink).toBeVisible()
+  await actualLink.click()
+  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Recorrido de inspección', exact: true }),
+  ).toBeVisible()
+  expect(object(await call(request, `/visitas/${replacement.id}/`, token)).occupiesTechnician).toBe(
+    true,
+  )
+  await confirmNotPerformed(page)
+})
+
+test('No realizado atención: reabre incidencia, NF reprograma otro intento y puede cancelarlo antes de llegada', async ({
+  page,
+  request,
+  browser,
+}) => {
+  const reporter = await access(request, 'store')
+  const catalogs = object(await call(request, '/catalogos/', reporter))
+  const stores = await call(request, '/tiendas/', reporter)
+  if (
+    !Array.isArray(stores) ||
+    !Array.isArray(catalogs.categories) ||
+    !Array.isArray(catalogs.priorities)
+  )
+    throw new Error('Catálogos incompatibles.')
+  const priorityId = object(catalogs.priorities[0]).id
+  const ticket = object(
+    await call(request, '/tickets/', reporter, {
+      storeId: object(stores[0]).id,
+      categoryId: object(catalogs.categories[0]).id,
+      priorityId,
+      description: 'Incidencia aislada para verificar No realizado y reprogramación.',
+      evidenceIds: [],
+    }),
+  )
+  const account = await access(request, 'account')
+  const users = await call(request, '/usuarios/', account)
+  if (!Array.isArray(users)) throw new Error('Usuarios incompatibles.')
+  const technicianId = users.map(object).find((user) => user.username === 'tech')?.id
+  const scheduled = object(
+    await call(request, `/tickets/${String(ticket.id)}/programar/`, account, {
+      technicianId,
+      scheduledAt: new Date(Date.now() + 1000).toISOString(),
+      priorityId,
+      reason: '',
+      revision: ticket.revision,
+    }),
+  )
+  if (typeof scheduled.visitId !== 'number') throw new Error('Sin ID de atención backend.')
+  const token = await access(request, 'tech')
+  await waitUntilScheduled(request, scheduled.visitId, token)
+  await login(page)
+  await arrive(page, scheduled.visitId, 'ticket')
+  await confirmNotPerformed(page)
+  const old = object(await call(request, `/visitas/${scheduled.visitId}/`, token))
+  expect(old.phase).toBe('not_performed')
+  expect(old.occupiesTechnician).toBe(false)
+  expect(old.readOnly).toBe(true)
+  expect(old.completedAt).toBeNull()
+  expect(old.submittedAt).toBeNull()
+  expect(object(await call(request, '/visitas/recuperacion/', token)).activeExecution).toBeNull()
+  const reopened = object(await call(request, `/tickets/${String(ticket.id)}/`, account))
+  expect(reopened.status).toBe('open')
+  for (const field of ['technicianId', 'scheduledAt', 'visitId', 'resolvedAt'])
+    expect(reopened[field]).toBeNull()
+  const next = object(
+    await call(request, `/tickets/${String(ticket.id)}/programar/`, account, {
+      technicianId,
+      scheduledAt: new Date(Date.now() + 3600000).toISOString(),
+      priorityId,
+      reason: '',
+      revision: reopened.revision,
+    }),
+  )
+  if (typeof next.visitId !== 'number') throw new Error('Sin ID del intento reprogramado.')
+  expect(next.visitId).not.toBe(scheduled.visitId)
+  expect(next.status).toBe('scheduled')
+  expect(object(await call(request, `/visitas/${scheduled.visitId}/`, account)).phase).toBe(
+    'not_performed',
+  )
+  const nfContext = await browser.newContext()
+  try {
+    const nf = await nfContext.newPage()
+    await login(nf, 'account')
+    await nf.goto(`/technical-supervisor/incidents/${String(ticket.id)}`)
+    await confirmNotPerformed(nf)
+    await expect(nf.getByRole('button', { name: 'Programar visita', exact: true })).toBeVisible()
+    const unstarted = object(await call(request, `/visitas/${next.visitId}/`, account))
+    expect(unstarted.phase).toBe('not_performed')
+    expect(unstarted.startedAt).toBeNull()
+    expect(unstarted.physicalEndedAt).toBeNull()
+    expect(unstarted.completedAt).toBeNull()
+    expect(object(await call(request, `/tickets/${String(ticket.id)}/`, account)).status).toBe(
+      'open',
+    )
+  } finally {
+    await nfContext.close()
+  }
 })

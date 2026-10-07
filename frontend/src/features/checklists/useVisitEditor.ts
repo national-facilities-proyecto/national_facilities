@@ -99,6 +99,7 @@ export function useVisitEditor(initial: Visit) {
     setError('')
   }
   const persistDraft = useCallback(async () => {
+    if (latest.current.phase === 'not_performed') return
     if (evidenceRevisionConflict.current)
       throw new AppError(
         'conflict',
@@ -273,6 +274,17 @@ export function useVisitEditor(initial: Visit) {
     confirmedRevision.current = next.revision ?? 0
     setVisit(next)
   }
+  const markNotPerformed = async (reason: string) => {
+    let confirmed!: Visit
+    await enqueueWrite(async () => {
+      confirmed = await repos.visits.markNotPerformed(latest.current.id, reason)
+      applyConfirmed(confirmed)
+      setDirty(false)
+      setError('')
+      setStep({ kind: 'editing' })
+    })
+    return confirmed
+  }
   const needsReview = Boolean(visit.exceptions?.length)
   const finish = async () => {
     if (step.kind !== 'editing' || saving || conflict) return
@@ -376,6 +388,7 @@ export function useVisitEditor(initial: Visit) {
     editable,
     openForm,
     applyConfirmed,
+    markNotPerformed,
     needsReview,
     conflict,
     remote,

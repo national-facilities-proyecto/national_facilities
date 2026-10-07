@@ -116,6 +116,7 @@ export function validateDatabase(value: unknown): value is MockDatabase {
           'pending_approval',
           'correction_required',
           'completed',
+          'cancelled',
         ].includes(String(visit.status)) &&
         ['checklist', 'ticket'].includes(String(visit.origin)) &&
         optionalFields(visit, {

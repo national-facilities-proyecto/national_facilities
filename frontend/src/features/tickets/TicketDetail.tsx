@@ -22,10 +22,13 @@ import {
   type Priority,
   type Ticket,
   type User,
+  type Visit,
 } from '../../types/models'
 import { AppError, errorMessage } from '../../services/errors'
+import { NotPerformedAction } from '../checklists/NotPerformedAction'
 export function TicketDetail({ id, account = false }: { id: number; account?: boolean }) {
   const repos = useRepositories()
+  const [notPerformed, setNotPerformed] = useState<Visit>()
   const query = useQuery(
     useCallback(
       async (signal) => {
@@ -50,7 +53,9 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
                 (row) => row.clientId === store.clientId && row.zoneId === store.zoneId,
               ),
           )
-        return { ticket, store, users, catalogs, eligibleUsers }
+        const visit =
+          account && ticket.visitId ? await repos.visits.get(ticket.visitId, { signal }) : undefined
+        return { ticket, store, users, catalogs, eligibleUsers, visit }
       },
       [id, repos, account],
     ),
@@ -85,6 +90,15 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
         <Card title="Programación">
           <p>Técnico: {person(ticket.technicianId)}</p>
           <p>Visita: {displayDate(ticket.scheduledAt)}</p>
+          {query.data.visit && (
+            <NotPerformedAction
+              visit={query.data.visit}
+              onConfirmed={(next) => {
+                setNotPerformed(next)
+                query.reload()
+              }}
+            />
+          )}
           {account && ticketWorkStatus(ticket.status) === 'pending' && (
             <ScheduleForm
               key={ticket.history.length}
@@ -98,6 +112,14 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
           )}
         </Card>
       </div>
+      {notPerformed?.phase === 'not_performed' && (
+        <Card title="No realizado">
+          <p>
+            No realizado no cuenta como trabajo completado. Consulta la programación actual de la
+            incidencia.
+          </p>
+        </Card>
+      )}
       <Card title="Historial">
         <ol className="nf-timeline">
           {ticket.history.map((event) => (

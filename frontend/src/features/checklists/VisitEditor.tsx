@@ -22,6 +22,9 @@ import { useAuth } from '../auth/AuthProvider'
 import { ExceptionHistory } from './ExceptionHistory'
 import { ChecklistPhotos } from './ChecklistPhotos'
 import { GpsAction } from './GpsAction'
+import { optimizeEvidenceImage } from '../../services/optimizeEvidenceImage'
+import { NotPerformedAction } from './NotPerformedAction'
+import { WorkRecovery } from './WorkRecovery'
 
 export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'] }) {
   const repos = useRepositories()
@@ -75,6 +78,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     editable,
     openForm,
     applyConfirmed,
+    markNotPerformed,
     needsReview,
     conflict,
     remote,
@@ -86,6 +90,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     setCorrections,
   } = useVisitEditor(initial)
   const [expired, setExpired] = useState(false)
+  const [optimizing, setOptimizing] = useState(false)
   useEffect(() => {
     const updateClock = () => {
       setExpired(formExpired(visit))
@@ -129,6 +134,22 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         </Link>
         <PageHeader title={store.name} description={store.address} />
         <PendingVisit initial={visit} />
+      </>
+    )
+  if (visit.phase === 'not_performed' || visit.status === 'cancelled')
+    return (
+      <>
+        <PageHeader title="No realizado" description={store.name} />
+        <Card>
+          <p>
+            No realizado no cuenta como trabajo completado. El intento permanece en el historial.
+          </p>
+          <Link className="nf-link" to={back}>
+            {visit.origin === 'checklist' ? 'Ver obligaciones pendientes' : 'Volver a atenciones'}
+          </Link>
+        </Card>
+        <WorkRecovery />
+        <VisitRecord visit={visit} />
       </>
     )
   if (visit.phase === 'physical_work' || visit.phase === 'physical_finished')
@@ -196,6 +217,11 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           {visit.readOnly && <Alert>El servidor mantiene esta ejecución en solo lectura.</Alert>}
           {visit.occupiesTechnician && <p>Esta ejecución sigue ocupando al técnico.</p>}
           {error && <Alert>{error}</Alert>}
+          <NotPerformedAction
+            visit={visit}
+            disabled={saving || conflict || Boolean(pendingPhoto)}
+            submit={markNotPerformed}
+          />
         </Card>
       </>
     )
@@ -298,6 +324,11 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         </Card>
       )}
       <ChecklistTimer visit={visit} />
+      <NotPerformedAction
+        visit={visit}
+        disabled={saving || optimizing || conflict || Boolean(pendingPhoto)}
+        submit={markNotPerformed}
+      />
       {expired && visit.status === 'in_progress' && (
         <Card title="Justificación requerida">
           <p>
@@ -322,32 +353,43 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         onChange={(event) => {
           const file = event.target.files?.[0]
           event.target.value = ''
-          if (!file) return
+          if (!file || optimizing || saving || conflict) return
           const taskId = galleryTaskId.current
           const existing = taskId
             ? (visit.answers.find((answer) => answer.taskId === taskId)?.evidenceIds.length ?? 0)
             : visit.evidenceIds.length
-          const result = validateFiles([file], existing)
+          const result = validateFiles([file], existing, true)
           if (!result.accepted.length) {
             setError(result.errors.join(' '))
             return
           }
-          const accepted = result.accepted[0]
-          void capture(
-            {
-              id: crypto.randomUUID(),
-              blob: accepted,
-              name: accepted.name,
-              mimeType: accepted.type,
-              size: accepted.size,
-              source: 'gallery',
-            },
-            taskId,
-          ).catch((cause) => setError(errorMessage(cause)))
+          setOptimizing(true)
+          void optimizeEvidenceImage(result.accepted[0])
+            .then((accepted) =>
+              capture(
+                {
+                  id: crypto.randomUUID(),
+                  blob: accepted,
+                  name: accepted.name,
+                  mimeType: accepted.type,
+                  size: accepted.size,
+                  source: 'gallery',
+                },
+                taskId,
+              ),
+            )
+            .catch((cause) => setError(errorMessage(cause)))
+            .finally(() => setOptimizing(false))
         }}
       />
       <fieldset
-        disabled={step.kind === 'validating' || saving || exceptionBusy || step.kind === 'success'}
+        disabled={
+          step.kind === 'validating' ||
+          saving ||
+          optimizing ||
+          exceptionBusy ||
+          step.kind === 'success'
+        }
         className="nf-editor-fields"
       >
         {visit.origin === 'checklist' ? (

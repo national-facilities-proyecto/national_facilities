@@ -216,6 +216,7 @@ export function registrationEditable(visit: Visit): boolean {
   )
 }
 export function operationalVisitLabel(visit: Visit): string {
+  if (visit.phase === 'not_performed') return 'No realizado'
   if (visit.status === 'pending_approval' && !(visit.phase === 'in_review' && visit.submittedAt))
     return visit.phase === 'physical_work'
       ? 'Trabajo físico en curso'

@@ -8,6 +8,7 @@ import { EvidenceGallery } from '../components/EvidenceGallery'
 import type { Priority } from '../types/models'
 import { validateFiles } from '../services/evidence'
 import { AppError, errorMessage } from '../services/errors'
+import { optimizeEvidenceImage } from '../services/optimizeEvidenceImage'
 export default function SupervisorNewTicketPage() {
   const repos = useRepositories()
   const navigate = useNavigate()
@@ -21,6 +22,7 @@ export default function SupervisorNewTicketPage() {
   const recovered = useRef(false)
   const mounted = useRef(true)
   const [pendingFiles, setPendingFiles] = useState<{ id: string; file: File }[]>([])
+  const optimizedFiles = useRef(new Map<string, File>())
   const [fields, setFields] = useState<Record<string, string[]>>({})
   const [errors, setErrors] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
@@ -57,24 +59,36 @@ export default function SupervisorNewTicketPage() {
   const sendFiles = async (queue: { id: string; file: File }[], fileErrors: string[] = []) => {
     if (uploading || saving) return
     setUploading(true)
+    const accumulatedErrors = [...fileErrors]
     try {
-      for (const { file, id } of queue) {
+      for (const entry of queue) {
+        const { id } = entry
+        let file: File
+        try {
+          file = optimizedFiles.current.get(id) ?? (await optimizeEvidenceImage(entry.file))
+          optimizedFiles.current.set(id, file)
+        } catch (cause) {
+          accumulatedErrors.push(errorMessage(cause))
+          setPendingFiles((current) => current.filter((item) => item.id !== id))
+          continue
+        }
         await repos.evidence.put({
           id,
           blob: file,
           name: file.name,
           mimeType: file.type,
           size: file.size,
-          source: 'upload',
+          source: 'gallery',
         })
+        optimizedFiles.current.delete(id)
         if (!mounted.current) break
         if (!ownedIds.current.includes(id)) ownedIds.current.push(id)
         setIds((current) => (current.includes(id) ? current : [...current, id]))
         setPendingFiles((current) => current.filter((item) => item.id !== id))
       }
-      setErrors(fileErrors)
+      setErrors(accumulatedErrors)
     } catch (cause) {
-      setErrors([...fileErrors, errorMessage(cause)])
+      setErrors([...accumulatedErrors, errorMessage(cause)])
     } finally {
       setUploading(false)
       if (input.current) input.current.value = ''
@@ -82,7 +96,7 @@ export default function SupervisorNewTicketPage() {
   }
   const addFiles = (files: File[]) => {
     if (uploading || saving || pendingFiles.length) return
-    const { accepted, errors: fileErrors } = validateFiles(files, ids.length)
+    const { accepted, errors: fileErrors } = validateFiles(files, ids.length, true)
     const queue = accepted.map((file) => ({ file, id: crypto.randomUUID() }))
     setPendingFiles(queue)
     void sendFiles(queue, fileErrors)

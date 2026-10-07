@@ -184,6 +184,9 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       },
     },
     visits: {
+      async markNotPerformed(id, reason) {
+        return mapVisit(await mutate('/visitas/' + id + '/no-realizada/', { reason }))
+      },
       async recovery(options) {
         const raw = object(await request('/visitas/recuperacion/', { signal: options?.signal }))
         return {
