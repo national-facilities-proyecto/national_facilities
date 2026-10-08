@@ -52,6 +52,9 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   await expect(camera).toHaveCount(0)
   await expect(page.locator('.nf-evidence img')).toHaveCount(1)
   await page.reload()
+  await expect(page.getByText('Fotografías de un reporte anterior')).toBeVisible()
+  await expect(page.locator('.nf-evidence img')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Recuperar fotos anteriores' }).click()
   await expect(page.locator('.nf-evidence img')).toHaveCount(1)
   expect(uploads).toBe(0)
   let current = await visit(request, available.id, token)
@@ -352,9 +355,9 @@ test('indicador real: dos tickets por tienda, checklist separado y contrato dupl
     .getByLabel('Confirmar contraseña', { exact: true })
     .fill('Monthly-test-new-secure-2026!')
   await reportPage.getByRole('button', { name: 'Guardar contraseña', exact: true }).click()
-  await expect(reportPage).toHaveURL(/\/supervisor\/tickets$/)
+  await expect(reportPage).toHaveURL(/\/supervisor\/tickets\/new$/)
   await expect(
-    reportPage.getByRole('heading', { name: 'Mis incidencias', exact: true }),
+    reportPage.getByRole('heading', { name: 'Registrar nueva incidencia', exact: true }),
   ).toBeVisible()
   const loginResponse = await request.post(api + '/auth/login/', {
     data: { username: reporterName, password: 'Monthly-test-new-secure-2026!' },
