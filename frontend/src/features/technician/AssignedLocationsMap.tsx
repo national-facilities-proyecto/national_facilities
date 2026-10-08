@@ -3,13 +3,13 @@ import { AttributionControl, MapContainer, Marker, Popup, Tooltip, useMap } from
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './map.css'
-import type { Store } from '../../types/models'
+import type { MapLocation } from './mapLocation'
 import { Button, LoadingState } from '../../components/ui'
 import { requestLocation } from '../geolocation/location'
 import { createOpenFreeMapLayer } from './openFreeMap'
 const icon = L.divIcon({
   className: 'nf-marker',
-  html: '<span>NF</span>',
+  html: '<span aria-hidden="true">NF</span>',
   iconSize: [34, 34],
   iconAnchor: [17, 34],
 })
@@ -21,7 +21,7 @@ function districtFromAddress(address: string) {
     .filter(Boolean)
   return sections.length > 1 ? sections.at(-2) : sections[0]
 }
-function StoreLabel({ store }: { store: Store }) {
+function StoreLabel({ store }: { store: MapLocation }) {
   const district = districtFromAddress(store.address) ?? ''
   const name = store.name.trim()
   if (!district && !name) return null
@@ -50,7 +50,7 @@ function StoreLabel({ store }: { store: Store }) {
     />
   )
 }
-function Bounds({ stores }: { stores: Store[] }) {
+function Bounds({ stores }: { stores: MapLocation[] }) {
   const map = useMap()
   useEffect(() => {
     if (stores.length)
@@ -114,8 +114,8 @@ export function AssignedLocationsMap({
   stores,
   onSelect,
 }: {
-  stores: Store[]
-  onSelect?: (store: Store) => void
+  stores: MapLocation[]
+  onSelect?: (store: MapLocation) => void
 }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [attempt, setAttempt] = useState(0)
@@ -156,17 +156,36 @@ export function AssignedLocationsMap({
           <AttributionControl prefix="OpenFreeMap | © OpenStreetMap contributors" />
           <Bounds stores={stores} />
           {stores.map((store) => (
-            <Marker key={store.id} position={[store.latitude, store.longitude]} icon={icon}>
+            <Marker
+              key={store.id}
+              position={[store.latitude, store.longitude]}
+              icon={icon}
+              title={store.name}
+              eventHandlers={
+                onSelect
+                  ? {
+                      click: () => onSelect(store),
+                      keydown: (event) => {
+                        if (['Enter', ' '].includes(event.originalEvent.key)) {
+                          L.DomEvent.stop(event.originalEvent)
+                          onSelect(store)
+                        }
+                      },
+                    }
+                  : undefined
+              }
+            >
               <StoreLabel store={store} />
-              <Popup>
-                <strong>{store.name}</strong>
-                <p>{store.address}</p>
-                {onSelect && <Button onClick={() => onSelect(store)}>Ver tienda</Button>}
-              </Popup>
+              {!onSelect && (
+                <Popup>
+                  <strong>{store.name}</strong>
+                  <p>{store.address}</p>
+                </Popup>
+              )}
             </Marker>
           ))}
           {position && (
-            <Marker position={position} icon={icon}>
+            <Marker position={position} icon={icon} title="Tu ubicación">
               <Popup>Tu ubicación</Popup>
             </Marker>
           )}

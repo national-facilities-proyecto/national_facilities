@@ -397,7 +397,8 @@ test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({
   })
   await page.route('https://tiles.openfreemap.org/**', (route) => route.abort())
   await login(page)
-  expect(requests).toEqual([])
+  // Mis Checklist también carga el mapa general, incluidas las visitas finalizadas.
+  await expect(page.getByRole('region', { name: 'Mapa de tiendas' })).toBeVisible()
   await page.goto('/routes')
   const detail = page.locator(`a[href="/routes/${visitId}"]`)
   await page.getByRole('button', { name: 'Futuras', exact: true }).click()

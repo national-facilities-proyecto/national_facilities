@@ -1,5 +1,5 @@
 import { WorkRecovery } from '../features/checklists/WorkRecovery'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useRepositories } from '../app/RepositoriesProvider'
 import { useQuery } from '../hooks/useQuery'
@@ -7,6 +7,7 @@ import { Alert, Badge, Button, Card, EmptyState, PageHeader } from '../component
 import { QueryState } from '../components/feedback/QueryState'
 import { QueryFeedback } from '../components/feedback/QueryFeedback'
 import { LazyMap } from '../features/technician/LazyMap'
+import { checklistMapLocations } from '../features/checklists/checklistMap'
 import { operationalVisitLabel, type Visit, type VisitStatus } from '../types/models'
 import { errorMessage } from '../services/errors'
 
@@ -43,6 +44,11 @@ export default function ChecklistListPage() {
       [repos],
     ),
   )
+  const mapLocations = useMemo(
+    () => (query.data ? checklistMapLocations(query.data.visits, query.data.stores) : []),
+    [query.data],
+  )
+  const mapStores = useMemo(() => mapLocations.map(({ store }) => store), [mapLocations])
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
   const { visits, stores } = query.data
   const section = sections.find((item) => item.id === sectionId)!
@@ -64,17 +70,22 @@ export default function ChecklistListPage() {
       )}
       <WorkRecovery />
       <QueryFeedback query={query} />
-      <LazyMap
-        stores={stores.filter((store) =>
-          visits.some((visit) => visit.storeId === store.id && visit.status !== 'completed'),
-        )}
-        onSelect={(store) => {
-          const visit = visits.find(
-            (item) => item.storeId === store.id && item.status !== 'completed',
-          )
-          if (visit) void navigate(`/checklists/${visit.id}`)
-        }}
-      />
+      {mapLocations.length ? (
+        <LazyMap
+          stores={mapStores}
+          onSelect={(store) => {
+            const visit = mapLocations.find((item) => item.store.id === store.id)?.visit
+            if (visit) void navigate(`/checklists/${visit.id}`)
+          }}
+        />
+      ) : (
+        <section className="nf-card" aria-label="Mapa de tiendas">
+          <h2>Ubicaciones asignadas</h2>
+          <EmptyState>
+            No hay ubicaciones válidas para las visitas de checklist a las que tienes acceso.
+          </EmptyState>
+        </section>
+      )}
       <section className="nf-list" aria-label="Visitas de checklist">
         <div className="nf-segmented" role="group" aria-label="Estado de visitas">
           {sections.map((item) => (
