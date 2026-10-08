@@ -118,6 +118,12 @@ export default function SupervisorNewTicketPage() {
         description="Describe el problema y adjunta fotografías de tu tienda."
       />
       <Card>
+        {query.data.catalogs.categories.length === 0 && (
+          <Alert>
+            No hay especialidades habilitadas para el cliente de tu tienda. Solicita al
+            administrador que las active en Especialidades → Habilitación por cliente.
+          </Alert>
+        )}
         {query.data.temporary.length > 0 && (
           <Alert success>
             Fotografías confirmadas de un reporte pendiente recuperadas del servidor. Puedes
@@ -273,7 +279,8 @@ export default function SupervisorNewTicketPage() {
                 saving ||
                 uploading ||
                 pendingFiles.length > 0 ||
-                !query.data.stores.some((store) => store.active)
+                !query.data.stores.some((store) => store.active) ||
+                query.data.catalogs.categories.length === 0
               }
             >
               {saving ? 'Enviando…' : 'Enviar reporte'}
