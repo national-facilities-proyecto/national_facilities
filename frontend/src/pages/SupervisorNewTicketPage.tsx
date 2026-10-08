@@ -19,8 +19,9 @@ export default function SupervisorNewTicketPage() {
   const [storeId, setStoreId] = useState(0)
   const [ids, setIds] = useState<string[]>([])
   const ownedIds = useRef<string[]>([])
-  const recovered = useRef(false)
   const mounted = useRef(true)
+  const [photoRecoveryDecided, setPhotoRecoveryDecided] = useState(false)
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
   const [pendingFiles, setPendingFiles] = useState<{ id: string; file: File }[]>([])
   const optimizedFiles = useRef(new Map<string, File>())
   const [fields, setFields] = useState<Record<string, string[]>>({})
@@ -42,14 +43,6 @@ export default function SupervisorNewTicketPage() {
     ),
     false,
   )
-  useEffect(() => {
-    const confirmed = query.data
-    if (confirmed && !recovered.current) {
-      recovered.current = true
-      ownedIds.current = confirmed.temporary
-      setIds((current) => [...new Set([...current, ...confirmed.temporary])])
-    }
-  }, [query.data])
   useEffect(() => {
     mounted.current = true
     return () => {
@@ -95,7 +88,7 @@ export default function SupervisorNewTicketPage() {
     }
   }
   const addFiles = (files: File[]) => {
-    if (uploading || saving || pendingFiles.length) return
+    if (uploading || saving || pendingFiles.length || (query.data?.temporary.length && !photoRecoveryDecided)) return
     const { accepted, errors: fileErrors } = validateFiles(files, ids.length, true)
     const queue = accepted.map((file) => ({ file, id: crypto.randomUUID() }))
     setPendingFiles(queue)
@@ -111,6 +104,7 @@ export default function SupervisorNewTicketPage() {
     return () => window.removeEventListener('beforeunload', protect)
   }, [description, ids.length, pendingFiles.length, saving, uploading])
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
+  const needsPhotoDecision = query.data.temporary.length > 0 && !photoRecoveryDecided
   return (
     <>
       <PageHeader
@@ -124,17 +118,56 @@ export default function SupervisorNewTicketPage() {
             administrador que las active en Especialidades → Habilitación por cliente.
           </Alert>
         )}
-        {query.data.temporary.length > 0 && (
-          <Alert success>
-            Fotografías confirmadas de un reporte pendiente recuperadas del servidor. Puedes
-            utilizarlas o retirarlas antes de enviar.
-          </Alert>
+        {needsPhotoDecision && (
+          <Card title="Fotografías de un reporte anterior">
+            <p>
+              Encontramos {query.data.temporary.length} fotografía(s) guardada(s) por esta cuenta
+              para una incidencia anterior. No se agregarán a tu nuevo reporte sin tu autorización.
+            </p>
+            {errors.length > 0 && <Alert>{errors.join(' ')}</Alert>}
+            <div className="nf-actions">
+              <Button
+                variant="secondary"
+                disabled={recoveryBusy}
+                onClick={() => {
+                  const previous = query.data.temporary
+                  ownedIds.current = [...new Set([...ownedIds.current, ...previous])]
+                  setIds((current) => [...new Set([...current, ...previous])])
+                  setPhotoRecoveryDecided(true)
+                  setErrors([])
+                }}
+              >
+                Recuperar fotos anteriores
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={recoveryBusy}
+                onClick={() => {
+                  if (!window.confirm('¿Eliminar las fotografías pendientes de este reporte anterior? Esta acción no se puede deshacer.')) return
+                  setRecoveryBusy(true)
+                  setErrors([])
+                  void Promise.all(query.data.temporary.map((id) => repos.evidence.remove(id)))
+                    .then(() => {
+                      setPhotoRecoveryDecided(true)
+                      query.reload()
+                    })
+                    .catch((cause) => {
+                      setErrors([errorMessage(cause)])
+                      query.reload()
+                    })
+                    .finally(() => setRecoveryBusy(false))
+                }}
+              >
+                {recoveryBusy ? 'Descartando…' : 'Descartar fotos anteriores'}
+              </Button>
+            </div>
+          </Card>
         )}
         <form
           className="nf-form"
           onSubmit={(event) => {
             event.preventDefault()
-            if (saving || uploading || pendingFiles.length) return
+            if (saving || uploading || pendingFiles.length || needsPhotoDecision) return
             if (!category || !priority || description.trim().length < 10) {
               setErrors([
                 'Completa especialidad, prioridad y una descripción de al menos 10 caracteres.',
@@ -239,7 +272,7 @@ export default function SupervisorNewTicketPage() {
             />
             <Button
               variant="secondary"
-              disabled={uploading || saving || pendingFiles.length > 0}
+              disabled={uploading || saving || pendingFiles.length > 0 || needsPhotoDecision}
               onClick={() => input.current?.click()}
             >
               {uploading ? 'Guardando fotografías…' : 'Seleccionar fotografías'}
@@ -279,6 +312,7 @@ export default function SupervisorNewTicketPage() {
                 saving ||
                 uploading ||
                 pendingFiles.length > 0 ||
+                needsPhotoDecision ||
                 !query.data.stores.some((store) => store.active) ||
                 query.data.catalogs.categories.length === 0
               }
