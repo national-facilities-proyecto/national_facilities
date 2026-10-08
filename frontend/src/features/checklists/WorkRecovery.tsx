@@ -5,7 +5,6 @@ import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
 import { Card } from '../../components/ui'
 import type { Visit, VisitPhase } from '../../types/models'
-import { displayDate } from '../../utils/dates'
 const phaseLabels: Record<VisitPhase, string> = {
   available: 'Disponible',
   reserved: 'Pendiente de iniciar',
@@ -35,9 +34,6 @@ export function WorkRecovery() {
         {visit.origin === 'checklist' ? 'Checklist' : 'Atención'} ·{' '}
         {visit.phase ? phaseLabels[visit.phase] : 'Etapa no registrada'}
       </p>
-      {visit.claimExpiresAt && !visit.startedAt && (
-        <p>Reserva hasta {displayDate(visit.claimExpiresAt)}</p>
-      )}
       <Link className="nf-link" to={target(visit)}>
         {visit.phase === 'in_review' ? 'Ver registro' : 'Continuar trabajo'}
       </Link>

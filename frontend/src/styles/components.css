@@ -293,9 +293,6 @@
   .nf-not-performed p {
     @apply mb-2 text-slate-600;
   }
-  .nf-button--exception {
-    @apply border-red-800 text-red-800;
-  }
   .nf-task > header {
     @apply mb-4 flex items-start gap-3;
   }
@@ -404,5 +401,103 @@ textarea::placeholder {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@layer components {
+  .nf-muted {
+    @apply text-sm text-slate-600;
+  }
+  .nf-disclosure {
+    @apply my-4 rounded-xl border border-slate-200 bg-white;
+  }
+  .nf-disclosure > summary {
+    @apply cursor-pointer px-4 py-4 font-semibold text-brand-950;
+  }
+  .nf-disclosure > summary:focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-brand-800;
+  }
+  .nf-disclosure__content {
+    @apply grid gap-4 border-t border-slate-200 p-4;
+  }
+  .nf-stages {
+    @apply my-5 grid list-none grid-cols-3 gap-2 p-0 text-xs text-slate-500 sm:text-sm;
+  }
+  .nf-stages li {
+    @apply flex items-center gap-2;
+  }
+  .nf-stages li > span {
+    @apply grid h-6 w-6 shrink-0 place-items-center rounded-full bg-slate-100;
+  }
+  .nf-stages li[aria-current='step'] {
+    @apply font-semibold text-brand-950;
+  }
+  .nf-stages li[aria-current='step'] > span {
+    @apply bg-brand-800 text-white;
+  }
+  .nf-walkthrough ul {
+    @apply my-4 grid list-none gap-3 p-0;
+  }
+  .nf-walkthrough li {
+    @apply flex items-start gap-3 rounded-lg bg-slate-50 p-3;
+  }
+  .nf-walkthrough li > span:first-child {
+    @apply grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white text-sm text-slate-600;
+  }
+  .nf-primary-action {
+    @apply mt-6 grid gap-4 border-t border-slate-200 pt-5;
+  }
+  .nf-result-options {
+    @apply my-4 grid grid-cols-3 gap-2;
+  }
+  .nf-result-option {
+    @apply px-2 text-sm;
+  }
+  .nf-result-option[aria-pressed='true'] {
+    @apply border-brand-800 bg-brand-800 text-white shadow-sm;
+  }
+  .nf-task-issues {
+    @apply my-3 grid list-none gap-1 p-0 text-sm text-red-800;
+  }
+  .nf-button--quiet {
+    @apply border-transparent bg-transparent px-0 text-slate-600;
+  }
+  .nf-button--quiet:hover:not(:disabled) {
+    @apply border-transparent bg-slate-50 text-brand-950;
+  }
+  .nf-exception {
+    @apply rounded-xl border border-slate-200 bg-white p-4 sm:p-5;
+  }
+  .nf-exception > header {
+    @apply mb-4 flex flex-wrap items-center justify-between gap-3;
+  }
+  .nf-exception h3 {
+    @apply text-lg font-semibold;
+  }
+  .nf-exception__reason {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .nf-exception .nf-evidence-grid {
+    @apply max-w-lg;
+  }
+  .nf-visit-summary {
+    @apply flex flex-wrap items-center justify-between gap-4;
+  }
+  .nf-visit-summary > div {
+    @apply grid gap-1;
+  }
+  .nf-visit-summary span {
+    @apply text-sm text-slate-600;
+  }
+  .nf-decision-context {
+    @apply rounded-lg bg-slate-50 p-4;
+  }
+  .nf-decision-context p {
+    @apply mt-2 whitespace-pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .nf-modal-actions {
+    @apply mt-6 gap-3;
   }
 }

@@ -1,3 +1,6 @@
+import { Disclosure } from '../../components/ui/Disclosure'
+import { VisitStages } from './VisitStages'
+import { taskIssues } from './validation'
 import { submissionMessage } from './submissionMessage'
 import { useCallback, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -79,6 +82,8 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     acceptRemote,
     reconcile,
     pendingPhoto,
+    retryPendingPhoto,
+    validationIssues,
     corrections,
     setCorrections,
   } = useVisitEditor(initial)
@@ -116,7 +121,12 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           ← Volver al listado
         </Link>
         <PageHeader title={store.name} description={store.address} />
-        {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
+        <VisitStages current={2} />
+        {visit.ticketId && (
+          <Disclosure title="Ver reporte de la incidencia">
+            <TicketReport ticketId={visit.ticketId} />
+          </Disclosure>
+        )}
         <Card
           title={
             visit.phase === 'physical_work'
@@ -128,51 +138,52 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                 : 'Atención terminada'
           }
         >
-          <p>
-            Inicio real:{' '}
-            {visit.startedAt ? new Date(visit.startedAt).toLocaleString('es-PE') : 'No registrado'}
-          </p>
-          {visit.physicalEndedAt && (
-            <p>Fin físico: {new Date(visit.physicalEndedAt).toLocaleString('es-PE')}</p>
-          )}
-          {visit.gpsExceptionPending && (
-            <Alert>
-              Ejecutando bajo excepción GPS pendiente; la presencia todavía no está aprobada.
-            </Alert>
-          )}
-          <p>Termina el trabajo físico y registra los resultados sin límite de tiempo.</p>
+          {visit.gpsExceptionPending && <Badge>Llegada pendiente de revisión</Badge>}
           {visit.phase === 'physical_work' ? (
             <>
               {visit.tasks.length > 0 && (
-                <ol>
-                  {visit.tasks.map((task) => (
-                    <li key={task.id}>{task.title}</li>
-                  ))}
-                </ol>
+                <div className="nf-walkthrough">
+                  <p className="nf-muted">
+                    {visit.tasks.length} {visit.tasks.length === 1 ? 'actividad' : 'actividades'}{' '}
+                    para revisar
+                  </p>
+                  <ul>
+                    {visit.tasks.map((task, index) => (
+                      <li key={task.id}>
+                        <span aria-hidden="true">{index + 1}</span>
+                        <span>{task.title}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {!visit.readOnly && (
-                <Button disabled={saving} onClick={() => void finishPhysicalWork()}>
-                  {saving
-                    ? 'Registrando fin…'
-                    : visit.origin === 'checklist'
-                      ? 'Terminar recorrido'
-                      : 'Terminar atención'}
-                </Button>
+                <div className="nf-primary-action">
+                  <Button disabled={saving} onClick={() => void finishPhysicalWork()}>
+                    {saving
+                      ? 'Registrando fin…'
+                      : visit.origin === 'checklist'
+                        ? 'Terminar recorrido'
+                        : 'Terminar atención'}
+                  </Button>
+                </div>
               )}
             </>
           ) : (
             !visit.readOnly && (
-              <Button disabled={saving} onClick={() => void openForm()}>
-                {saving
-                  ? 'Abriendo…'
-                  : visit.origin === 'checklist'
-                    ? 'Registrar resultados'
-                    : 'Registrar resolución'}
-              </Button>
+              <div className="nf-primary-action">
+                <p>Registra ahora los resultados y las fotografías.</p>
+                <Button disabled={saving} onClick={() => void openForm()}>
+                  {saving
+                    ? 'Abriendo…'
+                    : visit.origin === 'checklist'
+                      ? 'Registrar resultados'
+                      : 'Registrar resolución'}
+                </Button>
+              </div>
             )
           )}
           {visit.readOnly && <Alert>El servidor mantiene esta ejecución en solo lectura.</Alert>}
-          {visit.occupiesTechnician && <p>Esta ejecución sigue ocupando al técnico.</p>}
           {error && <Alert>{error}</Alert>}
           <NotPerformedAction
             visit={visit}
@@ -206,7 +217,6 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           {visit.readOnly && (
             <Alert>El servidor mantiene el registro histórico en solo lectura.</Alert>
           )}
-          {visit.occupiesTechnician && <p>Esta ejecución sigue ocupando al técnico.</p>}
         </Card>
         <VisitRecord visit={visit} />
       </>
@@ -243,7 +253,12 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             : `Registrar resolución #${visit.ticketId}`
         }
       />
-      {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}
+      <VisitStages current={3} />
+      {visit.ticketId && (
+        <Disclosure title="Ver reporte de la incidencia">
+          <TicketReport ticketId={visit.ticketId} />
+        </Disclosure>
+      )}
       <Badge>
         {visit.origin === 'checklist' && visit.status === 'in_progress'
           ? 'En curso'
@@ -283,13 +298,10 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             ))}
         </Card>
       )}
-      <NotPerformedAction
-        visit={visit}
-        disabled={saving || optimizing || conflict || Boolean(pendingPhoto)}
-        submit={markNotPerformed}
-      />
       <input
         ref={galleryInput}
+        aria-label="Seleccionar archivo de evidencia"
+        tabIndex={-1}
         className="sr-only"
         type="file"
         accept="image/jpeg,image/png,image/webp"
@@ -348,6 +360,14 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                   task={task}
                   order={index + 1}
                   answer={visit.answers.find((answer) => answer.taskId === task.id)}
+                  issues={
+                    validationIssues.length
+                      ? taskIssues(
+                          task,
+                          visit.answers.find((answer) => answer.taskId === task.id),
+                        )
+                      : []
+                  }
                   onConforming={() => patchAnswer(task.id, { result: 'conforme', observation: '' })}
                   onNonConforming={() => setStep({ kind: 'observation', taskId: task.id })}
                   onCamera={() => setStep({ kind: 'camera', taskId: task.id })}
@@ -399,9 +419,16 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             </Button>
           </Card>
         )}
-        <Card title="Validación de cierre">
+        <Card title="Enviar resultados">
+          {validationIssues.length > 0 && (
+            <p role="alert" className="nf-task-issues">
+              Completa los requisitos pendientes antes de enviar.
+            </p>
+          )}
           {issues.length > 0 && (
-            <details>
+            <details
+              open={validationIssues.length > 0 && visit.origin === 'ticket' ? true : undefined}
+            >
               <summary>{issues.length} requisitos pendientes</summary>
               <ul>
                 {issues.map((issue) => (
@@ -430,20 +457,26 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           </div>
         </Card>
       </fieldset>
-      <ExceptionHistory visit={visit} />
+      <NotPerformedAction
+        visit={visit}
+        disabled={saving || optimizing || conflict || Boolean(pendingPhoto)}
+        submit={markNotPerformed}
+      />
+      {Boolean(visit.exceptionHistory?.length) && (
+        <Disclosure title="Historial de excepciones">
+          <ExceptionHistory visit={visit} />
+        </Disclosure>
+      )}
       {pendingPhoto && (
         <Alert>
-          La fotografía {pendingPhoto.photo.name} sigue pendiente de confirmar. Conservamos la
-          selección en este editor.
+          {pendingPhoto.confirmed
+            ? 'La foto está guardada. Falta confirmar el guardado del resto del registro.'
+            : 'La foto sigue pendiente de confirmar. Conservamos la selección para reintentar.'}
           <Button
             disabled={saving || conflict}
-            onClick={() =>
-              void capture(pendingPhoto.photo, pendingPhoto.taskId).catch((cause) =>
-                setError(errorMessage(cause)),
-              )
-            }
+            onClick={() => void retryPendingPhoto().catch((cause) => setError(errorMessage(cause)))}
           >
-            Reintentar carga
+            {pendingPhoto.confirmed ? 'Reintentar guardado' : 'Reintentar carga'}
           </Button>
         </Alert>
       )}
@@ -459,7 +492,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           {remote && (
             <>
               <p>
-                Versión del servidor: {remote.revision}. Estado: {remote.status}.
+                Versión del servidor: {remote.revision}. Estado: {operationalVisitLabel(remote)}.
               </p>
               <p>Descripción guardada: {remote.workDescription || 'Sin descripción'}</p>
               <ul>
@@ -557,8 +590,17 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             title="Confirmar envío del registro"
             onClose={() => setStep({ kind: 'editing' })}
           >
-            <p>Se conservan la llegada y el fin físico registrados.</p>
-            <Button onClick={() => void confirmFinish()}>Confirmar envío</Button>
+            <p>
+              {needsReview
+                ? 'Enviarás los resultados al supervisor para su revisión.'
+                : '¿Confirmas que los resultados están completos?'}
+            </p>
+            <div className="nf-actions nf-modal-actions">
+              <Button variant="secondary" onClick={() => setStep({ kind: 'editing' })}>
+                Revisar resultados
+              </Button>
+              <Button onClick={() => void confirmFinish()}>Confirmar envío</Button>
+            </div>
           </Modal>
           <Modal
             open={step.kind === 'success'}
@@ -568,7 +610,9 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             onClose={() => void navigate(back)}
           >
             <p>{step.kind === 'success' && submissionMessage(step.status).description}</p>
-            <Button onClick={() => void navigate(back)}>Volver al listado</Button>
+            <div className="nf-actions nf-modal-actions">
+              <Button onClick={() => void navigate(back)}>Volver al listado</Button>
+            </div>
           </Modal>
         </>
       )}

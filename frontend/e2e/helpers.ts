@@ -162,10 +162,8 @@ export async function upload(page: Page) {
 
 export async function arrive(page: Page, id: number, origin: 'checklist' | 'ticket' = 'checklist') {
   await page.goto((origin === 'checklist' ? '/checklists/' : '/routes/') + id)
-  const claim = page.getByRole('button', { name: 'Tomar checklist', exact: true })
   const arrival = page.getByRole('button', { name: 'Registrar llegada', exact: true })
-  await expect(claim.or(arrival).first()).toBeVisible()
-  if (origin === 'checklist' && (await claim.isVisible())) await claim.click()
+  await expect(arrival).toBeVisible()
   await arrival.click()
   await expect(
     page.getByRole('heading', {
@@ -226,10 +224,8 @@ export async function arrivalException(
   origin: 'checklist' | 'ticket' = 'checklist',
 ) {
   await page.goto((origin === 'checklist' ? '/checklists/' : '/routes/') + id)
-  const claim = page.getByRole('button', { name: 'Tomar checklist', exact: true })
   const arrival = page.getByRole('button', { name: 'Registrar llegada', exact: true })
-  await expect(claim.or(arrival).first()).toBeVisible()
-  if (origin === 'checklist' && (await claim.isVisible())) await claim.click()
+  await expect(arrival).toBeVisible()
   await arrival.click()
   await page.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
   await page

@@ -980,6 +980,88 @@ class IntegrationTests(TestCase):
             self.assertEqual(accepted.data[key], rejected.data[key])
         self.assertEqual(visit.eventos.filter(tipo="review").count(), 3)
 
+    def test_photo_snapshot_and_item_association_remain_authoritative(self):
+        required = ItemPlantilla.objects.create(
+            plantilla=self.template,
+            descripcion="Second required task",
+            foto_obligatoria=True,
+            orden=2,
+        )
+        optional = ItemPlantilla.objects.create(
+            plantilla=self.template,
+            descripcion="Optional photo task",
+            foto_obligatoria=False,
+            orden=3,
+        )
+        visit = self.visit()
+        # Cambiar la plantilla no reescribe los requisitos del intento histórico.
+        self.item.foto_obligatoria = False
+        self.item.save(update_fields=["foto_obligatoria"])
+        self.start(visit)
+        self.open(visit)
+        upload = self.upload(visit)
+        self.assertEqual(upload.status_code, 201, upload.data)
+        photo_id = upload.data["id"]
+        retrieved = self.client.get(f"/api/visitas/{visit.pk}/")
+        tasks = {task["id"]: task for task in retrieved.data["tasks"]}
+        self.assertTrue(tasks[self.item.pk]["photoRequired"])
+        self.assertTrue(tasks[required.pk]["photoRequired"])
+        self.assertFalse(tasks[optional.pk]["photoRequired"])
+        answers = [
+            {
+                "taskId": self.item.pk,
+                "result": "conforme",
+                "observation": "",
+                "evidenceIds": [photo_id],
+            },
+            {
+                "taskId": required.pk,
+                "result": "conforme",
+                "observation": "",
+                "evidenceIds": [photo_id],
+            },
+            {
+                "taskId": optional.pk,
+                "result": "conforme",
+                "observation": "",
+                "evidenceIds": [],
+            },
+        ]
+
+        def save():
+            visit.refresh_from_db()
+            return self.post(
+                f"visitas/{visit.pk}/borrador/",
+                {
+                    "revision": visit.borrador_revision,
+                    "answers": answers,
+                    "workDescription": "",
+                    "evidenceIds": [],
+                },
+            )
+
+        # Una foto del primer ítem no puede satisfacer el requisito del segundo.
+        self.assertEqual(save().status_code, 400)
+        answers[1]["evidenceIds"] = []
+        saved = save()
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(self.post(f"visitas/{visit.pk}/finalizar/").status_code, 400)
+        answers[1].update(
+            result="no_aplica", observation="Este equipo no existe en la tienda."
+        )
+        saved = save()
+        self.assertEqual(saved.status_code, 200, saved.data)
+        confirmed = self.post(f"visitas/{visit.pk}/finalizar/")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data["status"], "completed")
+        associations = {
+            answer["taskId"]: answer["evidenceIds"]
+            for answer in confirmed.data["answers"]
+        }
+        self.assertEqual(associations[self.item.pk], [photo_id])
+        self.assertEqual(associations[required.pk], [])
+        self.assertEqual(associations[optional.pk], [])
+
     def test_gps_validation_and_content(self):
         visit = self.visit()
         self.post(f"visitas/pool/{visit.pk}/tomar/")

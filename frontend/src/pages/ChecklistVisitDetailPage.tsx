@@ -3,12 +3,13 @@ import { Link, useParams } from 'react-router-dom'
 import { useRepositories } from '../app/RepositoriesProvider'
 import { useQuery } from '../hooks/useQuery'
 import { QueryState } from '../components/feedback/QueryState'
-import { Alert, Badge, Card } from '../components/ui'
+import { Alert, Badge, PageHeader } from '../components/ui'
 import { operationalVisitLabel } from '../types/models'
 import { LazyMap } from '../features/technician/LazyMap'
 import { VisitStart } from '../features/checklists/VisitStart'
 import { VisitRecord } from '../features/checklists/VisitRecord'
-import { ClaimHistory } from '../features/checklists/ClaimHistory'
+import { Disclosure } from '../components/ui/Disclosure'
+import { VisitStages } from '../features/checklists/VisitStages'
 export default function ChecklistVisitDetailPage() {
   const { id } = useParams()
   const repos = useRepositories()
@@ -30,34 +31,26 @@ export default function ChecklistVisitDetailPage() {
       <Link className="nf-link" to="/checklists">
         ← Mis checklists
       </Link>
-      <div className="nf-two-columns">
-        <Card>
-          <span className="eyebrow">Información de la tienda</span>
-          <h1>{store.name}</h1>
-          <p>{store.address}</p>
-          <Badge>{operationalVisitLabel(visit)}</Badge>
-          {visit.quota && (
-            <p>
-              Visita mensual {visit.quota}
-              {visit.quotaCount ? ` de ${visit.quotaCount}` : ''}
-            </p>
-          )}
-          <p>El checklist puede realizarse cualquier día de su mes.</p>
-          <p>Contacto: {store.contact}</p>
-          <a
-            className="nf-button nf-button--primary nf-directions"
-            target="_blank"
-            rel="noopener noreferrer"
-            href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}
-          >
-            Abrir indicaciones en Google Maps
-          </a>
-        </Card>
+      <PageHeader title={store.name} description={store.address} />
+      <Badge>{operationalVisitLabel(visit)}</Badge>
+      {['available', 'claimed'].includes(visit.status) && (
+        <>
+          <VisitStages current={1} />
+          <VisitStart visit={visit} store={store} claimBeforeStart={visit.status === 'available'} />
+        </>
+      )}
+      <Disclosure title="Cómo llegar y contacto">
+        <p>{store.contact || 'Sin contacto registrado'}</p>
+        <a
+          className="nf-button nf-button--secondary nf-directions"
+          target="_blank"
+          rel="noopener noreferrer"
+          href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}
+        >
+          Abrir indicaciones en Google Maps
+        </a>
         <LazyMap stores={[store]} />
-      </div>
-      {visit.status === 'available' && <VisitStart visit={visit} store={store} claimBeforeStart />}
-      <ClaimHistory visit={visit} />
-      {visit.status === 'claimed' && <VisitStart visit={visit} store={store} />}
+      </Disclosure>
       {['physical_work', 'physical_finished', 'results', 'correction_required'].includes(
         visit.phase ?? '',
       ) && (

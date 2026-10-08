@@ -12,9 +12,11 @@ export function ChecklistTaskCard({
   onGallery,
   onRemove,
   onNotApplicable,
+  issues = [],
 }: {
   task: ChecklistTask
   order: number
+  issues?: string[]
   answer?: Answer
   onConforming(this: void): void
   onNonConforming(this: void): void
@@ -38,16 +40,18 @@ export function ChecklistTaskCard({
           </Badge>
         </div>
       </header>
-      <div className="nf-actions" role="group" aria-label={`Resultado de ${task.title}`}>
+      <div className="nf-result-options" role="group" aria-label={`Resultado de ${task.title}`}>
         <Button
           variant="secondary"
+          className="nf-result-option"
           aria-pressed={answer?.result === 'conforme'}
           onClick={onConforming}
         >
-          ✓ Conforme
+          Conforme
         </Button>
         <Button
           variant="secondary"
+          className="nf-result-option"
           aria-pressed={answer?.result === 'no_conforme'}
           onClick={onNonConforming}
         >
@@ -56,6 +60,7 @@ export function ChecklistTaskCard({
         {onNotApplicable && (
           <Button
             variant="secondary"
+            className="nf-result-option"
             aria-pressed={answer?.result === 'no_aplica'}
             onClick={onNotApplicable}
           >
@@ -63,6 +68,13 @@ export function ChecklistTaskCard({
           </Button>
         )}
       </div>
+      {issues.length > 0 && (
+        <ul className="nf-task-issues" aria-label={`Requisitos de ${task.title}`}>
+          {issues.map((issue) => (
+            <li key={issue}>{issue}</li>
+          ))}
+        </ul>
+      )}
       {answer?.observation && (
         <p>
           <strong>Observación:</strong> {answer.observation}

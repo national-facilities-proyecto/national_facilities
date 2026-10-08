@@ -1,8 +1,7 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createFixtures } from '../../test/doubles/fixtures'
 import { VisitRecord } from './VisitRecord'
-import { ClaimHistory } from './ClaimHistory'
 import { displayDuration } from '../../utils/durations'
 import { submissionMessage } from './submissionMessage'
 import { auditPerson } from '../../utils/auditPerson'
@@ -27,7 +26,7 @@ it.each([
   expect(displayDuration(value)).toBe(expected)
 })
 
-it('conserva eventos y distingue autor, actor y revisor histórico', () => {
+it('conserva eventos y distingue autor, actor y revisor histórico', async () => {
   const visit = createFixtures().visits[0]
   const original = {
     type: 'location' as const,
@@ -71,7 +70,11 @@ it('conserva eventos y distingue autor, actor y revisor histórico', () => {
       }}
     />,
   )
-  expect(screen.getByText('11 h 57 min 44 s')).toBeVisible()
+  expect(screen.queryByText('11 h 57 min 44 s')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByText('Detalles técnicos'))
+  expect(await screen.findByText('11 h 57 min 44 s')).toBeVisible()
+  fireEvent.click(screen.getByText('Historial de excepciones'))
+  await screen.findByText('Versión anterior conservada')
   expect(screen.getByText('Duración no válida (registro histórico)')).toBeVisible()
   const events = screen.getAllByRole('listitem')
   expect(events).toHaveLength(2)
@@ -84,9 +87,9 @@ it('conserva eventos y distingue autor, actor y revisor histórico', () => {
   expect(auditPerson(undefined, 'Nombre no asociado')).toBe('Sin registrar')
 })
 
-it('muestra reserva del técnico y liberación por sistema sin confundir al autor', () => {
+it('no muestra reservas operativas y conserva los datos recibidos', () => {
   render(
-    <ClaimHistory
+    <VisitRecord
       visit={{
         ...createFixtures().visits[0],
         claimHistory: [
@@ -104,8 +107,8 @@ it('muestra reserva del técnico y liberación por sistema sin confundir al auto
       }}
     />,
   )
-  expect(screen.getByText('Ana Técnica (ID #1)')).toBeVisible()
-  expect(screen.getByText('Sistema')).toBeVisible()
+  expect(screen.queryByText('Historial de reservas')).not.toBeInTheDocument()
+  expect(screen.queryByText('Reserva liberada')).not.toBeInTheDocument()
 })
 
 it('solo anuncia finalización definitiva para el estado completed', () => {
@@ -113,4 +116,27 @@ it('solo anuncia finalización definitiva para el estado completed', () => {
   expect(submissionMessage('pending_approval').title).toBe('En revisión')
   expect(submissionMessage('correction_required').title).toBe('Registro recibido')
   expect(submissionMessage('in_progress').title).toBe('Registro recibido')
+})
+
+it('conserva reporte general y respuestas históricas aunque ya no exista la tarea en el snapshot', () => {
+  const visit = createFixtures().visits[0]
+  render(
+    <VisitRecord
+      visit={{
+        ...visit,
+        workDescription: 'Reporte general autorizado.',
+        answers: [
+          {
+            taskId: 999,
+            result: 'no_conforme',
+            observation: 'Observación histórica conservada.',
+            evidenceIds: ['historical-photo'],
+          },
+        ],
+      }}
+    />,
+  )
+  expect(screen.getByText('Reporte general autorizado.')).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Actividad histórica #999' })).toBeVisible()
+  expect(screen.getByText('Observación histórica conservada.')).toBeVisible()
 })

@@ -81,7 +81,7 @@ async function start(page: Page, id: number, path: string) {
 async function form(page: Page, origin: 'checklist' | 'ticket') {
   await openResults(page, origin)
   if (origin === 'checklist')
-    await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+    await page.getByRole('button', { name: 'Conforme', exact: true }).click()
   else
     await page
       .getByLabel('Descripción del trabajo realizado')
@@ -243,7 +243,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       const deadline = original.expiresAt
       expect((await visit(request, data.id, data.token)).status).toBe('in_progress')
       if (origin === 'checklist')
-        await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+        await page.getByRole('button', { name: 'Conforme', exact: true }).click()
       else
         await page
           .getByLabel('Descripción del trabajo realizado')
@@ -260,7 +260,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       const reviewer = await context.newPage()
       await login(reviewer, 'account')
       await reviewer.goto('/technical-supervisor/checklists/' + data.id)
-      await reviewer.getByRole('button', { name: 'Rechazar excepción', exact: true }).click()
+      await reviewer.getByRole('button', { name: 'Rechazar', exact: true }).click()
       await reviewer
         .getByLabel('Motivo de rechazo')
         .fill('Please explain the connection interruption in more detail.')
@@ -299,7 +299,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       ).toHaveCount(0)
       expect((await visit(request, data.id, data.token)).expiresAt).toBe(deadline ?? undefined)
       await reviewer.reload()
-      await reviewer.getByRole('button', { name: 'Aprobar excepción', exact: true }).click()
+      await reviewer.getByRole('button', { name: 'Aprobar', exact: true }).click()
       await reviewer
         .getByLabel('Motivo de aprobación')
         .fill('Verified corrected registration, GPS and the clarified network interruption.')
@@ -319,6 +319,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       expect(history.map((entry) => object(entry.exception).approved)).toEqual([false, true])
       await page.reload()
       await expect(page.getByText('Esta visita ya fue finalizada.', { exact: true })).toBeVisible()
+      await page.getByText('Historial de excepciones', { exact: true }).click()
       await expect(
         page.getByRole('heading', { name: 'Historial de justificaciones y decisiones' }),
       ).toBeVisible()

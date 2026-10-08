@@ -29,12 +29,12 @@ export function NotPerformedAction({
   return (
     <>
       <aside className="nf-not-performed" aria-label="Acción excepcional">
-        <p id={helpId}>
-          Usa esta acción si no se pudo realizar el trabajo. Debes indicar el motivo.
-        </p>
+        <span id={helpId} className="sr-only">
+          Úsalo si no se pudo realizar el trabajo; requiere un motivo.
+        </span>
         <Button
           variant="secondary"
-          className="nf-button--exception"
+          className="nf-button--quiet"
           aria-describedby={helpId}
           disabled={disabled || busy}
           onClick={() => {
@@ -42,7 +42,7 @@ export function NotPerformedAction({
             setError('')
           }}
         >
-          Marcar como no realizado
+          No pude realizar el trabajo
         </Button>
       </aside>
       <Modal
@@ -52,7 +52,6 @@ export function NotPerformedAction({
         onClose={() => setOpen(false)}
       >
         <p>No realizado no cuenta como trabajo completado.</p>
-        <p>El intento y sus evidencias se conservan. Esta acción requiere confirmación.</p>
         <Textarea
           label="Motivo"
           required
@@ -63,27 +62,31 @@ export function NotPerformedAction({
           onChange={(event) => setReason(event.target.value)}
         />
         {error && <Alert>{error}</Alert>}
-        <Button
-          variant="danger"
-          disabled={busy || disabled || reason.trim().length < 10}
-          onClick={() => {
-            if (busy || reason.trim().length < 10) return
-            setBusy(true)
-            setError('')
-            void (submit ? submit(reason.trim()) : visits.markNotPerformed(visit.id, reason.trim()))
-              .then((next) => {
-                onConfirmed?.(next)
-                setOpen(false)
-              })
-              .catch((cause) => setError(errorMessage(cause)))
-              .finally(() => setBusy(false))
-          }}
-        >
-          Confirmar no realizado
-        </Button>
-        <Button variant="secondary" disabled={busy} onClick={() => setOpen(false)}>
-          Cancelar
-        </Button>
+        <div className="nf-actions nf-modal-actions">
+          <Button
+            variant="danger"
+            disabled={busy || disabled || reason.trim().length < 10}
+            onClick={() => {
+              if (busy || reason.trim().length < 10) return
+              setBusy(true)
+              setError('')
+              void (
+                submit ? submit(reason.trim()) : visits.markNotPerformed(visit.id, reason.trim())
+              )
+                .then((next) => {
+                  onConfirmed?.(next)
+                  setOpen(false)
+                })
+                .catch((cause) => setError(errorMessage(cause)))
+                .finally(() => setBusy(false))
+            }}
+          >
+            Confirmar no realizado
+          </Button>
+          <Button variant="secondary" disabled={busy} onClick={() => setOpen(false)}>
+            Cancelar
+          </Button>
+        </div>
       </Modal>
     </>
   )

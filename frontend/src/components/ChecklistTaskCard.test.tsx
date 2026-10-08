@@ -16,7 +16,7 @@ it('permite seleccionar conforme y no conforme y distingue foto obligatoria', ()
       onRemove={vi.fn()}
     />,
   )
-  fireEvent.click(screen.getByRole('button', { name: '✓ Conforme' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Conforme' }))
   fireEvent.click(screen.getByRole('button', { name: 'No conforme' }))
   expect(conform).toHaveBeenCalled()
   expect(non).toHaveBeenCalled()
@@ -62,3 +62,33 @@ it('muestra foto opcional y observación asociada a la tarea', () => {
   expect(screen.getByText('Foto opcional')).toBeInTheDocument()
   expect(screen.getByText(/Filtro dañado/)).toBeInTheDocument()
 })
+
+it.each([undefined, 'conforme', 'no_conforme', 'no_aplica'] as const)(
+  'únicamente %s aparece seleccionado y las tres opciones tienen etiquetas sin check',
+  (result) => {
+    renderPage(
+      <ChecklistTaskCard
+        task={task}
+        order={1}
+        answer={
+          result
+            ? { taskId: 4, result, observation: 'Motivo de revisión', evidenceIds: [] }
+            : undefined
+        }
+        onConforming={vi.fn()}
+        onNonConforming={vi.fn()}
+        onNotApplicable={vi.fn()}
+        onCamera={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    )
+    const names = { conforme: 'Conforme', no_conforme: 'No conforme', no_aplica: 'No aplica' }
+    for (const [value, label] of Object.entries(names)) {
+      const button = screen.getByRole('button', { name: label })
+      expect(button).toHaveAttribute('aria-pressed', String(value === result))
+      expect(button.textContent).not.toContain('✓')
+      expect(button).toHaveClass('nf-result-option')
+    }
+    expect(screen.queryAllByRole('button', { pressed: true })).toHaveLength(result ? 1 : 0)
+  },
+)

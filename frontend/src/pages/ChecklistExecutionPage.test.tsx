@@ -25,8 +25,9 @@ async function page() {
 it('bloquea finalización sin resultados ni fotografías', async () => {
   await page()
   fireEvent.click(screen.getByRole('button', { name: 'Finalizar' }))
-  expect(screen.getByRole('alert')).toHaveTextContent('Resultado pendiente')
-  expect(screen.getByRole('alert')).toHaveTextContent('Fotografía obligatoria')
+  expect(screen.getAllByText(/Resultado pendiente:/).length).toBeGreaterThan(0)
+  expect(screen.getAllByText(/Fotografía obligatoria:/).length).toBeGreaterThan(0)
+  expect(screen.queryByText(/No se confirmó el guardado/)).not.toBeInTheDocument()
 })
 it('sincroniza observaciones entre tareas y guarda el borrador', async () => {
   const repos = await page()
@@ -60,7 +61,7 @@ it('muestra tareas y termina sin GPS ni galería genérica durante el trabajo f�
   expect(
     screen.queryByRole('button', { name: 'Tomar fotografía del recorrido' }),
   ).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: '✓ Conforme' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Conforme' })).not.toBeInTheDocument()
   expect(
     screen.queryByRole('region', { name: 'Tiempo de registro del formulario' }),
   ).not.toBeInTheDocument()
@@ -224,7 +225,7 @@ it('En revisión es readonly y no ofrece edición ni otro GPS', async () => {
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Terminar recorrido' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Terminar atención' })).not.toBeInTheDocument()
-  expect(screen.getByText('Puedes comenzar otro trabajo.')).toBeVisible()
+  expect(screen.getByText(/Espera la decisión del supervisor/)).toBeVisible()
   expect((await repos.visits.get(1)).occupiesTechnician).toBe(false)
 })
 it('legacy pendiente sin envío continúa en resultados y sigue ocupando al técnico', async () => {
@@ -243,7 +244,7 @@ it('legacy pendiente sin envío continúa en resultados y sigue ocupando al téc
   renderPage(<VisitEditor id={1} origin="checklist" />, repos)
   await screen.findByRole('heading', { name: 'Registro de resultados' })
   expect(screen.queryByRole('heading', { name: 'En revisión' })).not.toBeInTheDocument()
-  expect(screen.getByText('Esta ejecución sigue ocupando al técnico.')).toBeVisible()
+  expect(screen.getByText(/Registro todavía no enviado/)).toBeVisible()
   expect(screen.queryByText('Puedes comenzar otro trabajo.')).not.toBeInTheDocument()
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
 })

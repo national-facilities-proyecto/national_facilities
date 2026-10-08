@@ -9,6 +9,7 @@ export function VisitTiming({ visit }: { visit: Visit }) {
     <>
       <AuditDetails
         fields={[
+          ['ID de la visita', visit.id],
           ['Técnico', auditPerson(visit.technicianId, visit.technicianName)],
           ['Inicio real', displayDate(visit.startedAt)],
           ['Fin del trabajo físico', displayDate(visit.physicalEndedAt)],

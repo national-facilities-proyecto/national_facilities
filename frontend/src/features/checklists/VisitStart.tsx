@@ -2,9 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Store, Visit } from '../../types/models'
 import { useRepositories } from '../../app/RepositoriesProvider'
-import { Alert, Button, Card } from '../../components/ui'
-import { errorMessage } from '../../services/errors'
-import { displayDate } from '../../utils/dates'
+import { Card } from '../../components/ui'
 import { GpsAction } from './GpsAction'
 
 export function VisitStart({
@@ -20,60 +18,34 @@ export function VisitStart({
 }) {
   const { checklists } = useRepositories()
   const navigate = useNavigate()
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
   const [current, setCurrent] = useState(visit)
   const [claimed, setClaimed] = useState(!claimBeforeStart)
-  const reserve = async () => {
-    if (busy) return
-    setBusy(true)
-    setError('')
-    try {
-      setCurrent(await checklists.claim(visit.id))
-      setClaimed(true)
-    } catch (cause) {
-      setError(errorMessage(cause))
-    } finally {
-      setBusy(false)
-    }
+  const prepare = async () => {
+    if (claimed) return current
+    const next = await checklists.claim(visit.id)
+    setCurrent(next)
+    setClaimed(true)
+    return next
   }
   return (
-    <Card title={claimed ? 'Registrar llegada' : 'Tomar checklist'}>
-      <p>{store.name}</p>
-      <p>
-        {claimed
-          ? 'Pendiente de iniciar. Registrar llegada solicita una lectura GPS fresca y comienza el trabajo físico.'
-          : 'Reserva el checklist antes de registrar llegada.'}
+    <Card title="Iniciar trabajo">
+      <p className="nf-muted">
+        Confirma tu llegada a {store.name} con la ubicación del dispositivo.
       </p>
-      <p>
-        Radio publicado:{' '}
-        {current.radiusMeters === undefined ? 'No registrado' : `${current.radiusMeters} m`}.
-      </p>
-      <p>
-        El registro no tiene límite de tiempo. El formulario se abre después de terminar el
-        recorrido o atención.
-      </p>
-      {current.claimExpiresAt && <p>Reserva hasta {displayDate(current.claimExpiresAt)}.</p>}
-      {error && <Alert>{error}</Alert>}
-      {claimed ? (
-        <GpsAction
-          visit={current}
-          scope="arrival"
-          onConfirmed={() => {
-            if (onStarted) onStarted()
-            else
-              void navigate(
-                visit.origin === 'checklist'
-                  ? `/checklists/${visit.id}/start`
-                  : `/routes/${visit.id}`,
-              )
-          }}
-        />
-      ) : (
-        <Button disabled={busy} onClick={() => void reserve()}>
-          Tomar checklist
-        </Button>
-      )}
+      <GpsAction
+        visit={current}
+        scope="arrival"
+        beforeStart={prepare}
+        onConfirmed={() => {
+          if (onStarted) onStarted()
+          else
+            void navigate(
+              visit.origin === 'checklist'
+                ? `/checklists/${visit.id}/start`
+                : `/routes/${visit.id}`,
+            )
+        }}
+      />
     </Card>
   )
 }

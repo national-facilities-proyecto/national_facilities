@@ -12,12 +12,12 @@ test('móvil: cámara completa, rotación, repetir, confirmar y finalización se
   await login(page)
   await arrive(page, id)
   await openResults(page)
-  await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+  await page.getByRole('button', { name: 'Conforme', exact: true }).click()
   const exceptional = page.getByRole('complementary', { name: 'Acción excepcional' })
   await expect(exceptional).toContainText('si no se pudo realizar el trabajo')
-  await expect(exceptional.getByRole('button', { name: 'Marcar como no realizado' })).toHaveClass(
-    /nf-button--exception/,
-  )
+  await expect(
+    exceptional.getByRole('button', { name: 'No pude realizar el trabajo' }),
+  ).toHaveClass(/nf-button--quiet/)
   await page.evaluate(() => {
     const tracks: MediaStreamTrack[] = []
     Object.assign(window, { mobileCameraTracks: tracks })
@@ -97,6 +97,7 @@ test('móvil: cámara completa, rotación, repetir, confirmar y finalización se
   expect(object(await call(request, `/visitas/${id}/`, token)).status).toBe('completed')
   await page.getByRole('button', { name: 'Volver al listado' }).click()
   await page.goto(`/checklists/${id}/start`)
+  await page.getByText('Detalles técnicos', { exact: true }).click()
   await expect(page.getByText('Trabajo físico', { exact: true })).toBeVisible()
   await expect(page.getByText('Duración total', { exact: true })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

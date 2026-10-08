@@ -24,10 +24,15 @@ export function useVisitEditor(initial: Visit) {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [validationIssues, setValidationIssues] = useState<string[]>([])
   const [corrections, setCorrections] = useState<Record<string, string>>({})
   const [conflict, setConflict] = useState(false)
   const [remote, setRemote] = useState<Visit>()
-  const [pendingPhoto, setPendingPhoto] = useState<{ photo: Evidence; taskId?: number }>()
+  const [pendingPhoto, setPendingPhoto] = useState<{
+    photo: Evidence
+    taskId?: number
+    confirmed?: boolean
+  }>()
   const version = useRef(0)
   const latest = useRef(visit)
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
@@ -93,6 +98,7 @@ export function useVisitEditor(initial: Visit) {
     setVisit(next)
     setDirty(true)
     setError('')
+    setValidationIssues([])
   }
   const persistDraft = useCallback(async () => {
     if (latest.current.phase === 'not_performed') return
@@ -115,6 +121,7 @@ export function useVisitEditor(initial: Visit) {
       setVisit(confirmed)
       setDirty(false)
       setError('')
+      setPendingPhoto((current) => (current?.confirmed ? undefined : current))
     }
   }, [repos])
   const enqueueWrite = useCallback(async (work: () => Promise<void>) => {
@@ -196,7 +203,7 @@ export function useVisitEditor(initial: Visit) {
   }
   const capture = async (photo: Evidence, taskIdOverride?: number) => {
     const taskId = taskIdOverride ?? (step.kind === 'camera' ? step.taskId : undefined)
-    setPendingPhoto({ photo, taskId })
+    setPendingPhoto({ photo, taskId, confirmed: false })
     await enqueueWrite(async () => {
       await syncEvidenceRevision(
         () => repos.evidence.put({ ...photo, taskId, visitId: latest.current.id }),
@@ -204,11 +211,14 @@ export function useVisitEditor(initial: Visit) {
         true,
         taskId,
       )
+      setPendingPhoto({ photo, taskId, confirmed: true })
       const oldIds = taskId
         ? (latest.current.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
         : latest.current.evidenceIds
       if (taskId) patchAnswer(taskId, { evidenceIds: [...new Set([...oldIds, photo.id])] })
       else update({ evidenceIds: [...new Set([...oldIds, photo.id])] })
+      // La captura terminó: un fallo posterior del borrador se reintenta en el editor.
+      if (step.kind === 'camera') setStep({ kind: 'editing' })
       await persistDraft()
     })
     setPendingPhoto(undefined)
@@ -237,7 +247,9 @@ export function useVisitEditor(initial: Visit) {
     const unchanged =
       refreshedRevision === previousRevision &&
       (repos.source === 'mock' || ids.includes(id) === associated)
+    const associationConfirmed = repos.source === 'mock' || ids.includes(id) === associated
     if (
+      associationConfirmed &&
       registrationEditable(refreshed) &&
       typeof refreshedRevision === 'number' &&
       (refreshedRevision === previousRevision + 1 || unchanged)
@@ -250,7 +262,9 @@ export function useVisitEditor(initial: Visit) {
     setConflict(true)
     throw new AppError(
       'conflict',
-      'La revisión cambió durante la mutación de evidencia. Tu editor se conserva; consulta y concilia la versión del servidor antes de guardar.',
+      associationConfirmed
+        ? 'La revisión cambió durante la mutación de evidencia. Tu editor se conserva; consulta y concilia la versión del servidor antes de guardar.'
+        : 'No se confirmó la asociación de la fotografía a este ítem. Consulta la versión del servidor antes de guardar.',
     )
   }
   const remove = (id: string, taskId?: number) => {
@@ -264,6 +278,13 @@ export function useVisitEditor(initial: Visit) {
       } else update({ evidenceIds: latest.current.evidenceIds.filter((item) => item !== id) })
       await persistDraft()
     }).catch((cause) => setError(errorMessage(cause)))
+  }
+  const retryPendingPhoto = async () => {
+    if (!pendingPhoto || saving || conflict) return
+    if (pendingPhoto.confirmed) {
+      await save()
+      setPendingPhoto(undefined)
+    } else await capture(pendingPhoto.photo, pendingPhoto.taskId)
   }
   const applyConfirmed = (next: Visit) => {
     latest.current = next
@@ -286,10 +307,11 @@ export function useVisitEditor(initial: Visit) {
     if (step.kind !== 'editing' || saving || conflict) return
     const pending = pendingItems(latest.current)
     if (pending.length) {
-      setError(pending.join(' '))
+      setValidationIssues(pending)
       return
     }
     setStep({ kind: 'validating' })
+    setValidationIssues([])
     setError('')
     try {
       await save()
@@ -311,6 +333,7 @@ export function useVisitEditor(initial: Visit) {
   const confirmFinish = async () => {
     if (saving) return
     setStep({ kind: 'validating' })
+    setValidationIssues([])
     setError('')
     try {
       const current = latest.current
@@ -394,6 +417,8 @@ export function useVisitEditor(initial: Visit) {
     acceptRemote,
     reconcile,
     pendingPhoto,
+    retryPendingPhoto,
+    validationIssues,
     corrections,
     setCorrections,
     reviewInput,

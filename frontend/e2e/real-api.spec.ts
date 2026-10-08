@@ -35,11 +35,10 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   if (!available) throw new Error('No existe checklist de prueba disponible.')
   await login(page)
   await page.goto('/checklists/' + available.id)
-  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
   await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Recorrido de inspección' })).toBeVisible()
   await expect(page.getByText('Inspect test device', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: '✓ Conforme', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Conforme', exact: true })).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
     0,
   )
@@ -63,7 +62,7 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   current = await visit(request, available.id, token)
   const deadline = current.expiresAt
   expect(deadline).toBeUndefined()
-  await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+  await page.getByRole('button', { name: 'Conforme', exact: true }).click()
   await cameraPhoto(page)
   await expect(page.locator('fieldset .nf-evidence img')).toHaveCount(1)
   await page.screenshot({ path: 'test-results/p0-checklist-item.png', fullPage: true })
@@ -90,7 +89,7 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   await expect(page.getByLabel('Reporte general del checklist')).toHaveValue(
     'Preventive review completed during the physical walkthrough.',
   )
-  await expect(page.getByRole('button', { name: '✓ Conforme', exact: true })).toHaveAttribute(
+  await expect(page.getByRole('button', { name: 'Conforme', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   )
@@ -120,9 +119,9 @@ test('reserva de checklist: liberación a las dos horas, pantalla antigua y nuev
   const id = checklistCase()
   const token = await access(request, 'tech')
   await login(page)
+  await call(request, `/visitas/pool/${id}/tomar/`, token, {})
   await page.goto(`/checklists/${id}`)
-  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
-  await expect(page.getByText(/Reserva hasta/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Registrar llegada', exact: true })).toBeVisible()
   const original = object(await call(request, `/visitas/${id}/`, token))
   expect(Date.parse(String(original.claimExpiresAt)) - Date.parse(String(original.claimedAt))).toBe(
     7200000,
@@ -149,9 +148,7 @@ test('reserva de checklist: liberación a las dos horas, pantalla antigua y nuev
   const other = await context.newPage()
   await login(other, 'othertech')
   await other.goto(`/checklists/${id}`)
-  await expect(
-    other.getByRole('heading', { name: 'Historial de reservas', exact: true }),
-  ).toBeVisible()
+  await expect(other.getByText('Historial de reservas', { exact: true })).toHaveCount(0)
   await other.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await expect(
     other.getByRole('heading', { name: 'Recorrido de inspección', exact: true }),
@@ -612,10 +609,9 @@ test('checklist: cámara real del navegador y galería interrumpida reintentan s
   const token = await access(request, 'tech')
   await login(page)
   await page.goto('/checklists/' + id)
-  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
   await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await openResults(page)
-  await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+  await page.getByRole('button', { name: 'Conforme', exact: true }).click()
   await page.getByRole('button', { name: 'Tomar foto', exact: true }).click()
   const camera = page.getByRole('dialog')
   await camera.getByRole('button', { name: 'Capturar', exact: true }).click()
@@ -654,7 +650,6 @@ test('dos dispositivos detectan conflicto de borrador y concilian con confirmaci
   const token = await access(request, 'tech')
   await login(page)
   await page.goto('/checklists/' + id)
-  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
   await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await openResults(page)
   await expect(page.getByRole('button', { name: 'Finalizar', exact: true })).toBeVisible()
@@ -663,7 +658,7 @@ test('dos dispositivos detectan conflicto de borrador y concilian con confirmaci
   await login(another)
   await another.goto('/checklists/' + id + '/start')
   await expect(another.getByRole('button', { name: 'Finalizar', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+  await page.getByRole('button', { name: 'Conforme', exact: true }).click()
   await upload(page)
   await another.getByRole('button', { name: 'No aplica', exact: true }).click()
   await another
@@ -828,7 +823,6 @@ test('P0: fuera de radio con mensaje humano y foto de llegada recuperada desde o
   await context.setGeolocation({ latitude: -12.15, longitude: -77.0181, accuracy: 8 })
   await login(page)
   await page.goto(`/checklists/${id}`)
-  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
   await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await expect(page.getByRole('alert')).toHaveText(
     'Tu ubicación está fuera del área del establecimiento.',
@@ -925,7 +919,7 @@ test('P0: una llegada caducada se renueva automáticamente y solo la lectura fre
 })
 
 async function confirmNotPerformed(page: Page) {
-  await page.getByRole('button', { name: 'Marcar como no realizado', exact: true }).click()
+  await page.getByRole('button', { name: 'No pude realizar el trabajo', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Marcar como no realizado', exact: true })
   await expect(
     dialog.getByText('No realizado no cuenta como trabajo completado.', { exact: true }),
@@ -995,7 +989,6 @@ test('No realizado checklist: libera ejecución y publica otro intento de la mis
     .locator(`a[href="/checklists/${replacement.id}"]`)
   await expect(actualLink).toBeVisible()
   await actualLink.click()
-  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
   await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await expect(
     page.getByRole('heading', { name: 'Recorrido de inspección', exact: true }),

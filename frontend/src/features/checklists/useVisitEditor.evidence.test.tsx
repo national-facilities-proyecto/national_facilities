@@ -276,3 +276,72 @@ it.each(['completed', 'pending_approval', 'correction_required'] as const)(
     expect(test.editor().step).toEqual({ kind: 'success', status })
   },
 )
+
+it('una revisión r+1 sin asociación al ítem no confirma la fotografía ni guarda IDs locales', async () => {
+  const test = await setup()
+  test.put.mockImplementation(async () => test.mutateEvidence(false))
+  await act(async () => {
+    await expect(test.editor().capture(photo, 1)).rejects.toMatchObject({ code: 'conflict' })
+  })
+  expect(test.save).not.toHaveBeenCalled()
+  expect(test.editor().visit.answers[0].evidenceIds).toEqual([])
+  expect(test.editor().pendingPhoto?.photo.id).toBe(photo.id)
+})
+
+it('foto confirmada con borrador fallido reintenta solo el guardado, sin volver a subir', async () => {
+  const test = await setup()
+  test.save.mockRejectedValueOnce(new AppError('network', 'No se pudo guardar el borrador.'))
+  await act(async () => {
+    await expect(test.editor().capture(photo, 1)).rejects.toMatchObject({ code: 'network' })
+  })
+  expect(test.editor().pendingPhoto?.confirmed).toBe(true)
+  expect(test.editor().visit.answers[0].evidenceIds).toEqual([photo.id])
+  await act(async () => {
+    await test.editor().retryPendingPhoto()
+  })
+  expect(test.put).toHaveBeenCalledOnce()
+  expect(test.save).toHaveBeenCalledTimes(2)
+  expect(test.editor().pendingPhoto).toBeUndefined()
+  expect(test.editor().error).toBe('')
+})
+it('faltan fotos: es validación del formulario, sin error de guardado ni envío', async () => {
+  const test = await setup()
+  const complete = vi.spyOn(test.repos.visits, 'complete')
+  await act(async () => {
+    await test.editor().finish()
+  })
+  expect(test.editor().validationIssues).toContain(
+    `Fotografía obligatoria: ${test.server().tasks[0].title}.`,
+  )
+  expect(test.editor().error).toBe('')
+  expect(test.save).not.toHaveBeenCalled()
+  expect(complete).not.toHaveBeenCalled()
+  expect(test.editor().step.kind).toBe('editing')
+})
+
+it('guardar manualmente también confirma el borrador pendiente de una foto ya almacenada', async () => {
+  const test = await setup()
+  test.save.mockRejectedValueOnce(new AppError('network', 'Guardado interrumpido.'))
+  await act(async () => {
+    await expect(test.editor().capture(photo, 1)).rejects.toMatchObject({ code: 'network' })
+  })
+  expect(test.editor().pendingPhoto?.confirmed).toBe(true)
+  await act(async () => {
+    await test.editor().save()
+  })
+  expect(test.editor().pendingPhoto).toBeUndefined()
+  expect(test.put).toHaveBeenCalledOnce()
+})
+
+it('cierra la cámara tras confirmar asociación aunque falle el guardado posterior del borrador', async () => {
+  const test = await setup()
+  act(() => test.editor().setStep({ kind: 'camera', taskId: 1 }))
+  test.save.mockRejectedValueOnce(new AppError('network', 'Borrador temporalmente no disponible.'))
+  await act(async () => {
+    await expect(test.editor().capture(photo)).rejects.toMatchObject({ code: 'network' })
+  })
+  expect(test.editor().step.kind).toBe('editing')
+  expect(test.editor().pendingPhoto?.confirmed).toBe(true)
+  expect(test.editor().visit.answers[0].evidenceIds).toEqual([photo.id])
+  expect(test.editor().error).toBe('Borrador temporalmente no disponible.')
+})

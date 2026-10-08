@@ -23,7 +23,7 @@ async function activeChecklist() {
   return { repos, visit }
 }
 async function confirm() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Marcar como no realizado' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'No pude realizar el trabajo' }))
   const dialog = await screen.findByRole('dialog', { name: 'Marcar como no realizado' })
   fireEvent.change(within(dialog).getByLabelText('Motivo'), {
     target: { value: 'No fue posible acceder al equipo de la tienda.' },
@@ -50,12 +50,12 @@ it('exige motivo de 10 caracteres, pide confirmación y cancelar no llama a la A
   const request = vi.spyOn(repos.visits, 'markNotPerformed')
   const onConfirmed = vi.fn()
   renderPage(<NotPerformedAction visit={visit} onConfirmed={onConfirmed} />, repos)
-  const action = await screen.findByRole('button', { name: 'Marcar como no realizado' })
-  expect(action).toHaveClass('nf-button--exception')
+  const action = await screen.findByRole('button', { name: 'No pude realizar el trabajo' })
+  expect(action).toHaveClass('nf-button--quiet')
   expect(action).toHaveAccessibleDescription(
-    'Usa esta acción si no se pudo realizar el trabajo. Debes indicar el motivo.',
+    'Úsalo si no se pudo realizar el trabajo; requiere un motivo.',
   )
-  fireEvent.click(await screen.findByRole('button', { name: 'Marcar como no realizado' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'No pude realizar el trabajo' }))
   expect(screen.getByText('No realizado no cuenta como trabajo completado.')).toBeVisible()
   fireEvent.change(screen.getByLabelText('Motivo'), { target: { value: 'corto' } })
   expect(screen.getByRole('button', { name: 'Confirmar no realizado' })).toBeDisabled()
@@ -95,7 +95,9 @@ it.each([
 ] as const)('no ofrece acción en %s', async (status, phase) => {
   const { repos, visit } = await activeChecklist()
   renderPage(<NotPerformedAction visit={{ ...visit, status, phase, readOnly: true }} />, repos)
-  expect(screen.queryByRole('button', { name: 'Marcar como no realizado' })).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'No pude realizar el trabajo' }),
+  ).not.toBeInTheDocument()
   expect(canMarkNotPerformed({ ...visit, status, phase }, 'technician')).toBe(false)
 })
 it('permite Corrección requerida iniciada y rechaza readonly, reservas y supervisor de tienda', async () => {
@@ -131,7 +133,7 @@ it('checklist queda readonly, libera recovery y lista el nuevo intento publicado
     'Finalizar',
     'Enviar a revisión',
     'Terminar recorrido',
-    'Marcar como no realizado',
+    'No pude realizar el trabajo',
   ])
     expect(screen.queryByRole('button', { name })).not.toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Ver obligaciones pendientes' })).toHaveAttribute(
