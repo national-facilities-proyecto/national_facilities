@@ -287,7 +287,7 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async schedule(id, technicianId, scheduledAt, priority, reason, revision) {
         const raw = await mutate('/tickets/' + id + '/programar/', {
           technicianId,
-          scheduledAt: new Date(scheduledAt).toISOString(),
+          scheduledAt,
           priorityId: await priorityId(priority),
           reason,
           revision: revision ?? 0,
@@ -377,6 +377,7 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async put(evidence) {
         const data = new FormData()
         data.set('id', evidence.id)
+        if (evidence.replaceId) data.set('replaceId', evidence.replaceId)
         data.set('foto', evidence.blob, evidence.name)
         data.set('source', evidence.source)
         if (evidence.purpose) data.set('purpose', evidence.purpose)

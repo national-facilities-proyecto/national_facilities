@@ -62,9 +62,9 @@ for (const width of [320, 1440]) {
       await expect(page.locator('.nf-loading--map')).toBeVisible()
       await expect(page.locator('.nf-map-container')).toHaveCount(0)
       await expect(page.getByText('Preparando tus ubicaciones asignadas.')).toBeVisible()
-      await page.getByRole('button', { name: 'Futuras', exact: true }).click()
+      await page.getByRole('button', { name: 'Pendientes', exact: true }).click()
       await expect(page.locator(`a[href="/routes/${visitId}"]`)).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Hoy', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Finalizadas', exact: true })).toBeVisible()
       const placeholder = await page.locator('.nf-loading--map').boundingBox()
       const placeholderCard = await page
         .getByRole('region', { name: 'Mapa de tiendas', exact: true })

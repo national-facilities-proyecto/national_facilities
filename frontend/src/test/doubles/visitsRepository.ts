@@ -1,3 +1,4 @@
+import { operationDate } from '../../utils/dates'
 import type { Repositories } from '../../services/repositories/contracts'
 import { AppError, required } from '../../services/errors'
 import {
@@ -199,7 +200,8 @@ export function createVisitsRepository(): Repositories['visits'] {
           'Ya tienes un trabajo en curso.',
         )
         required(
-          visit.origin !== 'ticket' || Date.now() >= Date.parse(visit.scheduledAt),
+          visit.origin !== 'ticket' ||
+            operationDate() >= operationDate(new Date(visit.scheduledAt)),
           'No puedes registrar llegada antes de la fecha programada.',
         )
         validateLocation(
@@ -395,7 +397,8 @@ export function createVisitsRepository(): Repositories['visits'] {
           'Ya tienes un trabajo en curso.',
         )
         required(
-          visit.origin !== 'ticket' || Date.now() >= Date.parse(visit.scheduledAt),
+          visit.origin !== 'ticket' ||
+            operationDate() >= operationDate(new Date(visit.scheduledAt)),
           'No puedes registrar llegada antes de la fecha programada.',
         )
         visit.startedAt = new Date().toISOString()

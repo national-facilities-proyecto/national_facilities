@@ -154,11 +154,13 @@ export function ResponsiveTable<T>({
   rows,
   columns,
   rowKey,
+  mobileRow,
 }: {
   caption: string
   rows: T[]
   columns: { label: string; render: (row: T) => ReactNode }[]
   rowKey: (row: T) => string | number
+  mobileRow?: (row: T) => ReactNode
 }) {
   return (
     <>
@@ -188,14 +190,18 @@ export function ResponsiveTable<T>({
       <div className="nf-list lg:hidden" role="region" aria-label={caption}>
         {rows.map((row) => (
           <article className="nf-card" key={rowKey(row)}>
-            <dl className="nf-details">
-              {columns.map((col) => (
-                <div key={col.label}>
-                  <dt>{col.label}</dt>
-                  <dd>{col.render(row)}</dd>
-                </div>
-              ))}
-            </dl>
+            {mobileRow ? (
+              mobileRow(row)
+            ) : (
+              <dl className="nf-details">
+                {columns.map((col) => (
+                  <div key={col.label}>
+                    <dt>{col.label}</dt>
+                    <dd>{col.render(row)}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
           </article>
         ))}
       </div>

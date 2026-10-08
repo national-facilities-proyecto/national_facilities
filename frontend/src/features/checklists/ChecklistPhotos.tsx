@@ -5,10 +5,26 @@ import { errorMessage } from '../../services/errors'
 import { useObjectUrl } from '../../hooks/useObjectUrl'
 import { CameraModal } from '../technician/CameraModal'
 import { Alert, Button, Card } from '../../components/ui'
+import { Modal } from '../../components/ui/Modal'
 
 function Photo({ photo }: { photo: Evidence }) {
   const url = useObjectUrl(photo.blob)
-  return <img src={url} alt="Fotografía pendiente de asociación" width="240" height="180" />
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <>
+      <Button
+        variant="secondary"
+        className="nf-image-button"
+        aria-label="Ampliar fotografía del trabajo"
+        onClick={() => setExpanded(true)}
+      >
+        <img src={url} alt="Fotografía del trabajo" width="240" height="180" />
+      </Button>
+      <Modal open={expanded} title="Fotografía ampliada" onClose={() => setExpanded(false)}>
+        <img className="nf-image-preview" src={url} alt="Fotografía del trabajo ampliada" />
+      </Modal>
+    </>
+  )
 }
 
 export function ChecklistPhotos({
@@ -57,37 +73,41 @@ export function ChecklistPhotos({
     }
   }
   return (
-    <Card title="Fotografías de la atención">
-      <p>Estas fotos se conservan en este navegador para asociarlas al registro de resolución.</p>
-      {!onAssociate && (
-        <Button variant="secondary" onClick={() => setCamera(true)}>
-          Tomar fotografía de la atención
-        </Button>
-      )}
-      {error && <Alert>{error}</Alert>}
-      <div className="nf-evidence-grid">
-        {photos.map((photo, index) => (
-          <figure key={photo.id} className="nf-evidence">
-            <Photo photo={photo} />
-            <figcaption>Fotografía {index + 1} · pendiente de asociación</figcaption>
-            {onAssociate && (
-              <>
-                <Button disabled={busy} onClick={() => void associate(photo)}>
-                  Asociar fotografía
-                </Button>
-              </>
-            )}
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => void discard(photo.id).catch((cause) => setError(errorMessage(cause)))}
-            >
-              Eliminar fotografía pendiente
+    <>
+      {(!onAssociate || photos.length > 0 || error) && (
+        <Card title={onAssociate ? 'Fotografías por guardar' : 'Fotografías del trabajo'}>
+          {!onAssociate && (
+            <Button variant="secondary" onClick={() => setCamera(true)}>
+              Tomar fotografía de la atención
             </Button>
-          </figure>
-        ))}
-      </div>
-      {photos.length === 0 && <p>No hay fotografías pendientes de asociación.</p>}
+          )}
+          {error && <Alert>{error}</Alert>}
+          <div className="nf-evidence-grid">
+            {photos.map((photo, index) => (
+              <figure key={photo.id} className="nf-evidence">
+                <Photo photo={photo} />
+                <figcaption>Fotografía {index + 1}</figcaption>
+                {onAssociate && (
+                  <>
+                    <Button disabled={busy} onClick={() => void associate(photo)}>
+                      Guardar fotografía
+                    </Button>
+                  </>
+                )}
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    void discard(photo.id).catch((cause) => setError(errorMessage(cause)))
+                  }
+                >
+                  Eliminar fotografía
+                </Button>
+              </figure>
+            ))}
+          </div>
+        </Card>
+      )}
       <CameraModal
         open={camera}
         onClose={() => setCamera(false)}
@@ -97,6 +117,6 @@ export function ChecklistPhotos({
           setCamera(false)
         }}
       />
-    </Card>
+    </>
   )
 }

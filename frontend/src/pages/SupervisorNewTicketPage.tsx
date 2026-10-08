@@ -13,6 +13,8 @@ export default function SupervisorNewTicketPage() {
   const repos = useRepositories()
   const navigate = useNavigate()
   const input = useRef<HTMLInputElement>(null)
+  const cameraInput = useRef<HTMLInputElement>(null)
+  const replacementId = useRef<string>()
   const [category, setCategory] = useState('')
   const [priority, setPriority] = useState<Priority>('')
   const [description, setDescription] = useState('')
@@ -21,8 +23,12 @@ export default function SupervisorNewTicketPage() {
   const ownedIds = useRef<string[]>([])
   const recovered = useRef(false)
   const mounted = useRef(true)
-  const [pendingFiles, setPendingFiles] = useState<{ id: string; file: File }[]>([])
+  const [pendingFiles, setPendingFiles] = useState<
+    { id: string; file: File; replaceId?: string }[]
+  >([])
   const optimizedFiles = useRef(new Map<string, File>())
+  const confirmedFiles = useRef(new Set<string>())
+  const uploadLock = useRef(false)
   const [fields, setFields] = useState<Record<string, string[]>>({})
   const [errors, setErrors] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
@@ -56,8 +62,12 @@ export default function SupervisorNewTicketPage() {
       mounted.current = false
     }
   }, [repos])
-  const sendFiles = async (queue: { id: string; file: File }[], fileErrors: string[] = []) => {
-    if (uploading || saving) return
+  const sendFiles = async (
+    queue: { id: string; file: File; replaceId?: string }[],
+    fileErrors: string[] = [],
+  ) => {
+    if (uploading || saving || uploadLock.current) return
+    uploadLock.current = true
     setUploading(true)
     const accumulatedErrors = [...fileErrors]
     try {
@@ -72,14 +82,21 @@ export default function SupervisorNewTicketPage() {
           setPendingFiles((current) => current.filter((item) => item.id !== id))
           continue
         }
-        await repos.evidence.put({
-          id,
-          blob: file,
-          name: file.name,
-          mimeType: file.type,
-          size: file.size,
-          source: 'gallery',
-        })
+        if (!confirmedFiles.current.has(id))
+          await repos.evidence.put({
+            id,
+            blob: file,
+            name: file.name,
+            mimeType: file.type,
+            size: file.size,
+            source: 'gallery',
+            replaceId: entry.replaceId,
+          })
+        confirmedFiles.current.add(id)
+        if (entry.replaceId) {
+          setIds((current) => current.filter((value) => value !== entry.replaceId))
+          ownedIds.current = ownedIds.current.filter((value) => value !== entry.replaceId)
+        }
         optimizedFiles.current.delete(id)
         if (!mounted.current) break
         if (!ownedIds.current.includes(id)) ownedIds.current.push(id)
@@ -90,14 +107,22 @@ export default function SupervisorNewTicketPage() {
     } catch (cause) {
       setErrors([...accumulatedErrors, errorMessage(cause)])
     } finally {
+      uploadLock.current = false
       setUploading(false)
       if (input.current) input.current.value = ''
+      if (cameraInput.current) cameraInput.current.value = ''
     }
   }
   const addFiles = (files: File[]) => {
-    if (uploading || saving || pendingFiles.length) return
-    const { accepted, errors: fileErrors } = validateFiles(files, ids.length, true)
-    const queue = accepted.map((file) => ({ file, id: crypto.randomUUID() }))
+    if (uploading || saving || uploadLock.current || pendingFiles.length) return
+    const replaceId = replacementId.current
+    replacementId.current = undefined
+    const { accepted, errors: fileErrors } = validateFiles(
+      replaceId ? files.slice(0, 1) : files,
+      ids.length - (replaceId ? 1 : 0),
+      true,
+    )
+    const queue = accepted.map((file) => ({ file, id: crypto.randomUUID(), replaceId }))
     setPendingFiles(queue)
     void sendFiles(queue, fileErrors)
   }
@@ -112,7 +137,7 @@ export default function SupervisorNewTicketPage() {
   }, [description, ids.length, pendingFiles.length, saving, uploading])
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
   return (
-    <>
+    <div className="nf-ticket-create">
       <PageHeader
         title="Registrar nueva incidencia"
         description="Describe el problema y adjunta fotografías de tu tienda."
@@ -126,8 +151,7 @@ export default function SupervisorNewTicketPage() {
         )}
         {query.data.temporary.length > 0 && (
           <Alert success>
-            Fotografías confirmadas de un reporte pendiente recuperadas del servidor. Puedes
-            utilizarlas o retirarlas antes de enviar.
+            Recuperamos las fotografías de tu reporte pendiente. Revísalas antes de enviar.
           </Alert>
         )}
         <form
@@ -212,7 +236,7 @@ export default function SupervisorNewTicketPage() {
             minLength={10}
             maxLength={500}
             required
-            rows={5}
+            rows={3}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
           />
@@ -222,10 +246,22 @@ export default function SupervisorNewTicketPage() {
             onDragOver={(event) => event.preventDefault()}
             onDrop={(event) => {
               event.preventDefault()
+              replacementId.current = undefined
               void addFiles(Array.from(event.dataTransfer.files))
             }}
           >
             <p>Fotografías del reporte · Hasta 5 archivos de 5 MB</p>
+            <input
+              ref={cameraInput}
+              type="file"
+              aria-label="Cámara del reporte"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              hidden
+              onChange={(event) => {
+                if (event.target.files) addFiles(Array.from(event.target.files))
+              }}
+            />
             <input
               ref={input}
               type="file"
@@ -237,19 +273,41 @@ export default function SupervisorNewTicketPage() {
                 if (event.target.files) void addFiles(Array.from(event.target.files))
               }}
             />
-            <Button
-              variant="secondary"
-              disabled={uploading || saving || pendingFiles.length > 0}
-              onClick={() => input.current?.click()}
-            >
-              {uploading ? 'Guardando fotografías…' : 'Seleccionar fotografías'}
-            </Button>
-            <p>JPG, PNG o WebP. También puedes arrastrar archivos aquí.</p>
+            <div className="nf-actions">
+              <Button
+                variant="secondary"
+                disabled={uploading || saving || pendingFiles.length > 0 || ids.length >= 5}
+                onClick={() => {
+                  replacementId.current = undefined
+                  cameraInput.current?.click()
+                }}
+              >
+                Tomar foto
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={uploading || saving || pendingFiles.length > 0}
+                onClick={() => {
+                  replacementId.current = undefined
+                  input.current?.click()
+                }}
+              >
+                {uploading ? 'Guardando fotografías…' : 'Seleccionar fotografías'}
+              </Button>
+            </div>
+            <small>JPG, PNG o WebP.</small>
+            <small className="nf-drag-hint">También puedes arrastrar archivos aquí.</small>
           </div>
           <EvidenceGallery
             ids={ids}
+            disabled={saving || uploading || pendingFiles.length > 0}
+            onReplace={(id) => {
+              replacementId.current = id
+              input.current?.click()
+            }}
             onRemove={(id) => {
-              if (saving || uploading) return
+              if (saving || uploading || uploadLock.current) return
+              uploadLock.current = true
               setUploading(true)
               void repos.evidence
                 .remove(id)
@@ -258,7 +316,10 @@ export default function SupervisorNewTicketPage() {
                   ownedIds.current = ownedIds.current.filter((value) => value !== id)
                 })
                 .catch((cause) => setErrors([errorMessage(cause)]))
-                .finally(() => setUploading(false))
+                .finally(() => {
+                  uploadLock.current = false
+                  setUploading(false)
+                })
             }}
           />
           {pendingFiles.length > 0 && (
@@ -295,6 +356,6 @@ export default function SupervisorNewTicketPage() {
           </div>
         </form>
       </Card>
-    </>
+    </div>
   )
 }

@@ -76,6 +76,109 @@
   .nf-filters {
     @apply grid items-end gap-4 sm:grid-cols-2 xl:grid-cols-3;
   }
+  .nf-list-filters {
+    @apply my-4 rounded-xl border border-slate-300 bg-white p-3;
+  }
+  .nf-filter-bar {
+    @apply flex flex-wrap items-end gap-2;
+  }
+  .nf-filter-bar .nf-field {
+    @apply min-w-0 flex-1;
+    flex-basis: 12rem;
+  }
+  .nf-filter-toggle {
+    @apply lg:hidden;
+  }
+  .nf-filter-controls {
+    @apply mt-3 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4;
+  }
+  .nf-filter-controls--collapsed {
+    @apply hidden lg:grid;
+  }
+  .nf-filter-summary {
+    @apply my-2 text-sm text-slate-700;
+  }
+  .nf-list-filters > small {
+    @apply mt-2 block text-xs text-slate-600;
+  }
+  .nf-ticket-card h2 {
+    @apply mb-1 text-base;
+  }
+  .nf-ticket-card p {
+    @apply my-2 text-sm;
+  }
+  .nf-ticket-description {
+    @apply line-clamp-2 break-words;
+  }
+  .nf-ticket-meta {
+    @apply flex flex-wrap gap-2;
+  }
+  .nf-ticket-card footer {
+    @apply flex items-center justify-between gap-2;
+  }
+  .nf-ticket-card small {
+    @apply text-xs text-slate-600;
+  }
+  .nf-ticket-detail .nf-two-columns {
+    @apply items-start;
+  }
+  .nf-ticket-detail .nf-card {
+    @apply my-3 p-4;
+  }
+  .nf-ticket-detail .nf-card p {
+    @apply my-2;
+  }
+  .nf-ticket-detail .nf-form {
+    @apply gap-3;
+  }
+  .nf-ticket-detail .nf-timeline {
+    @apply gap-3;
+  }
+  .nf-ticket-create .nf-form {
+    @apply min-w-0 gap-3;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nf-ticket-create .nf-card {
+    @apply p-4;
+  }
+  .nf-ticket-create .nf-card p {
+    @apply my-1;
+  }
+  .nf-ticket-create .nf-upload {
+    @apply p-3 text-left;
+  }
+  .nf-ticket-create .nf-actions {
+    @apply my-2;
+  }
+  .nf-drag-hint {
+    display: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .nf-drag-hint {
+      display: block;
+    }
+  }
+  .nf-image-button {
+    @apply block w-full rounded-lg border border-slate-300 bg-slate-50 p-0;
+  }
+  .nf-image-button:focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-brand-800;
+  }
+  .nf-image-preview {
+    @apply max-h-[70dvh] w-full object-contain;
+  }
+  .nf-photo-actions {
+    @apply flex flex-wrap gap-1;
+  }
+  .nf-photo-actions .nf-button {
+    @apply px-2 text-xs;
+  }
+  .nf-ticket-results .nf-card {
+    @apply my-3 p-4;
+  }
+  .nf-ticket-results .nf-form {
+    @apply gap-3;
+  }
   .nf-list {
     @apply my-5 grid min-w-0 gap-3;
   }
@@ -230,16 +333,24 @@
     @apply w-full sm:w-auto;
   }
   .nf-evidence-grid {
-    @apply my-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3;
+    @apply my-3 grid grid-cols-2 gap-3 sm:grid-cols-3;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 8rem), 1fr));
+    max-width: 36rem;
   }
   .nf-evidence {
     @apply min-w-0;
   }
   .nf-evidence img {
-    @apply aspect-[4/3] w-full rounded-lg object-cover;
+    @apply aspect-[4/3] w-full rounded-lg object-contain bg-slate-50;
+  }
+  .nf-evidence .nf-image-preview {
+    aspect-ratio: auto;
+    height: auto;
+    max-height: 70dvh;
   }
   .nf-evidence figcaption {
     @apply my-2 text-sm text-slate-700;
+    overflow-wrap: anywhere;
   }
   .nf-evidence small {
     @apply block text-xs;
@@ -460,10 +571,10 @@ textarea::placeholder {
     @apply my-3 grid list-none gap-1 p-0 text-sm text-red-800;
   }
   .nf-button--quiet {
-    @apply border-transparent bg-transparent px-0 text-slate-600;
+    @apply border-slate-400 bg-white px-3 text-slate-700;
   }
   .nf-button--quiet:hover:not(:disabled) {
-    @apply border-transparent bg-slate-50 text-brand-950;
+    @apply border-slate-500 bg-slate-50 text-brand-950;
   }
   .nf-exception {
     @apply rounded-xl border border-slate-200 bg-white p-4 sm:p-5;

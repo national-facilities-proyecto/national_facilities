@@ -29,6 +29,7 @@ from .services import (
 
 class UploadSerializer(serializers.Serializer):
     id = serializers.UUIDField()
+    replaceId = serializers.UUIDField(required=False)
     foto = serializers.FileField(max_length=200)
     visitId = serializers.IntegerField(min_value=1, required=False)
     taskId = serializers.IntegerField(min_value=1, required=False)
@@ -113,6 +114,15 @@ class EvidenceUploadView(APIView):
         # FOR NO KEY UPDATE serializa cuotas sin bloquear las FK de los eventos
         # que otra operación puede registrar mientras mantiene bloqueada la visita.
         Usuario.objects.select_for_update(no_key=True).get(pk=request.user.pk)
+        if data.get("replaceId") and (
+            data.get("visitId")
+            or data.get("taskId")
+            or data["purpose"] != "result"
+            or rol_de(request.user) != "store_supervisor"
+        ):
+            raise ValidationError(
+                {"foto": "Solo se reemplazan fotografías del reporte pendiente."}
+            )
         existing = Evidencia.objects.filter(client_id=data["id"]).first()
         if existing:
             if (
@@ -134,6 +144,7 @@ class EvidenceUploadView(APIView):
             return Response(evidence_data(existing))
         visit = None
         checklist = None
+        replacement = None
         task_id = data.get("taskId")
         if data.get("visitId"):
             visit = locked_visit(request.user, data["visitId"])
@@ -141,7 +152,8 @@ class EvidenceUploadView(APIView):
                 if task_id or data["source"] != "camera" or not data.get("capturedAt"):
                     raise ValidationError(
                         {
-                            "foto": "La evidencia de llegada debe tomarse con la cámara de la app, sin asociarla a un ítem."
+                            "foto": "La evidencia de llegada debe tomarse con la cámara de la app, "
+                            "sin asociarla a un ítem."
                         }
                     )
                 if not visit.iniciado_en:
@@ -153,7 +165,8 @@ class EvidenceUploadView(APIView):
                     ).exists()
                 ):
                     raise Conflict(
-                        "Solo se adjuntan fotografías de llegada antes de iniciar o como evidencia adicional de una corrección."
+                        "Solo se adjuntan fotografías de llegada antes de iniciar "
+                        "o como evidencia adicional de una corrección."
                     )
             else:
                 require_evidence_editable(visit)
@@ -179,12 +192,33 @@ class EvidenceUploadView(APIView):
                 raise PermissionDenied(
                     "Los adjuntos temporales son para reportes del supervisor de tienda."
                 )
+            if data.get("replaceId"):
+                replacement = get_object_or_404(
+                    Evidencia.objects.select_for_update(),
+                    client_id=data["replaceId"],
+                    autor=request.user,
+                )
+                if (
+                    replacement.visita_id
+                    or replacement.checklist_id
+                    or replacement.ticket_id
+                    or replacement.excepcion_id
+                    or replacement.eliminada_en
+                    or replacement.proposito != "result"
+                ):
+                    raise ValidationError(
+                        {
+                            "foto": "Solo se reemplazan fotografías del reporte pendiente."
+                        }
+                    )
             count = Evidencia.objects.filter(
                 autor=request.user,
                 visita__isnull=True,
                 ticket__isnull=True,
                 eliminada_en__isnull=True,
             ).count()
+            if replacement:
+                count -= 1
         if count >= 5:
             raise ValidationError(
                 {
@@ -217,6 +251,9 @@ class EvidenceUploadView(APIView):
         )
         try:
             evidence.save()
+            if replacement:
+                replacement.eliminada_en = timezone.now()
+                replacement.save(update_fields=["eliminada_en"])
         except Exception:
             if evidence.foto and evidence.foto.name:
                 evidence.foto.storage.delete(evidence.foto.name)

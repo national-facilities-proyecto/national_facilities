@@ -15,7 +15,7 @@ import {
   Textarea,
 } from '../../components/ui'
 import { EvidenceGallery } from '../../components/EvidenceGallery'
-import { displayDate, localDate, localDateTime } from '../../utils/dates'
+import { displayDate, operationDate, scheduleDate } from '../../utils/dates'
 import {
   ticketStatusLabels,
   ticketWorkStatus,
@@ -26,6 +26,7 @@ import {
 } from '../../types/models'
 import { AppError, errorMessage } from '../../services/errors'
 import { NotPerformedAction } from '../checklists/NotPerformedAction'
+import { TicketHistory } from './TicketHistory'
 export function TicketDetail({ id, account = false }: { id: number; account?: boolean }) {
   const repos = useRepositories()
   const [notPerformed, setNotPerformed] = useState<Visit>()
@@ -64,16 +65,20 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
   const { ticket, store, users, catalogs, eligibleUsers } = query.data
   const person = (userId?: number) =>
     users.find((user) => user.id === userId)?.name ??
-    (userId ? `Usuario #${userId}` : 'Sin asignar')
+    (userId ? 'Nombre no registrado' : 'Sin asignar')
   return (
-    <>
+    <div className="nf-ticket-detail">
       <Link
         className="nf-link"
         to={account ? '/technical-supervisor/incidents/completed' : '/supervisor/tickets'}
       >
         ← Incidencias
       </Link>
-      <PageHeader title={`Ticket #${ticket.id}`} description={`${store.name} · ${store.address}`} />
+      <PageHeader
+        title={store.name}
+        description={store.address}
+        eyebrow={`Incidencia #${ticket.id}`}
+      />
       <QueryFeedback query={query} />
       <div className="nf-two-columns">
         <Card title="Reporte original">
@@ -89,7 +94,19 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
         </Card>
         <Card title="Programación">
           <p>Técnico: {person(ticket.technicianId)}</p>
-          <p>Visita: {displayDate(ticket.scheduledAt)}</p>
+          <p>Fecha: {scheduleDate(ticket.scheduledAt)}</p>
+          {account &&
+            query.data.visit?.exceptions?.some((item) => item.approved === undefined) &&
+            (query.data.visit.submittedAt && query.data.visit.phase === 'in_review' ? (
+              <Link
+                className="nf-link"
+                to={`/technical-supervisor/checklists/${query.data.visit.id}`}
+              >
+                Revisar excepción GPS pendiente
+              </Link>
+            ) : (
+              <p>Excepción GPS pendiente de envío por el técnico.</p>
+            ))}
           {query.data.visit && (
             <NotPerformedAction
               visit={query.data.visit}
@@ -105,6 +122,7 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
               ticket={ticket}
               users={eligibleUsers}
               priorities={catalogs.priorities}
+              onScheduled={query.reload}
             />
           )}
           {account && ticketWorkStatus(ticket.status) !== 'pending' && (
@@ -121,36 +139,17 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
         </Card>
       )}
       <Card title="Historial">
-        <ol className="nf-timeline">
-          {ticket.history.map((event) => (
-            <li key={event.id}>
-              <strong>{event.text}</strong>
-              <p>
-                {displayDate(event.at)} · {person(event.actorId)}
-              </p>
-              {event.reason && <p>Motivo: {event.reason}</p>}
-              {event.previous && (
-                <p>
-                  Antes: {person(event.previous.technicianId)} ·{' '}
-                  {displayDate(event.previous.scheduledAt)} · Prioridad{' '}
-                  {catalogs.priorities.find((item) => item.id === event.previous?.priorityId)
-                    ?.name ?? 'No registrada'}
-                </p>
-              )}
-              {event.next && (
-                <p>
-                  Después: {person(event.next.technicianId)} · {displayDate(event.next.scheduledAt)}{' '}
-                  · Prioridad{' '}
-                  {catalogs.priorities.find((item) => item.id === event.next?.priorityId)?.name ??
-                    'No registrada'}
-                </p>
-              )}
-            </li>
-          ))}
-        </ol>
+        <TicketHistory
+          events={ticket.history}
+          account={account}
+          person={person}
+          priority={(id) =>
+            catalogs.priorities.find((item) => item.id === id)?.name ?? 'No registrada'
+          }
+        />
       </Card>
-      <Card title="Resolución del técnico">
-        {ticket.resolution ? (
+      {ticket.resolution ? (
+        <Card title="Resolución del técnico">
           <>
             <p>{ticket.resolution}</p>
             <p>
@@ -160,26 +159,30 @@ export function TicketDetail({ id, account = false }: { id: number; account?: bo
             </p>
             <EvidenceGallery ids={ticket.technicalEvidenceIds} />
           </>
-        ) : (
-          <p>La resolución estará disponible cuando el técnico registre el trabajo.</p>
-        )}
-      </Card>
-    </>
+        </Card>
+      ) : (
+        <p role="status" className="nf-muted">
+          El técnico aún no ha enviado la resolución.
+        </p>
+      )}
+    </div>
   )
 }
 function ScheduleForm({
   ticket,
   users,
   priorities,
+  onScheduled,
 }: {
   ticket: Ticket
   users: User[]
   priorities: { id: number; name: string }[]
+  onScheduled: () => void
 }) {
   const { tickets } = useRepositories()
   const [technician, setTechnician] = useState(ticket.technicianId ?? 0)
   const [date, setDate] = useState(
-    ticket.scheduledAt ? localDateTime(ticket.scheduledAt) : `${localDate()}T10:00`,
+    ticket.scheduledAt ? operationDate(new Date(ticket.scheduledAt)) : operationDate(),
   )
   const [priority, setPriority] = useState<Priority>(ticket.priority)
   const [reason, setReason] = useState('')
@@ -197,8 +200,13 @@ function ScheduleForm({
         setFieldErrors({})
         void tickets
           .schedule(ticket.id, technician, date, priority, reason, ticket.revision)
+          .then(onScheduled)
           .catch((cause) => {
-            setError(errorMessage(cause))
+            setError(
+              cause instanceof AppError && cause.fields.scheduledAt?.length
+                ? cause.fields.scheduledAt.join(' ')
+                : errorMessage(cause),
+            )
             setFieldErrors(cause instanceof AppError ? cause.fields : {})
           })
           .finally(() => setBusy(false))
@@ -221,17 +229,18 @@ function ScheduleForm({
           ))}
       </Select>
       <Input
-        label="Fecha y hora de visita"
+        label="Fecha de atención"
         errors={fieldErrors.scheduledAt}
-        type="datetime-local"
-        min={`${localDate()}T00:00`}
+        type="date"
+        lang="es-PE"
+        min={operationDate()}
         required
         value={date}
         onChange={(event) => setDate(event.target.value)}
       />
       <p>
-        La fecha se introduce en la zona horaria del dispositivo. El historial muestra la hora de
-        operación de Perú.
+        Fecha seleccionada (Perú): {scheduleDate(date)}. Puedes atender desde ese día, a cualquier
+        hora.
       </p>
       <Select
         label="Prioridad asignada"

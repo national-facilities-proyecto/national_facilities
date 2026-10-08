@@ -1,3 +1,4 @@
+import { operationDate } from '../src/utils/dates.js'
 import { test, expect, type Page } from '@playwright/test'
 import {
   access,
@@ -128,9 +129,7 @@ test('reserva de checklist: liberación a las dos horas, pantalla antigua y nuev
   )
   advance(id, 'expire_claim')
   await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
-  await expect(
-    page.getByRole('button', { name: 'Reintentar ubicación', exact: true }),
-  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Registrar llegada', exact: true })).toBeVisible()
   const released = object(await call(request, `/visitas/${id}/`, token))
   expect(released.status).toBe('available')
   expect(released.technicianId).toBeNull()
@@ -198,7 +197,7 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
     .getByLabel('Descripción del problema')
     .fill('Electrical cabinet requires a component replacement.')
   await page.getByRole('button', { name: 'Enviar reporte', exact: true }).click()
-  await expect(page.getByRole('heading', { name: /Ticket #/ })).toBeVisible()
+  await expect(page.getByText(/Incidencia #/)).toBeVisible()
   const id = Number(page.url().split('/').at(-1))
   const reporterToken = await access(request, 'store')
   const reported = object(await call(request, `/tickets/${id}/`, reporterToken))
@@ -222,11 +221,7 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
   const tech = users.map(object).find((u) => u.username === 'tech')
   const other = users.map(object).find((u) => u.username === 'othertech')
   await page.getByLabel('Técnico asignado', { exact: true }).selectOption(String(other?.id))
-  const future = new Date(Date.now() + 3600000)
-  const local = new Date(future.getTime() - future.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 16)
-  await page.getByLabel('Fecha y hora de visita').fill(local)
+  await page.getByLabel('Fecha de atención').fill(operationDate())
   await page.getByRole('button', { name: 'Programar visita', exact: true }).click()
   await expect(
     page.getByRole('button', { name: 'Guardar reprogramación', exact: true }),
@@ -239,10 +234,10 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
   await expect(
     page
       .locator('.nf-timeline li')
-      .filter({ hasText: 'Ticket reprogramado / reasignado' })
+      .filter({ hasText: 'Atención reprogramada' })
       .getByText('Motivo: Changed technician availability for this assignment.', { exact: true }),
   ).toBeVisible()
-  await expect(page.getByText('Ticket reprogramado / reasignado', { exact: true })).toBeVisible()
+  await expect(page.getByText('Atención reprogramada', { exact: true })).toBeVisible()
   const beforeArrival = object(await call(request, '/tickets/' + id + '/', accountToken))
   const ticket = mapTicket(
     await call(request, '/tickets/' + id + '/programar/', accountToken, {
@@ -284,7 +279,7 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
   await expect(page.getByLabel('Descripción del trabajo realizado')).toHaveValue(
     'Replaced the component and checked the cabinet safely.',
   )
-  await page.getByRole('button', { name: 'Finalizar', exact: true }).click()
+  await page.getByRole('button', { name: 'Enviar registro', exact: true }).click()
   await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
   expect(mapTicket(await call(request, '/tickets/' + id + '/', accountToken)).status).toBe(
@@ -783,16 +778,12 @@ test('P0: llegada excepcional con foto, cierre sin GPS, envío explícito y revi
   expect(state.occupiesTechnician).toBe(true)
   expect(state.submittedAt).toBeNull()
   expect(state.formOpenedAt).toBeNull()
-  await page.getByRole('button', { name: 'Terminar recorrido', exact: true }).click()
-  await expect(
-    page.getByRole('heading', { name: 'Recorrido terminado', exact: true }),
-  ).toBeVisible()
+  await openResults(page, 'checklist')
   state = object(await call(request, `/visitas/${id}/`, token))
-  expect(state.formOpenedAt).toBeNull()
+  expect(state.formOpenedAt).not.toBeNull()
   const exceptions = Array.isArray(state.exceptions) ? state.exceptions.map(object) : []
   expect(exceptions.map((e) => e.scope)).toEqual(['arrival'])
   expect(exceptions.every((e) => object(e.telemetry).latitude === null)).toBe(true)
-  await page.getByRole('button', { name: 'Registrar resultados', exact: true }).click()
   await page.getByRole('button', { name: 'No aplica', exact: true }).click()
   await page.getByLabel('Descripción obligatoria').fill('Componente no instalado en esta tienda.')
   await page.getByRole('button', { name: 'Guardar observación', exact: true }).click()
@@ -866,7 +857,10 @@ test('P0: fuera de radio con mensaje humano y foto de llegada recuperada desde o
   await recovered.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
   await recovered.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
   await expect(recovered.locator('.nf-evidence img')).toHaveCount(1)
-  await expect(recovered.getByText('Foto guardada en el servidor.', { exact: true })).toBeVisible()
+  expect(
+    ((await call(request, `/visitas/${id}/`, token)) as { arrivalEvidenceIds: string[] })
+      .arrivalEvidenceIds,
+  ).toEqual([photoId])
   await recovered
     .getByLabel('Motivo de la excepción')
     .fill('La lectura me sitúa fuera del establecimiento.')

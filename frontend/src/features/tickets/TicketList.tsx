@@ -4,16 +4,9 @@ import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
 import { QueryFeedback } from '../../components/feedback/QueryFeedback'
-import {
-  Badge,
-  Button,
-  Card,
-  Input,
-  PageHeader,
-  ResponsiveTable,
-  Select,
-} from '../../components/ui'
-import { displayDate, inDateRange } from '../../utils/dates'
+import { Badge, Input, PageHeader, ResponsiveTable, Select } from '../../components/ui'
+import { scheduleDate, inDateRange } from '../../utils/dates'
+import { ListFilters } from '../../components/ListFilters'
 import { ticketStatusLabels, ticketWorkStatus, workStatusOptions } from '../../types/models'
 
 export function TicketList({
@@ -24,6 +17,7 @@ export function TicketList({
   pending?: boolean
 }) {
   const repos = useRepositories()
+  const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [category, setCategory] = useState('')
   const [priority, setPriority] = useState('')
@@ -52,6 +46,10 @@ export function TicketList({
   const storeName = (id: number) => stores.find((store) => store.id === id)?.name ?? 'Tienda'
   const rows = query.data.tickets.filter(
     (ticket) =>
+      (!search ||
+        `${storeName(ticket.storeId)} ${ticket.description} ${ticket.id}`
+          .toLocaleLowerCase('es-PE')
+          .includes(search.toLocaleLowerCase('es-PE'))) &&
       (!pending || ticket.status === 'open') &&
       (pending || !status || ticketWorkStatus(ticket.status) === status) &&
       (isStoreSupervisorView || !priority || ticket.priority === priority) &&
@@ -70,164 +68,144 @@ export function TicketList({
         }
       />
       <QueryFeedback query={query} />
-      <Card>
-        <div className="nf-filters">
-          {!pending && (
+      <ListFilters
+        search={
+          <Input
+            label="Buscar incidencias"
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        }
+        active={[
+          search && `Búsqueda: ${search}`,
+          status && workStatusOptions.find((item) => item.value === status)?.label,
+          category,
+          priority,
+          storeId && storeName(Number(storeId)),
+          from && `Desde ${scheduleDate(from)}`,
+          to && `Hasta ${scheduleDate(to)}`,
+        ].filter((value): value is string => Boolean(value))}
+        onClear={() => {
+          setSearch('')
+          setStatus('')
+          setCategory('')
+          setPriority('')
+          setStoreId('')
+          setFrom('')
+          setTo('')
+        }}
+      >
+        {!pending && (
+          <Select label="Estado" value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="">Todos</option>
+            {workStatusOptions.map(({ value, label }) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        )}
+        <Select
+          label="Especialidad"
+          value={category}
+          onChange={(event) => setCategory(event.target.value)}
+        >
+          <option value="">Todas</option>
+          {query.data.catalogs.categories.map(({ name }) => (
+            <option key={name}>{name}</option>
+          ))}
+        </Select>
+        {!isStoreSupervisorView && (
+          <>
             <Select
-              label="Estado"
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
+              label="Tienda"
+              value={storeId}
+              onChange={(event) => setStoreId(event.target.value)}
             >
-              <option value="">Todos</option>
-              {workStatusOptions.map(({ value, label }) => (
-                <option key={value} value={value}>
-                  {label}
+              <option value="">Todas</option>
+              {stores.map((store) => (
+                <option key={store.id} value={store.id}>
+                  {store.name}
                 </option>
               ))}
             </Select>
-          )}
-          <Select
-            label="Especialidad"
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-          >
-            <option value="">Todas</option>
-            {query.data.catalogs.categories.map(({ name: value }) => (
-              <option key={value}>{value}</option>
-            ))}
-          </Select>
-          {isStoreSupervisorView && (
-            <>
-              <Input
-                label="Fecha inicio"
-                type="date"
-                value={from}
-                onChange={(event) => setFrom(event.target.value)}
-              />
-              <Input
-                label="Fecha fin"
-                type="date"
-                min={from}
-                value={to}
-                onChange={(event) => setTo(event.target.value)}
-              />
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setStatus('')
-                  setCategory('')
-                  setFrom('')
-                  setTo('')
-                }}
-              >
-                Limpiar filtros
-              </Button>
-            </>
-          )}
-          {pending && (
-            <>
-              <Select
-                label="Tienda"
-                value={storeId}
-                onChange={(event) => setStoreId(event.target.value)}
-              >
-                <option value="">Todas</option>
-                {stores.map((store) => (
-                  <option key={store.id} value={store.id}>
-                    {store.name}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                label="Prioridad"
-                value={priority}
-                onChange={(event) => setPriority(event.target.value)}
-              >
-                <option value="">Todas</option>
-                {query.data.catalogs.priorities.map(({ name: value }) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </Select>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setStoreId('')
-                  setCategory('')
-                  setPriority('')
-                }}
-              >
-                Limpiar filtros
-              </Button>
-            </>
-          )}
-          {!isStoreSupervisorView && !pending && (
-            <>
-              <Select
-                label="Tienda"
-                value={storeId}
-                onChange={(event) => setStoreId(event.target.value)}
-              >
-                <option value="">Todas</option>
-                {stores.map((store) => (
-                  <option key={store.id} value={store.id}>
-                    {store.name}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                label="Prioridad"
-                value={priority}
-                onChange={(event) => setPriority(event.target.value)}
-              >
-                <option value="">Todas</option>
-                {query.data.catalogs.priorities.map(({ name: value }) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </Select>
-              <Input
-                label="Fecha inicio"
-                type="date"
-                value={from}
-                onChange={(event) => setFrom(event.target.value)}
-              />
-              <Input
-                label="Fecha fin"
-                type="date"
-                min={from}
-                value={to}
-                onChange={(event) => setTo(event.target.value)}
-              />
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setStatus('')
-                  setPriority('')
-                  setCategory('')
-                  setStoreId('')
-                  setFrom('')
-                  setTo('')
-                }}
-              >
-                Limpiar filtros
-              </Button>
-            </>
-          )}
-        </div>
-      </Card>
+            <Select
+              label="Prioridad"
+              value={priority}
+              onChange={(event) => setPriority(event.target.value)}
+            >
+              <option value="">Todas</option>
+              {query.data.catalogs.priorities.map(({ name }) => (
+                <option key={name}>{name}</option>
+              ))}
+            </Select>
+          </>
+        )}
+        {!pending && (
+          <>
+            <Input
+              label="Fecha inicio"
+              type="date"
+              lang="es-PE"
+              value={from}
+              onChange={(event) => setFrom(event.target.value)}
+            />
+            <Input
+              label="Fecha fin"
+              type="date"
+              lang="es-PE"
+              min={from}
+              value={to}
+              onChange={(event) => setTo(event.target.value)}
+            />
+          </>
+        )}
+      </ListFilters>
       <p role="status">{rows.length} incidencias</p>
       <ResponsiveTable
         caption="Seguimiento de incidencias"
         rows={rows}
         rowKey={(ticket) => ticket.id}
+        mobileRow={(ticket) => (
+          <div className="nf-ticket-card">
+            <h2>{storeName(ticket.storeId)}</h2>
+            <p className="nf-ticket-description">{ticket.description}</p>
+            <div className="nf-ticket-meta">
+              <Badge className={`nf-badge--${ticketWorkStatus(ticket.status)}`}>
+                {ticketStatusLabels[ticket.status]}
+              </Badge>
+              <Badge>Prioridad {ticket.priority}</Badge>
+            </div>
+            {ticket.technicianId && (
+              <p>
+                Técnico: {users.find((user) => user.id === ticket.technicianId)?.name ?? 'Asignado'}
+              </p>
+            )}
+            {ticket.scheduledAt && <p>Programada: {scheduleDate(ticket.scheduledAt)}</p>}
+            <footer>
+              <small>Incidencia #{ticket.id}</small>
+              <Link
+                className="nf-link"
+                to={
+                  account
+                    ? `/technical-supervisor/incidents/${ticket.id}`
+                    : `/supervisor/tickets/${ticket.id}`
+                }
+              >
+                Ver detalle
+              </Link>
+            </footer>
+          </div>
+        )}
         columns={[
           {
             label: 'Incidencia',
             render: (ticket) => (
               <>
-                <strong>
-                  #{ticket.id} · {storeName(ticket.storeId)}
-                </strong>
-                <p>{ticket.description}</p>
+                <strong>{storeName(ticket.storeId)}</strong>
+                <p className="nf-ticket-description">{ticket.description}</p>
+                <small>Incidencia #{ticket.id}</small>
               </>
             ),
           },
@@ -235,7 +213,7 @@ export function TicketList({
             label: 'Programación',
             render: (ticket) => (
               <>
-                {displayDate(ticket.scheduledAt)}
+                {scheduleDate(ticket.scheduledAt)}
                 <p>
                   {users.find((user) => user.id === ticket.technicianId)?.name ??
                     (ticket.technicianId ? `Técnico #${ticket.technicianId}` : 'Sin asignar')}

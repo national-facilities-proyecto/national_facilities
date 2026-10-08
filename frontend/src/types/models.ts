@@ -58,6 +58,7 @@ export type ChecklistTask = {
   order: number
 }
 export type Evidence = {
+  replaceId?: string
   purpose?: 'result' | 'arrival'
   id: string
   visitId?: number
@@ -316,6 +317,8 @@ export type TimelineEvent = {
   id: string
   at: string
   actorId: number
+  actorName?: string
+  kind?: string
   text: string
   reason?: string
   previous?: ScheduleChange

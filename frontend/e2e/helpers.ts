@@ -16,6 +16,8 @@ export function mapVisit(value: unknown) {
   return {
     id: v.id,
     status: string(v.status),
+    origin: string(v.origin),
+    workDescription: string(v.workDescription),
     formOpenedAt: typeof v.formOpenedAt === 'string' ? v.formOpenedAt : undefined,
     expiresAt: typeof v.expiresAt === 'string' ? v.expiresAt : undefined,
   }
@@ -156,7 +158,10 @@ export async function upload(page: Page) {
   await page
     .locator('input[type="file"]')
     .setInputFiles({ name: 'evidence.jpg', mimeType: 'image/jpeg', buffer: jpeg })
-  await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+  await expect(page.locator('.nf-evidence img').first()).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: /^(Finalizar|Enviar registro|Enviar a revisión)$/ }),
+  ).toBeEnabled()
   await expect(page.locator('fieldset .nf-evidence img')).toHaveCount(1)
 }
 
@@ -176,31 +181,20 @@ export async function arrive(page: Page, id: number, origin: 'checklist' | 'tick
   )
 }
 export async function openResults(page: Page, origin: 'checklist' | 'ticket' = 'checklist') {
-  await page
-    .getByRole('button', {
-      name: origin === 'checklist' ? 'Terminar recorrido' : 'Terminar atención',
-      exact: true,
-    })
-    .click()
+  await page.getByRole('button', { name: 'Registrar resultado del trabajo', exact: true }).click()
   await expect(
-    page.getByRole('heading', {
-      name: origin === 'checklist' ? 'Recorrido terminado' : 'Atención terminada',
-      exact: true,
-    }),
+    page.getByRole('button', { name: /^(Finalizar|Enviar registro|Enviar a revisión)$/ }),
   ).toBeVisible()
   await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
     0,
   )
-  await page
-    .getByRole('button', {
-      name: origin === 'checklist' ? 'Registrar resultados' : 'Registrar resolución',
-      exact: true,
-    })
-    .click()
-  await expect(page.getByRole('button', { name: /^(Finalizar|Enviar a revisión)$/ })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
-    0,
-  )
+  await expect(
+    page.getByLabel(
+      origin === 'checklist'
+        ? 'Reporte general del checklist'
+        : 'Descripción del trabajo realizado',
+    ),
+  ).toBeVisible()
 }
 export async function waitUntilScheduled(request: APIRequestContext, id: number, token: string) {
   await expect

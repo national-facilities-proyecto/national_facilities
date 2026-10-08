@@ -7,6 +7,8 @@ import { QueryFeedback } from '../components/feedback/QueryFeedback'
 import { Card, EmptyState, PageHeader } from '../components/ui'
 import { exceptionLabel } from '../types/models'
 import { displayDate } from '../utils/dates'
+import { Badge } from '../components/ui'
+import { EvidenceGallery } from '../components/EvidenceGallery'
 export default function PendingReviewsPage() {
   const repos = useRepositories()
   const query = useQuery(
@@ -39,17 +41,17 @@ export default function PendingReviewsPage() {
               'Técnico no registrado'}
           </p>
           <p>Enviado: {displayDate(visit.submittedAt)}</p>
-          <ul>
-            {visit.exceptions?.map((item) => (
-              <li key={item.id}>
-                {exceptionLabel(item)} ·{' '}
-                {item.approved === undefined
-                  ? 'Pendiente'
-                  : item.approved
-                    ? 'Aprobada'
-                    : 'Rechazada'}
-              </li>
-            ))}
+          <Badge>En revisión</Badge>
+          <ul className="nf-timeline">
+            {visit.exceptions
+              ?.filter((item) => item.approved === undefined)
+              .map((item) => (
+                <li key={item.id}>
+                  <strong>{exceptionLabel(item)}</strong>
+                  <p>{item.reason}</p>
+                  <EvidenceGallery ids={item.evidenceIds ?? []} />
+                </li>
+              ))}
           </ul>
           <Link className="nf-link" to={`/technical-supervisor/checklists/${visit.id}`}>
             Revisar

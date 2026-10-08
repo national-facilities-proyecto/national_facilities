@@ -167,11 +167,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               {!visit.readOnly && (
                 <div className="nf-primary-action">
                   <Button disabled={saving} onClick={() => void finishPhysicalWork()}>
-                    {saving
-                      ? 'Registrando fin…'
-                      : visit.origin === 'checklist'
-                        ? 'Terminar recorrido'
-                        : 'Terminar atención'}
+                    {saving ? 'Registrando fin…' : 'Registrar resultado del trabajo'}
                   </Button>
                 </div>
               )}
@@ -179,13 +175,8 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           ) : (
             !visit.readOnly && (
               <div className="nf-primary-action">
-                <p>Registra ahora los resultados y las fotografías.</p>
                 <Button disabled={saving} onClick={() => void openForm()}>
-                  {saving
-                    ? 'Abriendo…'
-                    : visit.origin === 'checklist'
-                      ? 'Registrar resultados'
-                      : 'Registrar resolución'}
+                  {saving ? 'Abriendo…' : 'Registrar resultado del trabajo'}
                 </Button>
               </div>
             )
@@ -403,44 +394,60 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             />
           </>
         ) : (
-          <Card title="Resolución del trabajo">
-            {auth.session && (
-              <ChecklistPhotos
-                scope={`${repos.source}:${auth.session.user.id}:${visit.id}`}
-                onAssociate={(photo) => capture(photo)}
+          <section className="nf-ticket-results" aria-label="Resolución del trabajo">
+            <Card title="Resolución del trabajo">
+              {auth.session && (
+                <ChecklistPhotos
+                  scope={`${repos.source}:${auth.session.user.id}:${visit.id}`}
+                  onAssociate={(photo) => capture(photo)}
+                />
+              )}
+              <Textarea
+                label="Descripción del trabajo realizado"
+                rows={3}
+                errors={
+                  !visit.workDescription.trim()
+                    ? ['Describe el trabajo realizado antes de enviar.']
+                    : undefined
+                }
+                value={visit.workDescription}
+                onChange={(event) => update({ workDescription: event.target.value })}
               />
-            )}
-            <Textarea
-              label="Descripción del trabajo realizado"
-              rows={5}
-              value={visit.workDescription}
-              onChange={(event) => update({ workDescription: event.target.value })}
-            />
-            <EvidenceGallery ids={visit.evidenceIds} onRemove={(id) => remove(id)} />
-            <Button variant="secondary" onClick={() => setStep({ kind: 'camera' })}>
-              {visit.evidenceIds.length ? 'Repetir fotografía' : 'Tomar foto'}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                galleryTaskId.current = undefined
-                galleryInput.current?.click()
-              }}
-            >
-              Seleccionar de galería
-            </Button>
-          </Card>
+              <EvidenceGallery
+                ids={visit.evidenceIds}
+                disabled={saving || optimizing || conflict}
+                onRemove={(id) => remove(id)}
+              />
+              {!visit.evidenceIds.length && (
+                <p role="status" className="nf-task-issues">
+                  Agrega al menos una fotografía del trabajo.
+                </p>
+              )}
+              <div className="nf-actions">
+                <Button variant="secondary" onClick={() => setStep({ kind: 'camera' })}>
+                  Tomar foto
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    galleryTaskId.current = undefined
+                    galleryInput.current?.click()
+                  }}
+                >
+                  Seleccionar de galería
+                </Button>
+              </div>
+            </Card>
+          </section>
         )}
         <Card title="Enviar resultados">
-          {validationIssues.length > 0 && (
+          {visit.origin === 'checklist' && validationIssues.length > 0 && (
             <p role="alert" className="nf-task-issues">
               Completa los requisitos pendientes antes de enviar.
             </p>
           )}
-          {issues.length > 0 && (
-            <details
-              open={validationIssues.length > 0 && visit.origin === 'ticket' ? true : undefined}
-            >
+          {visit.origin === 'checklist' && issues.length > 0 && (
+            <details>
               <summary>{issues.length} requisitos pendientes</summary>
               <ul>
                 {issues.map((issue) => (
@@ -455,25 +462,45 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                 void finish()
               }}
             >
-              {needsReview ? 'Enviar a revisión' : 'Finalizar'}
+              {needsReview
+                ? 'Enviar a revisión'
+                : visit.origin === 'ticket'
+                  ? 'Enviar registro'
+                  : 'Finalizar'}
             </Button>
-            <Button
-              variant="secondary"
-              disabled={!dirty}
-              onClick={() => {
-                void save().catch(() => undefined)
-              }}
-            >
-              Guardar borrador
-            </Button>
+            {visit.origin === 'checklist' ? (
+              <Button
+                variant="secondary"
+                disabled={!dirty}
+                onClick={() => {
+                  void save().catch(() => undefined)
+                }}
+              >
+                Guardar borrador
+              </Button>
+            ) : (
+              error &&
+              dirty &&
+              !pendingPhoto && (
+                <Button
+                  variant="secondary"
+                  disabled={saving || conflict}
+                  onClick={() => void save().catch(() => undefined)}
+                >
+                  Reintentar guardado
+                </Button>
+              )
+            )}
           </div>
         </Card>
       </fieldset>
-      <NotPerformedAction
-        visit={visit}
-        disabled={saving || optimizing || conflict || Boolean(pendingPhoto)}
-        submit={markNotPerformed}
-      />
+      {visit.origin === 'checklist' && (
+        <NotPerformedAction
+          visit={visit}
+          disabled={saving || optimizing || conflict || Boolean(pendingPhoto)}
+          submit={markNotPerformed}
+        />
+      )}
       {pendingPhoto && (
         <Alert>
           {pendingPhoto.confirmed
@@ -499,7 +526,8 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           {remote && (
             <>
               <p>
-                Versión del servidor: {remote.revision}. Estado: {operationalVisitLabel(remote)}.
+                {visit.origin === 'checklist' && <>Versión del servidor: {remote.revision}. </>}
+                Estado: {operationalVisitLabel(remote)}.
               </p>
               <p>Descripción guardada: {remote.workDescription || 'Sin descripción'}</p>
               <ul>
@@ -534,7 +562,9 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               ? 'No se confirmó el guardado. Conserva el editor y reintenta.'
               : dirty
                 ? 'Cambios pendientes de guardar.'
-                : 'Borrador guardado.'}
+                : visit.origin === 'checklist'
+                  ? 'Borrador guardado.'
+                  : ''}
       </p>
       {error && <Alert>{error}</Alert>}
       {blocker.state === 'blocked' ? (

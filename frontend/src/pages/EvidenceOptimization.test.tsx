@@ -21,6 +21,7 @@ async function setup(userId = 2) {
     listTemporary: async () => [],
     get: async (id) => files.get(id),
     put: async (photo) => {
+      if (photo.replaceId) files.delete(photo.replaceId)
       files.set(photo.id, photo)
     },
     remove: async (id) => {
@@ -72,6 +73,37 @@ it('galería rechaza un archivo no decodificable sin subirlo y permite otra sele
   expect(put).not.toHaveBeenCalled()
   expect(screen.getByRole('button', { name: 'Seleccionar fotografías' })).toBeEnabled()
   expect(screen.queryByRole('button', { name: 'Reintentar carga' })).not.toBeInTheDocument()
+})
+it('reemplazo fallido conserva original y reintenta con el mismo archivo e ID', async () => {
+  const { repos, put } = await setup()
+  const remove = vi.spyOn(repos.evidence, 'remove')
+  renderPage(<SupervisorNewTicketPage />, repos)
+  await screen.findByRole('button', { name: 'Seleccionar fotografías' })
+  const files = () => ({
+    target: { files: [new File(['jpeg'], 'foto.jpg', { type: 'image/jpeg' })] },
+  })
+  fireEvent.change(screen.getByLabelText('Fotografías del reporte'), files())
+  await screen.findByRole('img', { name: 'foto.webp' })
+  put.mockRejectedValueOnce(new AppError('network', 'No se confirmó el reemplazo.'))
+  fireEvent.click(screen.getByRole('button', { name: 'Reemplazar fotografía' }))
+  fireEvent.change(screen.getByLabelText('Fotografías del reporte'), files())
+  await screen.findByText('No se confirmó el reemplazo.')
+  expect(put).toHaveBeenCalledTimes(2)
+  const original = put.mock.calls[0][0].id
+  const replacement = put.mock.calls[1][0].id
+  expect(await repos.evidence.get(original)).toBeDefined()
+  expect(await repos.evidence.get(replacement)).toBeUndefined()
+  expect(put.mock.calls[1][0].replaceId).toBe(original)
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar carga' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: 'Reintentar carga' })).not.toBeInTheDocument(),
+  )
+  expect(put).toHaveBeenCalledTimes(3)
+  expect(put.mock.calls[1][0]).toEqual(put.mock.calls[2][0])
+  expect(remove).not.toHaveBeenCalled()
+  expect(await repos.evidence.get(original)).toBeUndefined()
+  expect(await repos.evidence.get(replacement)).toBeDefined()
+  expect(screen.getAllByRole('img', { name: 'foto.webp' })).toHaveLength(1)
 })
 it('galería del editor asocia solo el File WebP optimizado y mantiene source gallery', async () => {
   const { repos, optimized, optimize, put } = await setup(1)

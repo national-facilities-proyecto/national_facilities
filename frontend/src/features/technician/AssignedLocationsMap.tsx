@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AttributionControl, MapContainer, Marker, Popup, Tooltip, useMap } from 'react-leaflet'
+import {
+  AttributionControl,
+  MapContainer,
+  Marker,
+  Popup,
+  Tooltip,
+  ZoomControl,
+  useMap,
+} from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './map.css'
@@ -9,9 +17,15 @@ import { requestLocation } from '../geolocation/location'
 import { createOpenFreeMapLayer } from './openFreeMap'
 const icon = L.divIcon({
   className: 'nf-marker',
-  html: '<span aria-hidden="true">NF</span>',
+  html: '<span aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10V21H21V10M2 10L4 3H20L22 10ZM9 21V14H15V21"/></svg></span>',
   iconSize: [34, 34],
   iconAnchor: [17, 34],
+})
+const positionIcon = L.divIcon({
+  className: 'nf-marker',
+  html: '<span aria-hidden="true">●</span>',
+  iconSize: [34, 34],
+  iconAnchor: [17, 17],
 })
 
 function districtFromAddress(address: string) {
@@ -145,9 +159,11 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           className="nf-map-container"
           attributionControl={false}
           scrollWheelZoom={false}
+          zoomControl={false}
         >
           <OpenFreeMapLayer key={attempt} onReady={ready} onError={error} />
           <AttributionControl prefix="OpenFreeMap | © OpenStreetMap contributors" />
+          <ZoomControl position="bottomright" />
           <Bounds stores={stores} />
           {stores.map((store) => (
             <Marker
@@ -168,7 +184,11 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
               }}
             >
               <StoreLabel store={store} />
-              <Popup>
+              <Popup
+                maxWidth={240}
+                autoPanPaddingTopLeft={[20, 20]}
+                autoPanPaddingBottomRight={[60, 110]}
+              >
                 <strong>{store.name}</strong>
                 <p>{store.address}</p>
                 <a
@@ -183,7 +203,7 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
             </Marker>
           ))}
           {position && (
-            <Marker position={position} icon={icon} title="Tu ubicación">
+            <Marker position={position} icon={positionIcon} title="Tu ubicación">
               <Popup>Tu ubicación</Popup>
             </Marker>
           )}

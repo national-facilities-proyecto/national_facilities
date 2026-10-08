@@ -447,9 +447,9 @@ class OperationalV2Tests(TestCase):
         self.login_as("othertech")
         self.assertEqual(self.start(other).status_code, 200)
 
-    def test_ticket_cannot_arrive_before_scheduled_time(self):
+    def test_ticket_cannot_arrive_before_scheduled_day(self):
         visit = self.visit("ticket")
-        visit.fecha_programada = timezone.now() + timedelta(hours=1)
+        visit.fecha_programada = timezone.now() + timedelta(days=1)
         visit.save()
         self.assertEqual(self.start(visit).status_code, 409)
         self.assertEqual(

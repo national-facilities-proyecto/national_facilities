@@ -22,6 +22,18 @@ export function displayDate(value?: string): string {
         timeZone: 'America/Lima',
       }).format(date)
 }
+export function scheduleDate(value?: string): string {
+  if (!value) return 'Sin programar'
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00-05:00` : value)
+  return Number.isNaN(date.getTime())
+    ? 'Fecha no válida'
+    : new Intl.DateTimeFormat('es-PE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'America/Lima',
+      }).format(date)
+}
 export function localDateTime(value: string): string {
   const date = new Date(value)
   return `${localDate(date)}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`

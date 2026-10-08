@@ -332,7 +332,8 @@ def request_or_correct_exception(user, visit, data):
     if not existing and (data["type"] == "time_limit" or scope == "closure"):
         raise ValidationError(
             {
-                "scope": "El cierre no requiere GPS y el formulario no vence. Solo se conservan las excepciones históricas."
+                "scope": "El cierre no requiere GPS y el formulario no vence. "
+                "Solo se conservan las excepciones históricas."
             }
         )
     if data["type"] == "time_limit":
@@ -356,7 +357,8 @@ def request_or_correct_exception(user, visit, data):
         if existing and "location" in data:
             raise ValidationError(
                 {
-                    "location": "La corrección conserva el GPS del evento original; explica la corrección sin registrar otra llegada."
+                    "location": "La corrección conserva el GPS del evento original; "
+                    "explica la corrección sin registrar otra llegada."
                 }
             )
         if not existing:
@@ -372,7 +374,8 @@ def request_or_correct_exception(user, visit, data):
             ):
                 raise ValidationError(
                     {
-                        "location": "Solicita una lectura fresca normal o una excepción por fallo GPS, radio o precisión."
+                        "location": "Solicita una lectura fresca normal o una excepción "
+                        "por fallo GPS, radio o precisión."
                     }
                 )
     if existing and data["type"] == "location" and "location" not in data:
@@ -565,7 +568,8 @@ def finish_physical_work(user, pk, data=None):
     require_execution(visit)
     if visit.formulario_abierto_en:
         raise Conflict(
-            "El formulario histórico ya está abierto sin fin físico registrado; requiere revisión, no timestamps inventados."
+            "El formulario histórico ya está abierto sin fin físico registrado; "
+            "requiere revisión, no timestamps inventados."
         )
     persist_physical_end(user, visit)
     return visit
@@ -702,9 +706,12 @@ def ensure_startable(user, visit, at=None):
     else:
         if not visit.ticket_origen_id:
             raise Conflict("La atención histórica no tiene una incidencia vinculada.")
-        if at < visit.fecha_programada:
+        from .scheduling import scheduled_day
+
+        if scheduled_day(at) < scheduled_day(visit.fecha_programada):
             raise Conflict(
-                "No puede registrar llegada antes de scheduledAt; NF debe reprogramar primero."
+                "La atención está programada para un día posterior. "
+                "Solicita al supervisor que la reprograme antes de registrar llegada."
             )
     if (
         Visita.objects.filter(
@@ -819,7 +826,8 @@ def save_draft(user, pk, data):
     if draft["revision"] != visit.borrador_revision:
         raise Conflict(
             {
-                "detail": "Existe un borrador más reciente. Tu editor se conserva; consulta y concilia antes de reintentar.",
+                "detail": "Existe un borrador más reciente. Tu editor se conserva; "
+                "consulta y concilia antes de reintentar.",
                 "revision": visit.borrador_revision,
             }
         )

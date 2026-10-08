@@ -39,6 +39,7 @@ export function useVisitEditor(initial: Visit) {
   const queuedWrites = useRef(0)
   const evidenceRevisionConflict = useRef(false)
   const mounted = useRef(true)
+  const physicalTransition = useRef(false)
   const back = visit.origin === 'checklist' ? '/checklists' : '/routes'
   const mustComplete = false
   const confirmedRevision = useRef(initial.revision ?? 0)
@@ -358,18 +359,31 @@ export function useVisitEditor(initial: Visit) {
   ).length
   const editable = registrationEditable(visit)
   const finishPhysicalWork = async () => {
-    if (saving) return
+    if (saving || physicalTransition.current) return
+    physicalTransition.current = true
     setError('')
     setSaving(true)
     try {
-      applyConfirmed(await repos.visits.finishPhysicalWork(visit.id))
+      const finished = await repos.visits.finishPhysicalWork(visit.id)
+      applyConfirmed(finished)
+      if (finished.phase === 'physical_finished') {
+        applyConfirmed(await repos.visits.openForm(visit.id))
+      } else if (finished.phase !== 'results') {
+        throw new AppError(
+          'conflict',
+          'No se confirmó el fin del trabajo. Actualiza el estado antes de registrar el resultado.',
+        )
+      }
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
       setSaving(false)
+      physicalTransition.current = false
     }
   }
   const openForm = async () => {
+    if (saving || physicalTransition.current) return
+    physicalTransition.current = true
     setError('')
     setSaving(true)
     try {
@@ -378,6 +392,7 @@ export function useVisitEditor(initial: Visit) {
       setError(errorMessage(cause))
     } finally {
       setSaving(false)
+      physicalTransition.current = false
     }
   }
 

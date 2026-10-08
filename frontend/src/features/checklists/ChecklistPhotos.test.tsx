@@ -33,18 +33,18 @@ it('recupera fotos temporales históricas de atención y sube al asociar a resol
   const view = render(<ChecklistPhotos scope={scope} />)
   fireEvent.click(screen.getByRole('button', { name: 'Tomar fotografía de la atención' }))
   fireEvent.click(screen.getByRole('button', { name: 'Confirmar foto del test' }))
-  await screen.findByAltText('Fotografía pendiente de asociación')
+  await screen.findByAltText('Fotografía del trabajo')
   expect(associate).not.toHaveBeenCalled()
   expect(await checklistPhotos.list(scope)).toHaveLength(1)
   view.unmount()
   render(<ChecklistPhotos scope={scope} onAssociate={associate} />)
-  await screen.findByAltText('Fotografía pendiente de asociación')
-  fireEvent.click(screen.getByRole('button', { name: 'Asociar fotografía' }))
+  await screen.findByAltText('Fotografía del trabajo')
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar fotografía' }))
   await waitFor(() =>
     expect(associate).toHaveBeenCalledWith(expect.objectContaining({ id: photo.id })),
   )
   await waitFor(() =>
-    expect(screen.queryByAltText('Fotografía pendiente de asociación')).not.toBeInTheDocument(),
+    expect(screen.queryByAltText('Fotografía del trabajo')).not.toBeInTheDocument(),
   )
   expect(await checklistPhotos.list(scope)).toEqual([])
 })
@@ -57,12 +57,12 @@ it('conserva la foto cuando falla la subida y permite reintentar', async () => {
     .mockRejectedValueOnce(new AppError('network', 'Sin conexión'))
     .mockResolvedValue(undefined)
   render(<ChecklistPhotos scope={scope} onAssociate={associate} />)
-  await screen.findByAltText('Fotografía pendiente de asociación')
-  fireEvent.click(screen.getByRole('button', { name: 'Asociar fotografía' }))
+  await screen.findByAltText('Fotografía del trabajo')
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar fotografía' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Sin conexión')
   expect(await checklistPhotos.list(scope)).toHaveLength(1)
-  fireEvent.click(screen.getByRole('button', { name: 'Asociar fotografía' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar fotografía' }))
   await waitFor(() =>
-    expect(screen.queryByAltText('Fotografía pendiente de asociación')).not.toBeInTheDocument(),
+    expect(screen.queryByAltText('Fotografía del trabajo')).not.toBeInTheDocument(),
   )
 })

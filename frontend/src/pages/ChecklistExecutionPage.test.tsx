@@ -75,13 +75,12 @@ it('muestra tareas y termina sin GPS ni galería genérica durante el trabajo f�
     configurable: true,
     value: { getCurrentPosition },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Terminar recorrido' }))
-  await screen.findByRole('heading', { name: 'Recorrido terminado' })
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar resultado del trabajo' }))
+  await screen.findByLabelText('Reporte general del checklist')
   expect(
     screen.queryByRole('region', { name: 'Tiempo de registro del formulario' }),
   ).not.toBeInTheDocument()
-  expect((await repos.visits.get(1)).formOpenedAt).toBeUndefined()
-  fireEvent.click(screen.getByRole('button', { name: 'Registrar resultados' }))
+  expect((await repos.visits.get(1)).formOpenedAt).toBeDefined()
   await screen.findByLabelText('Reporte general del checklist')
   const opened = await repos.visits.get(1)
   expect(opened.expiresAt).toBeUndefined()
@@ -89,7 +88,7 @@ it('muestra tareas y termina sin GPS ni galería genérica durante el trabajo f�
   expect(screen.getByLabelText('Reporte general del checklist')).toBeVisible()
 })
 
-it('cierre con GPS denegado registra fin físico sin abrir formulario', async () => {
+it('cierre con GPS denegado abre el formulario después del fin confirmado', async () => {
   const repos = createMockRepositories()
   await repos.auth.login({ kind: 'demo', userId: 1 })
   await repos.checklists.claim(1)
@@ -106,16 +105,15 @@ it('cierre con GPS denegado registra fin físico sin abrir formulario', async ()
   })
   renderPage(<VisitEditor id={1} origin="checklist" />, repos)
   await screen.findByRole('heading', { name: 'Recorrido de inspección' })
-  fireEvent.click(screen.getByRole('button', { name: 'Terminar recorrido' }))
-  await screen.findByRole('heading', { name: 'Recorrido terminado' })
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar resultado del trabajo' }))
+  await screen.findByLabelText('Reporte general del checklist')
   const closed = await repos.visits.get(1)
   expect(closed.physicalEndedAt).toBeDefined()
-  expect(closed.formOpenedAt).toBeUndefined()
+  expect(closed.formOpenedAt).toBeDefined()
   expect(closed.submittedAt).toBeUndefined()
   expect(closed.exceptions).toBeUndefined()
   expect(closed.endLocation).toBeUndefined()
-  expect(open).not.toHaveBeenCalled()
-  fireEvent.click(screen.getByRole('button', { name: 'Registrar resultados' }))
+  expect(open).toHaveBeenCalledExactlyOnceWith(1)
   await screen.findByLabelText('Reporte general del checklist')
   expect(open).toHaveBeenCalledWith(1)
 })
@@ -223,7 +221,9 @@ it('En revisión es readonly y no ofrece edición ni otro GPS', async () => {
   await screen.findByRole('heading', { name: 'En revisión' })
   expect(screen.queryByRole('button', { name: 'No aplica' })).not.toBeInTheDocument()
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'Terminar recorrido' })).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: 'Registrar resultado del trabajo' }),
+  ).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Terminar atención' })).not.toBeInTheDocument()
   expect(screen.getByText(/Espera la decisión del supervisor/)).toBeVisible()
   expect((await repos.visits.get(1)).occupiesTechnician).toBe(false)

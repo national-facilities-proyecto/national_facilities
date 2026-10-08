@@ -641,7 +641,8 @@ class ContratoSerializer(serializers.ModelSerializer):
                 ):
                     raise serializers.ValidationError(
                         {
-                            "contract": "Conserva cliente y plantilla del contrato con historial; crea un contrato nuevo."
+                            "contract": "Conserva cliente y plantilla del contrato con historial; "
+                            "crea un contrato nuevo."
                         }
                     )
         if val("activo") and val("cliente"):
@@ -655,7 +656,8 @@ class ContratoSerializer(serializers.ModelSerializer):
             if overlaps.exists():
                 raise serializers.ValidationError(
                     {
-                        "startDate": "Existe otro contrato activo del cliente para esas fechas. Ajusta su vigencia antes de crear o activar otro."
+                        "startDate": "Existe otro contrato activo del cliente para esas fechas. "
+                        "Ajusta su vigencia antes de crear o activar otro."
                     }
                 )
         return attrs
@@ -1030,6 +1032,7 @@ def ticket_data(ticket, user=None):
             {
                 "id": str(e.pk),
                 "at": iso(e.fecha),
+                "kind": e.tipo,
                 "actorId": e.actor_id,
                 "actorName": (
                     (e.actor.get_full_name() or e.actor.username) if e.actor else None
@@ -1056,7 +1059,12 @@ def ticket_data(ticket, user=None):
                 "actorName": (
                     (e.actor.get_full_name() or e.actor.username) if e.actor else None
                 ),
-                "text": labels[e.tipo],
+                "text": (
+                    "Atención reprogramada"
+                    if e.tipo == "schedule"
+                    and e.datos.get("previous", {}).get("technicianId")
+                    else labels[e.tipo]
+                ),
             }
             for e in ticket.eventos.select_related("actor")
             .filter(tipo__in=labels)

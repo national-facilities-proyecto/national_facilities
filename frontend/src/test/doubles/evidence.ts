@@ -36,7 +36,10 @@ export const localEvidenceRepository: EvidenceRepository = {
     return []
   },
   async put(evidence) {
-    await transaction('readwrite', (store) => store.put(evidence))
+    await transaction('readwrite', (store) => {
+      if (evidence.replaceId) store.delete(evidence.replaceId)
+      return store.put(evidence)
+    })
   },
   async get(id) {
     const value: unknown = await transaction('readonly', (store) => store.get(id))

@@ -137,13 +137,28 @@ for (const origin of ['checklist', 'ticket'] as const) {
         editor.getByText('No se confirmó el guardado. Conserva el editor y reintenta.'),
       ).toBeVisible()
       await context.setOffline(false)
-      await editor.getByRole('button', { name: 'Guardar borrador', exact: true }).click()
-      await expect(editor.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      await editor
+        .getByRole('button', {
+          name: origin === 'ticket' ? 'Reintentar guardado' : 'Guardar borrador',
+          exact: true,
+        })
+        .click()
+      if (origin === 'checklist')
+        await expect(editor.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      else
+        await expect
+          .poll(async () => (await visit(request, data.id, data.token)).workDescription)
+          .toBe('Local edits remain during network loss.')
       const revoked = await request.post(api + '/auth/logout/', {
         headers: { Authorization: 'Bearer ' + data.token },
       })
       expect(revoked.status()).toBe(204)
-      await editor.getByRole('button', { name: 'Finalizar', exact: true }).click()
+      await editor
+        .getByRole('button', {
+          name: origin === 'ticket' ? 'Enviar registro' : 'Finalizar',
+          exact: true,
+        })
+        .click()
       await expect(editor.getByRole('dialog', { name: 'Recuperar sesión' })).toBeVisible()
       await editor.getByLabel('Contraseña para recuperar sesión').fill(password)
       const recoveredVisit = editor.waitForResponse(
@@ -158,11 +173,23 @@ for (const origin of ['checklist', 'ticket'] as const) {
       const conflict = editor.getByRole('heading', { name: 'Borrador modificado en otra sesión' })
       const saved = editor.getByText('Borrador guardado.', { exact: true })
       const saveButton = editor.getByRole('button', { name: 'Guardar borrador', exact: true })
-      await expect
-        .poll(async () => (await conflict.isVisible()) || (await saveButton.isEnabled()))
-        .toBe(true)
-      if (!(await conflict.isVisible())) await saveButton.click()
-      await expect(saved.or(conflict)).toBeVisible()
+      const renewed = await access(request, 'tech')
+      if (origin === 'ticket') {
+        await expect
+          .poll(
+            async () =>
+              (await conflict.isVisible()) ||
+              (await visit(request, data.id, renewed)).workDescription ===
+                'Local edits remain during network loss.',
+          )
+          .toBe(true)
+      } else {
+        await expect
+          .poll(async () => (await conflict.isVisible()) || (await saveButton.isEnabled()))
+          .toBe(true)
+        if (!(await conflict.isVisible())) await saveButton.click()
+        await expect(saved.or(conflict)).toBeVisible()
+      }
       if (await conflict.isVisible()) {
         // La reautenticación puede coincidir con el autosave. Verifica el contenido antes de conciliar.
         const current = object(
@@ -175,10 +202,15 @@ for (const origin of ['checklist', 'ticket'] as const) {
           expect(answers[0]?.observation).toBe('Local edits remain during network loss.')
         }
         await editor.getByRole('button', { name: 'Usar versión del servidor', exact: true }).click()
-        await saveButton.click()
-        await expect(saved).toBeVisible()
+        if (origin === 'checklist') {
+          await saveButton.click()
+          await expect(saved).toBeVisible()
+        } else {
+          await expect(
+            editor.getByRole('button', { name: 'Enviar registro', exact: true }),
+          ).toBeEnabled()
+        }
       }
-      const renewed = await access(request, 'tech')
       expect((await visit(request, data.id, renewed)).expiresAt).toBe(original)
       const otherContext = await browser.newContext({
         permissions: ['geolocation'],
@@ -198,7 +230,12 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await expect(
         editor.getByRole('region', { name: 'Tiempo de registro del formulario' }),
       ).toHaveCount(0)
-      await editor.getByRole('button', { name: 'Finalizar', exact: true }).click()
+      await editor
+        .getByRole('button', {
+          name: origin === 'ticket' ? 'Enviar registro' : 'Finalizar',
+          exact: true,
+        })
+        .click()
       await editor.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
       await expect(editor.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
       const recorded = object(await call(request, `/visitas/${data.id}/`, renewed))
@@ -291,7 +328,15 @@ for (const origin of ['checklist', 'ticket'] as const) {
           .fill('A damaged protective cover requires replacement.')
         await page.getByRole('button', { name: 'Guardar observación', exact: true }).click()
       }
-      await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      if (origin === 'checklist')
+        await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      else
+        await expect
+          .poll(
+            async () =>
+              object(await call(request, `/visitas/${data.id}/`, data.token)).workDescription,
+          )
+          .toBe('Repaired the installation, tested safety and confirmed stable operation.')
       await page.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
       await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
       await expect(
@@ -410,7 +455,7 @@ test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({
   await expect(page.getByRole('region', { name: 'Mapa de tiendas' })).toBeVisible()
   await page.goto('/routes')
   const detail = page.locator(`a[href="/routes/${visitId}"]`)
-  await page.getByRole('button', { name: 'Futuras', exact: true }).click()
+  await page.getByRole('button', { name: 'Pendientes', exact: true }).click()
   await expect(detail).toBeVisible()
   await expect.poll(() => requests.some((url) => url.includes('tiles.openfreemap.org'))).toBe(true)
   await expect(page.getByRole('button', { name: 'Reintentar mapa' })).toBeVisible({
@@ -428,11 +473,13 @@ test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({
   await expect(detail).toBeVisible()
   const visits = await call(request, '/visitas/programadas/', await access(request, 'tech'))
   if (!Array.isArray(visits)) throw new Error('Visitas incompatibles.')
-  const completed = visits.map(mapVisit).filter((visit) => visit.status === 'completed')
-  await page.getByRole('button', { name: 'Finalizados', exact: true }).click()
+  const completed = visits
+    .map(mapVisit)
+    .filter((visit) => visit.origin === 'ticket' && visit.status === 'completed')
+  await page.getByRole('button', { name: 'Finalizadas', exact: true }).click()
   await expect(detail).toHaveCount(0)
   await expect(page.locator('#main-content .nf-list a')).toHaveCount(completed.length)
   if (completed.length)
     await expect(page.getByRole('link', { name: 'Ver detalle' }).first()).toBeVisible()
-  else await expect(page.getByText('No hay atenciones en este filtro.')).toBeVisible()
+  else await expect(page.getByText('No tienes atenciones finalizadas por ahora.')).toBeVisible()
 })

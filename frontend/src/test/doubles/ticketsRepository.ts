@@ -1,6 +1,6 @@
 import type { Repositories } from '../../services/repositories/contracts'
 import { required } from '../../services/errors'
-import { localDate } from '../../utils/dates'
+import { operationDate } from '../../utils/dates'
 import { readDatabase } from './storage'
 import {
   delay,
@@ -108,7 +108,8 @@ export function createTicketsRepository(): NonNullable<Repositories['tickets']> 
         return ticket
       })
     },
-    async schedule(id, technicianId, scheduledAt, priority, reason) {
+    async schedule(id, technicianId, day, priority, reason) {
+      const scheduledAt = /^\d{4}-\d{2}-\d{2}$/.test(day) ? `${day}T00:00:00-05:00` : day
       return mutate((db) => {
         const user = currentUser(db)
         allow(user, ['account_supervisor'])
@@ -127,7 +128,7 @@ export function createTicketsRepository(): NonNullable<Repositories['tickets']> 
         required(technician, 'Selecciona un técnico activo de esta cuenta.')
         required(
           !Number.isNaN(new Date(scheduledAt).getTime()) &&
-            localDate(new Date(scheduledAt)) >= localDate(),
+            operationDate(new Date(scheduledAt)) >= operationDate(),
           'La fecha no puede ser anterior a hoy.',
         )
         required(

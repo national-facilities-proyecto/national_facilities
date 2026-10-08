@@ -377,6 +377,8 @@ export function mapTicket(value: unknown): Ticket {
         id: string(e.id),
         at: date(e.at),
         actorId: id(e.actorId),
+        actorName: optional(e.actorName, string),
+        kind: optional(e.kind, string),
         text: string(e.text),
         reason: optional(details.reason, string),
         previous: optional(details.previous, change),

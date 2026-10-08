@@ -41,6 +41,7 @@ it('bandeja NF consume solo pendientes del backend y usa fecha de envío', async
     'href',
     '/technical-supervisor/checklists/91',
   )
-  expect(screen.getByText('GPS de cierre · Pendiente')).toBeVisible()
+  expect(screen.getByText('GPS de cierre')).toBeVisible()
+  expect(screen.getByText('GPS pendiente')).toBeVisible()
   expect(general).not.toHaveBeenCalled()
 })

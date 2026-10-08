@@ -93,7 +93,7 @@ export function GpsAction({
       {error && <Alert>{error}</Alert>}
       <div className="nf-actions">
         <Button disabled={busy} onClick={() => void perform()}>
-          {busy ? 'Registrando ubicación…' : error ? 'Reintentar ubicación' : 'Registrar llegada'}
+          {busy ? 'Registrando ubicación…' : failure ? 'Reintentar ubicación' : 'Registrar llegada'}
         </Button>
         {gpsMessages[failure] && (
           <Button variant="secondary" disabled={busy} onClick={() => setRequestingException(true)}>
@@ -112,12 +112,13 @@ export function GpsAction({
             minLength={10}
             maxLength={500}
             value={reason}
+            rows={3}
+            errors={reason.trim().length < 10 ? ['Escribe al menos 10 caracteres.'] : undefined}
             onChange={(event) => setReason(event.target.value)}
           />
           {photoId && (
             <>
               <EvidenceGallery ids={[photoId]} />
-              <p>Foto guardada en el servidor.</p>
             </>
           )}
           <div className="nf-actions">
