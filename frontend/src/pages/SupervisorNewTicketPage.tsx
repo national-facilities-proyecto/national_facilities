@@ -104,7 +104,8 @@ export default function SupervisorNewTicketPage() {
     return () => window.removeEventListener('beforeunload', protect)
   }, [description, ids.length, pendingFiles.length, saving, uploading])
   if (!query.data || query.status !== 'success') return <QueryState query={query} />
-  const needsPhotoDecision = query.data.temporary.length > 0 && !photoRecoveryDecided
+  const previousPhotos = query.data.temporary
+  const needsPhotoDecision = previousPhotos.length > 0 && !photoRecoveryDecided
   return (
     <>
       <PageHeader
@@ -121,7 +122,7 @@ export default function SupervisorNewTicketPage() {
         {needsPhotoDecision && (
           <Card title="Fotografías de un reporte anterior">
             <p>
-              Encontramos {query.data.temporary.length} fotografía(s) guardada(s) por esta cuenta
+              Encontramos {previousPhotos.length} fotografía(s) guardada(s) por esta cuenta
               para una incidencia anterior. No se agregarán a tu nuevo reporte sin tu autorización.
             </p>
             {errors.length > 0 && <Alert>{errors.join(' ')}</Alert>}
@@ -130,7 +131,7 @@ export default function SupervisorNewTicketPage() {
                 variant="secondary"
                 disabled={recoveryBusy}
                 onClick={() => {
-                  const previous = query.data.temporary
+                  const previous = previousPhotos
                   ownedIds.current = [...new Set([...ownedIds.current, ...previous])]
                   setIds((current) => [...new Set([...current, ...previous])])
                   setPhotoRecoveryDecided(true)
@@ -146,7 +147,7 @@ export default function SupervisorNewTicketPage() {
                   if (!window.confirm('¿Eliminar las fotografías pendientes de este reporte anterior? Esta acción no se puede deshacer.')) return
                   setRecoveryBusy(true)
                   setErrors([])
-                  void Promise.all(query.data.temporary.map((id) => repos.evidence.remove(id)))
+                  void Promise.all(previousPhotos.map((id) => repos.evidence.remove(id)))
                     .then(() => {
                       setPhotoRecoveryDecided(true)
                       query.reload()
