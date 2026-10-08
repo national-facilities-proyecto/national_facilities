@@ -172,8 +172,7 @@ it('checklist queda readonly, libera recovery y lista el nuevo intento publicado
 })
 it('Corrección requerida conserva inicio, fin físico, plazo y envío previo al declarar No realizado', async () => {
   const { repos, visit } = await activeChecklist()
-  const store = await repos.stores.get(1)
-  await repos.visits.recordEndGps(1, { ...store, accuracy: 8, capturedAt: Date.now() })
+  await repos.visits.finishPhysicalWork(1)
   await repos.visits.openForm(1)
   const db = readDatabase()
   const stored = db.visits.find((item) => item.id === 1)!

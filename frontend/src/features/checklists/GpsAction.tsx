@@ -1,21 +1,33 @@
 import { useState } from 'react'
-import type { Coordinates, ExceptionInput, Visit } from '../../types/models'
+import type { Coordinates, Evidence, ExceptionInput, Visit } from '../../types/models'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useLocationRequest } from '../geolocation/useLocation'
 import { LocationError } from '../geolocation/location'
 import { AppError, errorMessage } from '../../services/errors'
 import { Alert, Button, Textarea } from '../../components/ui'
+import { CameraModal } from '../technician/CameraModal'
+import { EvidenceGallery } from '../../components/EvidenceGallery'
 
+const gpsMessages: Record<string, string> = {
+  denied: 'Permite el acceso a tu ubicación o solicita una excepción.',
+  timeout: 'No pudimos obtener tu ubicación a tiempo.',
+  unavailable: 'Tu dispositivo no pudo obtener la ubicación.',
+  out_of_radius: 'Tu ubicación está fuera del área del establecimiento.',
+  outside: 'Tu ubicación está fuera del área del establecimiento.',
+  low_accuracy: 'La ubicación no es suficientemente precisa. Intenta en un lugar con mejor señal.',
+  inaccurate: 'La ubicación no es suficientemente precisa. Intenta en un lugar con mejor señal.',
+  stale: 'La ubicación caducó. Vuelve a intentarlo o solicita una excepción.',
+  future: 'No pudimos confirmar la fecha de la ubicación. Vuelve a intentarlo.',
+}
 export function GpsAction({
   visit,
-  scope,
   onConfirmed,
 }: {
   visit: Visit
-  scope: 'arrival' | 'closure'
+  scope: 'arrival'
   onConfirmed: (visit: Visit) => void
 }) {
-  const { visits } = useRepositories()
+  const { visits, evidence } = useRepositories()
   const gps = useLocationRequest()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -23,12 +35,8 @@ export function GpsAction({
   const [reading, setReading] = useState<Coordinates>()
   const [requestingException, setRequestingException] = useState(false)
   const [reason, setReason] = useState('')
-  const action =
-    scope === 'arrival'
-      ? 'Registrar llegada'
-      : visit.origin === 'checklist'
-        ? 'Terminar recorrido'
-        : 'Terminar atención'
+  const [camera, setCamera] = useState(false)
+  const [photoId, setPhotoId] = useState(visit.arrivalEvidenceIds?.at(-1))
   const perform = async () => {
     if (busy) return
     setBusy(true)
@@ -36,45 +44,47 @@ export function GpsAction({
     setFailure('')
     setReading(undefined)
     setRequestingException(false)
-    const send = (id: number, location: Coordinates) =>
-      scope === 'arrival' ? visits.start(id, location) : visits.recordEndGps(id, location)
     try {
       let location = await gps.request()
       setReading(location)
       let next: Visit
       try {
-        next = await send(visit.id, location)
+        next = await visits.start(visit.id, location)
       } catch (cause) {
         if (!(cause instanceof AppError) || cause.fields.failure?.[0] !== 'stale') throw cause
-        // El servidor determina si caducó: una nueva lectura no reutiliza la rechazada.
         setReading(undefined)
         location = await gps.request()
         setReading(location)
-        next = await send(visit.id, location)
+        next = await visits.start(visit.id, location)
       }
       onConfirmed(next)
     } catch (cause) {
-      setError(errorMessage(cause))
-      setFailure(
+      const code =
         cause instanceof LocationError
           ? cause.reason
           : cause instanceof AppError
             ? (cause.fields.failure?.[0] ?? '')
-            : '',
-      )
+            : ''
+      setError(gpsMessages[code] ?? errorMessage(cause))
+      setFailure(code)
     } finally {
       setBusy(false)
     }
   }
+  const uploadPhoto = async (photo: Evidence) => {
+    await evidence.put({ ...photo, visitId: visit.id, purpose: 'arrival' })
+    setPhotoId(photo.id)
+  }
   const requestException = async () => {
-    if (busy) return
+    if (busy || !photoId) return
     setBusy(true)
     setError('')
     const input: ExceptionInput = {
       type: 'location',
-      scope,
+      scope: 'arrival',
       reason,
       failure,
+      evidenceId: photoId,
       ...(reading ? { location: reading } : {}),
     }
     try {
@@ -88,25 +98,11 @@ export function GpsAction({
   return (
     <>
       {error && <Alert>{error}</Alert>}
-      {reading && (
-        <p>
-          Lectura real: {reading.latitude}, {reading.longitude} · Precisión ±{reading.accuracy} m.
-        </p>
-      )}
       <div className="nf-actions">
         <Button disabled={busy} onClick={() => void perform()}>
-          {busy ? 'Registrando ubicación…' : error ? 'Reintentar ubicación' : action}
+          {busy ? 'Registrando ubicación…' : error ? 'Reintentar ubicación' : 'Registrar llegada'}
         </Button>
-        {[
-          'denied',
-          'timeout',
-          'unavailable',
-          'out_of_radius',
-          'low_accuracy',
-          'outside',
-          'inaccurate',
-          'stale',
-        ].includes(failure) && (
+        {gpsMessages[failure] && (
           <Button variant="secondary" disabled={busy} onClick={() => setRequestingException(true)}>
             Solicitar excepción GPS
           </Button>
@@ -115,25 +111,34 @@ export function GpsAction({
       {requestingException && (
         <>
           <p>
-            {scope === 'arrival' ? 'GPS de llegada' : 'GPS de cierre'}: la solicitud conserva los
-            datos reales y permite continuar bajo excepción pendiente. No envía el registro a
-            revisión.
+            Explica el motivo y toma una foto del establecimiento. Podrás continuar la inspección;
+            tu presencia queda sin validación GPS normal y National Facilities revisará el registro.
           </p>
           <Textarea
-            label="Justificación de la excepción"
+            label="Motivo de la excepción"
             minLength={10}
             maxLength={500}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
           />
+          {photoId && (
+            <>
+              <EvidenceGallery ids={[photoId]} />
+              <p>Foto guardada en el servidor.</p>
+            </>
+          )}
+          <Button variant="secondary" disabled={busy} onClick={() => setCamera(true)}>
+            {photoId ? 'Tomar otra foto del establecimiento' : 'Tomar foto del establecimiento'}
+          </Button>
           <Button
-            disabled={busy || reason.trim().length < 10}
+            disabled={busy || reason.trim().length < 10 || !photoId}
             onClick={() => void requestException()}
           >
             Guardar excepción GPS
           </Button>
         </>
       )}
+      <CameraModal open={camera} onClose={() => setCamera(false)} onCapture={uploadPhoto} />
     </>
   )
 }

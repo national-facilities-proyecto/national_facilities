@@ -18,11 +18,13 @@ function coordinates(value: unknown): boolean {
     value === undefined ||
     (isRecord(value) &&
       ['latitude', 'longitude', 'accuracy', 'capturedAt'].every(
-        (key) => typeof value[key] === 'number' && Number.isFinite(value[key]),
+        (key) =>
+          (value.validated === false && value[key] === undefined) ||
+          (typeof value[key] === 'number' && Number.isFinite(value[key])),
       ) &&
-      Math.abs(Number(value.latitude)) <= 90 &&
-      Math.abs(Number(value.longitude)) <= 180 &&
-      Number(value.accuracy) >= 0)
+      (value.latitude === undefined || Math.abs(Number(value.latitude)) <= 90) &&
+      (value.longitude === undefined || Math.abs(Number(value.longitude)) <= 180) &&
+      (value.accuracy === undefined || Number(value.accuracy) >= 0))
   )
 }
 function exception(value: unknown): boolean {

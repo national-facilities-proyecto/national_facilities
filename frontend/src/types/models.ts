@@ -58,6 +58,7 @@ export type ChecklistTask = {
   order: number
 }
 export type Evidence = {
+  purpose?: 'result' | 'arrival'
   id: string
   visitId?: number
   ticketId?: number
@@ -114,6 +115,7 @@ export type ExceptionInput = {
   reason: string
   failure?: string
   location?: Coordinates
+  evidenceId?: string
   revision?: number
 }
 export const exceptionLabel = (item: Pick<LocationException, 'type' | 'scope'>): string =>
@@ -125,6 +127,7 @@ export const exceptionLabel = (item: Pick<LocationException, 'type' | 'scope'>):
         ? 'GPS de cierre'
         : 'GPS histórico (etapa no registrada)'
 export type LocationException = {
+  evidenceIds?: string[]
   id?: number
   revision?: number
   authorId?: number
@@ -183,6 +186,7 @@ export type Visit = {
   answers: Answer[]
   workDescription: string
   evidenceIds: string[]
+  arrivalEvidenceIds?: string[]
   startLocation?: Partial<Coordinates> & { legacy?: boolean; validated?: boolean | null }
   endLocation?: Partial<Coordinates> & { legacy?: boolean; validated?: boolean | null }
   startedAt?: string

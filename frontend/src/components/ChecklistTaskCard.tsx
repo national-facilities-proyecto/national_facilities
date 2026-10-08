@@ -1,4 +1,4 @@
-﻿import type { Answer, ChecklistTask } from '../types/models'
+import type { Answer, ChecklistTask } from '../types/models'
 import { Badge, Button } from './ui'
 import { EvidenceGallery } from './EvidenceGallery'
 
@@ -29,7 +29,13 @@ export function ChecklistTaskCard({
         <span className="nf-task__number">{order}</span>
         <div>
           <h2>{task.title}</h2>
-          <Badge>{task.photoRequired ? 'Foto obligatoria' : 'Foto opcional'}</Badge>
+          <Badge>
+            {answer?.result === 'no_aplica'
+              ? 'Sin foto requerida'
+              : task.photoRequired
+                ? 'Foto obligatoria'
+                : 'Foto opcional'}
+          </Badge>
         </div>
       </header>
       <div className="nf-actions" role="group" aria-label={`Resultado de ${task.title}`}>
@@ -63,16 +69,18 @@ export function ChecklistTaskCard({
         </p>
       )}
       <EvidenceGallery ids={answer?.evidenceIds ?? []} onRemove={onRemove} />
-      <div className="nf-actions">
-        <Button variant="secondary" onClick={onCamera}>
-          Tomar foto
-        </Button>
-        {onGallery && (
-          <Button variant="secondary" onClick={onGallery}>
-            Seleccionar de galería
+      {answer?.result && answer.result !== 'no_aplica' && (
+        <div className="nf-actions">
+          <Button variant="secondary" onClick={onCamera}>
+            Tomar foto
           </Button>
-        )}
-      </div>
+          {onGallery && (
+            <Button variant="secondary" onClick={onGallery}>
+              Seleccionar de galería
+            </Button>
+          )}
+        </div>
+      )}
     </article>
   )
 }

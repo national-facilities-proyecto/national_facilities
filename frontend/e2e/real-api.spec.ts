@@ -15,6 +15,8 @@ import {
   string,
   arrive,
   openResults,
+  cameraPhoto,
+  arrivalException,
   waitUntilScheduled,
 } from './helpers.js'
 
@@ -45,18 +47,9 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   page.on('request', (request) => {
     if (request.method() === 'POST' && request.url().endsWith('/evidencias/')) uploads++
   })
-  await page.getByRole('button', { name: 'Tomar fotografía del recorrido', exact: true }).click()
-  const camera = page.getByRole('dialog', { name: 'Tomar fotografía', exact: true })
-  await camera.getByRole('button', { name: 'Capturar', exact: true }).click()
-  await camera.getByRole('button', { name: 'Confirmar foto', exact: true }).click()
-  await expect(camera).toHaveCount(0)
-  await expect(page.locator('.nf-evidence img')).toHaveCount(1)
-  await page.reload()
-  await expect(page.getByText('Fotografías de un reporte anterior')).toBeVisible()
-  await expect(page.locator('.nf-evidence img')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Recuperar fotos anteriores' }).click()
-  await expect(page.locator('.nf-evidence img')).toHaveCount(1)
-  expect(uploads).toBe(0)
+  await expect(
+    page.getByRole('button', { name: 'Tomar fotografía del recorrido', exact: true }),
+  ).toHaveCount(0)
   let current = await visit(request, available.id, token)
   expect(current.formOpenedAt).toBeUndefined()
   expect(current.expiresAt).toBeUndefined()
@@ -69,16 +62,11 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   await expect(page.getByRole('button', { name: 'Finalizar', exact: true })).toBeVisible()
   current = await visit(request, available.id, token)
   const deadline = current.expiresAt
-  expect(Date.parse(deadline ?? '') - Date.parse(current.formOpenedAt ?? '')).toBe(300000)
+  expect(deadline).toBeUndefined()
   await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
-  await page
-    .getByLabel('Ítem para fotografía 1', { exact: true })
-    .selectOption({ label: 'Inspect test device' })
-  await page.getByRole('button', { name: 'Asociar fotografía', exact: true }).click()
-  await expect(
-    page.getByText('No hay fotografías pendientes de asociación.', { exact: true }),
-  ).toBeVisible()
+  await cameraPhoto(page)
   await expect(page.locator('fieldset .nf-evidence img')).toHaveCount(1)
+  await page.screenshot({ path: 'test-results/p0-checklist-item.png', fullPage: true })
   expect(uploads).toBe(1)
   const recorded = object(await call(request, `/visitas/${available.id}/`, token))
   const answers = Array.isArray(recorded.answers) ? recorded.answers.map(object) : []
@@ -91,7 +79,7 @@ test('checklist: dos etapas, borrador, fotos, recarga, segunda sesión y finaliz
   expect(cameraEvidence.mimeType).toBe('image/webp')
   expect(string(cameraEvidence.name)).toMatch(/\.webp$/)
   expect(cameraEvidence.source).toBe('camera')
-  expect(Date.parse(String(cameraEvidence.capturedAt))).toBeLessThan(
+  expect(Date.parse(String(cameraEvidence.capturedAt))).toBeGreaterThanOrEqual(
     Date.parse(current.formOpenedAt ?? ''),
   )
   await page
@@ -767,14 +755,13 @@ test('V2: reserva no ocupa, segundo inicio rechazado, recovery y envío sin GPS 
   expect(object(await call(request, `/visitas/${first}/`, token)).status).toBe('completed')
 })
 
-test('V2: llegada y cierre excepcionales separados, envío explícito y revisión readonly', async ({
+test('P0: llegada excepcional con foto, cierre sin GPS, envío explícito y revisión readonly', async ({
   page,
   context,
   request,
 }) => {
   const id = checklistCase()
   const token = await access(request, 'tech')
-  await context.clearPermissions()
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'geolocation', {
       configurable: true,
@@ -786,35 +773,20 @@ test('V2: llegada y cierre excepcionales separados, envío explícito y revisió
     })
   })
   await login(page)
-  await page.goto(`/checklists/${id}`)
-  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
-  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
-  await page.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
-  await page
-    .getByLabel('Justificación de la excepción')
-    .fill('El permiso de ubicación fue denegado al llegar.')
-  await page.getByRole('button', { name: 'Guardar excepción GPS', exact: true }).click()
-  await expect(
-    page.getByRole('heading', { name: 'Recorrido de inspección', exact: true }),
-  ).toBeVisible()
+  await arrivalException(page, id)
   let state = object(await call(request, `/visitas/${id}/`, token))
   expect(state.phase).toBe('physical_work')
   expect(state.occupiesTechnician).toBe(true)
   expect(state.submittedAt).toBeNull()
   expect(state.formOpenedAt).toBeNull()
   await page.getByRole('button', { name: 'Terminar recorrido', exact: true }).click()
-  await page.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
-  await page
-    .getByLabel('Justificación de la excepción')
-    .fill('El navegador mantiene denegado el permiso al terminar.')
-  await page.getByRole('button', { name: 'Guardar excepción GPS', exact: true }).click()
   await expect(
     page.getByRole('heading', { name: 'Recorrido terminado', exact: true }),
   ).toBeVisible()
   state = object(await call(request, `/visitas/${id}/`, token))
   expect(state.formOpenedAt).toBeNull()
   const exceptions = Array.isArray(state.exceptions) ? state.exceptions.map(object) : []
-  expect(exceptions.map((e) => e.scope)).toEqual(['arrival', 'closure'])
+  expect(exceptions.map((e) => e.scope)).toEqual(['arrival'])
   expect(exceptions.every((e) => object(e.telemetry).latitude === null)).toBe(true)
   await page.getByRole('button', { name: 'Registrar resultados', exact: true }).click()
   await page.getByRole('button', { name: 'No aplica', exact: true }).click()
@@ -836,8 +808,116 @@ test('V2: llegada y cierre excepcionales separados, envío explícito y revisió
   await expect(reviewer.locator(`a[href="/technical-supervisor/checklists/${id}"]`)).toBeVisible()
   await reviewer.locator(`a[href="/technical-supervisor/checklists/${id}"]`).click()
   await expect(reviewer.getByText('GPS de llegada:', { exact: false }).first()).toBeVisible()
-  await expect(reviewer.getByText('GPS de cierre:', { exact: false }).first()).toBeVisible()
+  await expect(reviewer.getByText('GPS de cierre:', { exact: false })).toHaveCount(0)
+  await expect(reviewer.locator('.nf-evidence img')).toHaveCount(1)
   await reviewer.close()
+})
+
+test('P0: fuera de radio con mensaje humano y foto de llegada recuperada desde otro navegador', async ({
+  page,
+  context,
+  browser,
+  request,
+}) => {
+  const id = checklistCase()
+  const token = await access(request, 'tech')
+  await context.setGeolocation({ latitude: -12.15, longitude: -77.0181, accuracy: 8 })
+  await login(page)
+  await page.goto(`/checklists/${id}`)
+  await page.getByRole('button', { name: 'Tomar checklist', exact: true }).click()
+  await page.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText(
+    'Tu ubicación está fuera del área del establecimiento.',
+  )
+  await expect(page.getByText(/out_of_radius/)).toHaveCount(0)
+  await page.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
+  await page
+    .getByLabel('Motivo de la excepción')
+    .fill('La lectura me sitúa fuera del establecimiento.')
+  await cameraPhoto(page, 'Tomar foto del establecimiento')
+  const before = object(await call(request, `/visitas/${id}/`, token))
+  expect(before.startedAt).toBeNull()
+  const photos = before.arrivalEvidenceIds
+  if (!Array.isArray(photos) || typeof photos[0] !== 'string')
+    throw new Error('Sin foto confirmada.')
+  const photoId = photos[0]
+  for (const user of ['othertech', 'store']) {
+    const response = await request.get(`${api}/evidencias/${photoId}/archivo/`, {
+      headers: { Authorization: 'Bearer ' + (await access(request, user)) },
+    })
+    expect(response.status()).toBe(404)
+  }
+  await page.close()
+  const recoveredContext = await browser.newContext({
+    permissions: ['geolocation'],
+    geolocation: { latitude: -12.15, longitude: -77.0181, accuracy: 8 },
+    viewport: { width: 390, height: 844 },
+  })
+  const recovered = await recoveredContext.newPage()
+  await login(recovered)
+  await recovered.goto(`/checklists/${id}`)
+  await recovered.getByRole('button', { name: 'Registrar llegada', exact: true }).click()
+  await recovered.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
+  await expect(recovered.locator('.nf-evidence img')).toHaveCount(1)
+  await expect(recovered.getByText('Foto guardada en el servidor.', { exact: true })).toBeVisible()
+  await recovered
+    .getByLabel('Motivo de la excepción')
+    .fill('La lectura me sitúa fuera del establecimiento.')
+  await recovered.screenshot({
+    path: 'test-results/p0-arrival-exception-mobile.png',
+    fullPage: true,
+  })
+  await recovered.getByRole('button', { name: 'Guardar excepción GPS', exact: true }).click()
+  await expect(
+    recovered.getByRole('heading', { name: 'Recorrido de inspección', exact: true }),
+  ).toBeVisible()
+  const started = object(await call(request, `/visitas/${id}/`, token))
+  expect(object(started.startLocation).validated).toBe(false)
+  expect(object(started.startLocation).failure).toBe('out_of_radius')
+  const exceptions = Array.isArray(started.exceptions) ? started.exceptions.map(object) : []
+  expect(exceptions[0]?.evidenceIds).toEqual([photoId])
+  await confirmNotPerformed(recovered)
+  await recoveredContext.close()
+})
+
+test('P0: una llegada caducada se renueva automáticamente y solo la lectura fresca valida presencia', async ({
+  page,
+  request,
+}) => {
+  const id = checklistCase()
+  const token = await access(request, 'tech')
+  await page.addInitScript(() => {
+    let reads = 0
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition(ok: PositionCallback) {
+          reads++
+          ok({
+            coords: { latitude: -12.1739, longitude: -77.0181, accuracy: 8 },
+            timestamp: Date.now() - (reads === 1 ? 120000 : 0),
+          } as GeolocationPosition)
+        },
+      },
+    })
+  })
+  const responses: number[] = []
+  page.on('response', (response) => {
+    if (
+      response.request().method() === 'POST' &&
+      response.url().endsWith(`/visitas/${id}/iniciar/`)
+    ) {
+      responses.push(response.status())
+    }
+  })
+  await login(page)
+  await arrive(page, id)
+  expect(responses).toEqual([400, 200])
+  const accepted = object(await call(request, `/visitas/${id}/`, token))
+  expect(object(accepted.startLocation).validated).toBe(true)
+  expect(accepted.arrivalEvidenceIds).toEqual([])
+  expect(accepted.exceptions).toEqual([])
+  await confirmNotPerformed(page)
 })
 
 async function confirmNotPerformed(page: Page) {

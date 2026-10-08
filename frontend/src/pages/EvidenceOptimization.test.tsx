@@ -79,9 +79,11 @@ it('galería del editor asocia solo el File WebP optimizado y mantiene source ga
   const store = await repos.stores.get(1)
   const gps = { ...store, accuracy: 8, capturedAt: Date.now() }
   await repos.visits.start(1, gps)
-  await repos.visits.recordEndGps(1, gps)
+  await repos.visits.finishPhysicalWork(1)
   await repos.visits.openForm(1)
   const view = renderPage(<VisitEditor id={1} origin="checklist" />, repos)
+  await screen.findAllByRole('button', { name: '✓ Conforme' })
+  fireEvent.click(screen.getAllByRole('button', { name: '✓ Conforme' })[0])
   const buttons = await screen.findAllByRole('button', { name: 'Seleccionar de galería' })
   fireEvent.click(buttons[0])
   const source = new File(['png'], 'foto.png', { type: 'image/png' })

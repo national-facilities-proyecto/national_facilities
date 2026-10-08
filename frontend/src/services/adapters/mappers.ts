@@ -154,6 +154,7 @@ export function mapClientSpecialty(value: unknown): ClientSpecialty {
 function exception(value: unknown): LocationException {
   const v = object(value)
   return {
+    evidenceIds: v.evidenceIds === undefined ? [] : ids(v.evidenceIds),
     id: optional(v.id, id),
     scope:
       v.scope === undefined ? 'legacy' : choice(v.scope, ['arrival', 'closure', 'form', 'legacy']),
@@ -282,6 +283,7 @@ export function mapVisit(value: unknown): Visit {
     }),
     workDescription: string(v.workDescription),
     evidenceIds: ids(v.evidenceIds),
+    arrivalEvidenceIds: v.arrivalEvidenceIds === undefined ? [] : ids(v.arrivalEvidenceIds),
     startLocation: optional(v.startLocation, recordedCoordinates),
     endLocation: optional(v.endLocation, recordedCoordinates),
     startedAt: optional(v.startedAt, date),
@@ -424,6 +426,7 @@ export function mapEvidence(value: unknown): EvidenceMeta {
     capturedAt: optional(v.capturedAt, date),
     uploadedAt: date(v.uploadedAt),
     source: choice(v.source, ['camera', 'gallery', 'upload']),
+    purpose: optional(v.purpose, (value) => choice(value, ['result', 'arrival'])),
   }
 }
 export function mapCatalogs(value: unknown): Catalogs {

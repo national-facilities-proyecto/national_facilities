@@ -104,7 +104,7 @@ it('arrival/closure conservan scope y solo lectura GPS real en payload', async (
   const { repo, fetcher } = transport()
   const location = { latitude: -12, longitude: -77, accuracy: 8, capturedAt: 123 }
   await repo.start(1, location)
-  await repo.recordEndGps(1, location)
+  await repo.finishPhysicalWork(1)
   await repo.requestException(1, {
     type: 'location',
     scope: 'arrival',
@@ -121,7 +121,8 @@ it('arrival/closure conservan scope y solo lectura GPS real en payload', async (
   })
   const body = (n: number) => JSON.parse(fetcher.mock.calls[n][1].body as string) as unknown
   expect(body(0)).toEqual({ location })
-  expect(body(1)).toEqual({ location })
+  expect(body(1)).toEqual({})
+  expect(fetcher.mock.calls[1][0]).toBe('http://api.test/visitas/1/terminar/')
   expect(body(2)).toEqual({
     type: 'location',
     scope: 'arrival',

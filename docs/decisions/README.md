@@ -14,3 +14,4 @@ Cuando una decisión se revisa, no se borra: se conserva el texto original y se 
 | [006](006-flujo-git-github.md) | Flujo de Trabajo en Git/GitHub | Aceptado, revisado el 09/09/2026 |
 | [007](007-proveedor-de-nube.md) | Proveedor de nube: Google Cloud | Aceptado |
 | [008](008-integracion-api-ejecucion-recuperable.md) | API autoritativa y ejecución recuperable | Implementación técnica; reglas operativas pendientes |
+| [009](009-flujo-tecnico-p0.md) | Flujo técnico P0 y evidencia de llegada | Implementación para revisión en V2; actualiza 008 |

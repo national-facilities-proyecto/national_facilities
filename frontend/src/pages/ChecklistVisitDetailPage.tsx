@@ -7,7 +7,6 @@ import { Alert, Badge, Card } from '../components/ui'
 import { operationalVisitLabel } from '../types/models'
 import { LazyMap } from '../features/technician/LazyMap'
 import { VisitStart } from '../features/checklists/VisitStart'
-import { formExpired } from '../features/checklists/clock'
 import { VisitRecord } from '../features/checklists/VisitRecord'
 import { ClaimHistory } from '../features/checklists/ClaimHistory'
 export default function ChecklistVisitDetailPage() {
@@ -67,13 +66,11 @@ export default function ChecklistVisitDetailPage() {
             ? 'Corregir registro'
             : !visit.formOpenedAt
               ? 'Retomar ejecución'
-              : formExpired(visit)
-                ? 'Ver registro pendiente'
-                : 'Continuar formulario'}
+              : 'Continuar formulario'}
         </Link>
       )}
       {visit.phase === 'in_review' && visit.submittedAt && (
-        <Alert success>
+        <Alert>
           Excepción enviada para revisión.{' '}
           <Link className="nf-link" to={`/checklists/${visit.id}/start`}>
             Ver registro pendiente

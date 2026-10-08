@@ -1,3 +1,4 @@
+import 'fake-indexeddb/auto'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { fireEvent, screen } from '@testing-library/react'
 import { renderPage } from '../../test/render'
@@ -12,6 +13,19 @@ async function setup() {
   const repos = createMockRepositories()
   await repos.auth.login({ kind: 'demo', userId: 1 })
   const visit = await repos.checklists.claim(1)
+  const photo = {
+    id: 'arrival-photo',
+    visitId: 1,
+    purpose: 'arrival' as const,
+    source: 'camera' as const,
+    name: 'front.webp',
+    mimeType: 'image/webp',
+    size: 4,
+    blob: new Blob(['webp'], { type: 'image/webp' }),
+  }
+  // La lectura de archivos es externa a esta unidad; jsdom no clona Blob en IndexedDB.
+  vi.spyOn(repos.evidence, 'get').mockResolvedValue(photo)
+  visit.arrivalEvidenceIds = ['arrival-photo']
   const store = await repos.stores.get(1)
   return { repos, visit, store }
 }
@@ -35,7 +49,7 @@ for (const [code, failure] of [
     fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
     await screen.findByRole('button', { name: 'Reintentar ubicación' })
     fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
-    fireEvent.change(screen.getByLabelText('Justificación de la excepción'), {
+    fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
       target: { value: 'No se pudo obtener GPS al llegar.' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Guardar excepción GPS' }))
@@ -45,6 +59,7 @@ for (const [code, failure] of [
       scope: 'arrival',
       reason: 'No se pudo obtener GPS al llegar.',
       failure,
+      evidenceId: 'arrival-photo',
     })
     const started = await repos.visits.get(1)
     expect(started.phase).toBe('physical_work')
@@ -72,7 +87,7 @@ it('rechazo conserva lectura real fuera de radio', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
   await screen.findByRole('button', { name: 'Solicitar excepción GPS' })
   fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
-  fireEvent.change(screen.getByLabelText('Justificación de la excepción'), {
+  fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
     target: { value: 'Lectura GPS fuera de radio al llegar.' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Guardar excepción GPS' }))
@@ -129,11 +144,33 @@ it('si la nueva lectura falla, no reutiliza la lectura stale para la excepción'
   fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
   await screen.findByRole('button', { name: 'Solicitar excepción GPS' })
   fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
-  fireEvent.change(screen.getByLabelText('Justificación de la excepción'), {
+  fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
     target: { value: 'Permiso denegado al renovar la lectura.' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Guardar excepción GPS' }))
   await vi.waitFor(() => expect(confirmed).toHaveBeenCalledOnce())
   expect(request.mock.calls[0]?.[1]).toMatchObject({ scope: 'arrival', failure: 'denied' })
   expect(request.mock.calls[0]?.[1]).not.toHaveProperty('location')
+})
+
+it('exige una fotografía del establecimiento antes de solicitar la excepción', async () => {
+  const { repos, visit, store } = await setup()
+  visit.arrivalEvidenceIds = []
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: (_ok: PositionCallback, error: PositionErrorCallback) =>
+        error({ code: 1 } as GeolocationPositionError),
+    },
+  })
+  renderPage(<VisitStart visit={visit} store={store} onStarted={() => undefined} />, repos)
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  await screen.findByRole('button', { name: 'Solicitar excepción GPS' })
+  fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
+  fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
+    target: { value: 'GPS sin permiso en el navegador.' },
+  })
+  expect(screen.getByRole('button', { name: 'Guardar excepción GPS' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Tomar foto del establecimiento' })).toBeVisible()
+  expect(screen.queryByText(/Lectura real|out_of_radius/)).not.toBeInTheDocument()
 })
