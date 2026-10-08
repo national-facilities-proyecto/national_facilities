@@ -1,3 +1,6 @@
+import { VisitTiming } from '../features/checklists/VisitTiming'
+import { ExceptionSummary } from '../features/checklists/ExceptionSummary'
+import { AuditDetails } from '../features/checklists/AuditDetails'
 import { useCallback, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useRepositories } from '../app/RepositoriesProvider'
@@ -6,7 +9,6 @@ import { QueryState } from '../components/feedback/QueryState'
 import { Alert, Badge, Button, Card, PageHeader, Textarea } from '../components/ui'
 import { Modal } from '../components/ui/Modal'
 import { EvidenceGallery } from '../components/EvidenceGallery'
-import { displayDate } from '../utils/dates'
 import { exceptionLabel, visitStatusLabels } from '../types/models'
 import { errorMessage } from '../services/errors'
 import { ExceptionHistory } from '../features/checklists/ExceptionHistory'
@@ -43,17 +45,7 @@ export default function TechnicalSupervisorChecklistDetailPage() {
       />
       <Card title="Información de la visita">
         <Badge>{visitStatusLabels[visit.status]}</Badge>
-        <p>Inicio: {displayDate(visit.startedAt)}</p>
-        <p>Fin físico: {displayDate(visit.physicalEndedAt)}</p>
-        <p>Finalización: {displayDate(visit.completedAt)}</p>
-        <p>Primera apertura: {displayDate(visit.formOpenedAt)}</p>
-        {visit.expiresAt && <p>Vencimiento histórico: {displayDate(visit.expiresAt)}</p>}
-        <p>Envío: {displayDate(visit.submittedAt)}</p>
-        <p>
-          Intervención: {visit.totalSeconds ?? 'No registrado'} s · Previo a formulario:{' '}
-          {visit.executionSeconds ?? 'No registrado'} s · Registro:{' '}
-          {visit.registrationSeconds ?? 'No registrado'} s
-        </p>
+        <VisitTiming visit={visit} />
         <p>
           {visit.startLocation?.validated === true
             ? 'Proximidad validada por el servidor.'
@@ -62,28 +54,34 @@ export default function TechnicalSupervisorChecklistDetailPage() {
               : 'Sin ubicación de llegada registrada.'}
         </p>
         {(visit.exceptions ?? []).map((item) => (
-          <Alert key={item.id} success={item.approved === true}>
-            {exceptionLabel(item)}: {item.reason} · Autor:{' '}
-            {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Solicitud:{' '}
-            {displayDate(item.requestedAt)}
-            <p>
-              {item.approved === undefined ? 'Pendiente' : item.approved ? 'Aprobada' : 'Rechazada'}{' '}
-              · {item.reviewReason} · {displayDate(item.reviewedAt)}
-            </p>
+          <div key={item.id}>
+            <ExceptionSummary item={item} />
             {item.type === 'location' && (
-              <>
-                <p>Causa registrada: {item.failure || 'No registrada'}</p>
-                <p>
-                  Coordenadas reales: {item.telemetry?.latitude ?? 'Ausente'},{' '}
-                  {item.telemetry?.longitude ?? 'Ausente'} · Precisión:{' '}
-                  {item.telemetry?.accuracy ?? 'No registrada'} m · Distancia:{' '}
-                  {item.telemetry?.distanceMeters ?? 'No registrada'} m · Radio:{' '}
-                  {item.telemetry?.radiusMeters ?? visit.radiusMeters ?? 'No registrado'} m
-                </p>
-              </>
+              <AuditDetails
+                fields={[
+                  ['Causa registrada', item.failure || 'No registrada'],
+                  ['Latitud', item.telemetry?.latitude ?? 'Ausente'],
+                  ['Longitud', item.telemetry?.longitude ?? 'Ausente'],
+                  [
+                    'Precisión',
+                    item.telemetry?.accuracy != null
+                      ? `${item.telemetry.accuracy} m`
+                      : 'Sin registrar',
+                  ],
+                  [
+                    'Distancia',
+                    item.telemetry?.distanceMeters != null
+                      ? `${item.telemetry.distanceMeters} m`
+                      : 'Sin registrar',
+                  ],
+                  [
+                    'Radio',
+                    `${item.telemetry?.radiusMeters ?? visit.radiusMeters ?? 'Sin registrar'} m`,
+                  ],
+                ]}
+              />
             )}
-            <EvidenceGallery ids={item.evidenceIds ?? []} />
-          </Alert>
+          </div>
         ))}
         {['in_review', 'correction_required'].includes(visit.phase ?? '') &&
           visit.submittedAt &&

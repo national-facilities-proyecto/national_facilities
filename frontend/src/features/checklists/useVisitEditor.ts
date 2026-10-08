@@ -13,7 +13,7 @@ type Step =
   | { kind: 'camera'; taskId?: number }
   | { kind: 'validating' }
   | { kind: 'confirm_finish' }
-  | { kind: 'success'; pending: boolean }
+  | { kind: 'success'; status: Visit['status'] }
 export function useVisitEditor(initial: Visit) {
   const repos = useRepositories()
   const auth = useAuth()
@@ -322,7 +322,7 @@ export function useVisitEditor(initial: Visit) {
           })
       applyConfirmed(next)
       setDirty(false)
-      setStep({ kind: 'success', pending: next.phase === 'in_review' && Boolean(next.submittedAt) })
+      setStep({ kind: 'success', status: next.status })
     } catch (cause) {
       setError(errorMessage(cause))
       if (cause instanceof AppError && cause.code === 'conflict') setConflict(true)

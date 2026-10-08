@@ -7,12 +7,14 @@ export function Modal({
   children,
   onClose,
   busy = false,
+  className = '',
 }: {
   open: boolean
   title: string
   children: ReactNode
   onClose: () => void
   busy?: boolean
+  className?: string
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -32,7 +34,7 @@ export function Modal({
   return open ? (
     <dialog
       ref={ref}
-      className="nf-modal"
+      className={`nf-modal ${className}`}
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { Visit } from '../../types/models'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useAuth } from '../auth/AuthProvider'
@@ -18,6 +18,7 @@ export function NotPerformedAction({
   submit?: (reason: string) => Promise<Visit>
   onConfirmed?: (visit: Visit) => void
 }) {
+  const helpId = useId()
   const { visits } = useRepositories()
   const { session } = useAuth()
   const [open, setOpen] = useState(false)
@@ -27,16 +28,23 @@ export function NotPerformedAction({
   if (!canMarkNotPerformed(visit, session?.user.role)) return null
   return (
     <>
-      <Button
-        variant="secondary"
-        disabled={disabled || busy}
-        onClick={() => {
-          setOpen(true)
-          setError('')
-        }}
-      >
-        Marcar como no realizado
-      </Button>
+      <aside className="nf-not-performed" aria-label="Acción excepcional">
+        <p id={helpId}>
+          Usa esta acción si no se pudo realizar el trabajo. Debes indicar el motivo.
+        </p>
+        <Button
+          variant="secondary"
+          className="nf-button--exception"
+          aria-describedby={helpId}
+          disabled={disabled || busy}
+          onClick={() => {
+            setOpen(true)
+            setError('')
+          }}
+        >
+          Marcar como no realizado
+        </Button>
+      </aside>
       <Modal
         open={open}
         title="Marcar como no realizado"
@@ -56,6 +64,7 @@ export function NotPerformedAction({
         />
         {error && <Alert>{error}</Alert>}
         <Button
+          variant="danger"
           disabled={busy || disabled || reason.trim().length < 10}
           onClick={() => {
             if (busy || reason.trim().length < 10) return

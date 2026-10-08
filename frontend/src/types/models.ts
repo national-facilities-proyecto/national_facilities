@@ -131,6 +131,7 @@ export type LocationException = {
   id?: number
   revision?: number
   authorId?: number
+  authorName?: string
   type: 'location' | 'time_limit'
   scope: ExceptionScope
   telemetry?: GpsTelemetry
@@ -140,6 +141,7 @@ export type LocationException = {
   requestedAt?: string
   reviewedAt?: string
   reviewerId?: number
+  reviewerName?: string
   approved?: boolean
   reviewReason?: string
 }
@@ -147,6 +149,7 @@ export type ExceptionHistoryEntry = {
   id: string
   at: string
   actorId: number
+  actorName?: string
   kind: 'exception' | 'review' | 'exception_corrected' | 'exception_reopened' | 'exception_previous'
   exception: LocationException
 }
@@ -155,6 +158,7 @@ export type Visit = {
   storeId: number
   storeSnapshot?: Pick<Store, 'name' | 'address' | 'latitude' | 'longitude' | 'clientId'>
   technicianId?: number
+  technicianName?: string
   ticketId?: number
   origin: 'checklist' | 'ticket'
   scheduledAt: string
@@ -167,6 +171,8 @@ export type Visit = {
     id: string
     at: string
     actorId?: number
+    actorName?: string
+    technicianName?: string
     kind: 'claim' | 'claim_release'
     technicianId: number
     claimedAt: string

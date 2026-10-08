@@ -795,8 +795,10 @@ test('P0: llegada excepcional con foto, cierre sin GPS, envío explícito y revi
   await page.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
   await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'En revisión', exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Trabajo finalizado' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'No aplica', exact: true })).toHaveCount(0)
   state = object(await call(request, `/visitas/${id}/`, token))
+  expect(state.status).toBe('pending_approval')
   expect(state.readOnly).toBe(true)
   expect(state.occupiesTechnician).toBe(false)
   const reviewer = await context.newPage()
@@ -807,7 +809,9 @@ test('P0: llegada excepcional con foto, cierre sin GPS, envío explícito y revi
   ).toBeVisible()
   await expect(reviewer.locator(`a[href="/technical-supervisor/checklists/${id}"]`)).toBeVisible()
   await reviewer.locator(`a[href="/technical-supervisor/checklists/${id}"]`).click()
-  await expect(reviewer.getByText('GPS de llegada:', { exact: false }).first()).toBeVisible()
+  await expect(
+    reviewer.getByRole('heading', { name: 'GPS de llegada', exact: true }).first(),
+  ).toBeVisible()
   await expect(reviewer.getByText('GPS de cierre:', { exact: false })).toHaveCount(0)
   await expect(reviewer.locator('.nf-evidence img')).toHaveCount(1)
   await reviewer.close()

@@ -57,6 +57,7 @@ it('inicia una sesión de cámara nueva al cambiar de tarea después de confirma
   fireEvent.click(view.getByRole('button', { name: 'Repetir' }))
   await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledTimes(2))
   expect(view.container.querySelector('video')).toBeInTheDocument()
+  expect((view.container.querySelector('video') as HTMLVideoElement).srcObject).toBe(stream)
 
   view.rerender(<CameraModal open={false} onClose={vi.fn()} onCapture={vi.fn()} />)
   view.rerender(<CameraModal open onClose={vi.fn()} onCapture={vi.fn()} />)

@@ -245,7 +245,56 @@
     @apply block text-xs;
   }
   .nf-camera {
-    @apply aspect-[4/3] w-full rounded-lg bg-slate-100 object-contain;
+    display: block;
+    width: 100%;
+    height: clamp(16rem, 58dvh, 38rem);
+    object-fit: contain;
+    @apply rounded-lg bg-slate-100;
+  }
+  .nf-modal--camera {
+    @apply max-w-3xl;
+  }
+  @media (orientation: landscape) and (max-height: 600px) {
+    .nf-modal--camera {
+      padding: 0.75rem;
+    }
+    .nf-modal--camera .nf-modal__header {
+      margin-bottom: 0.5rem;
+    }
+    .nf-modal--camera .nf-camera {
+      height: 52dvh;
+    }
+    .nf-modal--camera .nf-actions {
+      margin-block: 0.5rem;
+    }
+  }
+  .nf-audit-details {
+    @apply my-4 grid gap-4 sm:grid-cols-2;
+  }
+  .nf-audit-details > div {
+    min-width: 0;
+  }
+  .nf-audit-details dd {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .nf-audit-history {
+    @apply m-0 grid list-none gap-4 p-0;
+  }
+  .nf-audit-event {
+    @apply my-4 rounded-lg border border-slate-200 p-4;
+  }
+  .nf-audit-event h3 {
+    @apply mb-2 font-semibold;
+  }
+  .nf-not-performed {
+    @apply my-4 w-full border-t border-slate-200 pt-4 text-sm;
+  }
+  .nf-not-performed p {
+    @apply mb-2 text-slate-600;
+  }
+  .nf-button--exception {
+    @apply border-red-800 text-red-800;
   }
   .nf-task > header {
     @apply mb-4 flex items-start gap-3;

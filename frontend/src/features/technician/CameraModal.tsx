@@ -95,16 +95,10 @@ function CameraSession({ onClose, onCapture }: Omit<Props, 'open'>) {
     }
   }
   return (
-    <Modal open title="Tomar fotografía" onClose={onClose} busy={busy}>
+    <Modal open title="Tomar fotografía" onClose={onClose} busy={busy} className="nf-modal--camera">
       {error && <Alert>{error}</Alert>}
-      {preview ? (
-        <img
-          src={preview}
-          alt="Previsualización de la evidencia"
-          className="nf-camera"
-          width="640"
-          height="480"
-        />
+      {photo && preview ? (
+        <img src={preview} alt="Previsualización de la evidencia" className="nf-camera" />
       ) : (
         <video
           ref={video}

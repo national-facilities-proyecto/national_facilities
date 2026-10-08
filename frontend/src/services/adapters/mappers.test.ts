@@ -438,3 +438,34 @@ it('GPS legacy conserva etapa desconocida y precisión no registrada', () => {
   expect(result.exception?.requestedAt).toBeUndefined()
   expect(result.startLocation?.accuracy).toBeUndefined()
 })
+
+it('conserva nombres opcionales e identidades distintas en la auditoría de visitas', () => {
+  const exception = {
+    type: 'location',
+    scope: 'arrival',
+    authorId: 1,
+    authorName: 'Ana Técnica',
+    reviewerId: 4,
+    reviewerName: 'Luis Supervisor',
+    approved: false,
+    reason: 'GPS no disponible',
+    failure: 'denied',
+  }
+  const mapped = mapVisit({
+    ...visit,
+    technicianName: 'Ana Técnica',
+    exceptions: [exception],
+    exceptionHistory: [
+      { id: '1', at: started, actorId: 4, actorName: 'Luis Supervisor', kind: 'review', exception },
+    ],
+  })
+  expect(mapped.technicianName).toBe('Ana Técnica')
+  expect(mapped.exceptions?.[0]).toMatchObject({
+    authorId: 1,
+    authorName: 'Ana Técnica',
+    reviewerId: 4,
+    reviewerName: 'Luis Supervisor',
+  })
+  expect(mapped.exceptionHistory?.[0]).toMatchObject({ actorId: 4, actorName: 'Luis Supervisor' })
+  expect(mapVisit(visit).technicianName).toBeUndefined()
+})

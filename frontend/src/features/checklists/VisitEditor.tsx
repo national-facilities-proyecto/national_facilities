@@ -1,3 +1,4 @@
+import { submissionMessage } from './submissionMessage'
 import { useCallback, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
@@ -561,14 +562,12 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           </Modal>
           <Modal
             open={step.kind === 'success'}
-            title={step.kind === 'success' && step.pending ? 'En revisión' : 'Trabajo finalizado'}
+            title={
+              step.kind === 'success' ? submissionMessage(step.status).title : 'Registro enviado'
+            }
             onClose={() => void navigate(back)}
           >
-            <p>
-              {step.kind === 'success' && step.pending
-                ? 'El registro completo se envió al supervisor de National Facilities.'
-                : 'El trabajo se registró correctamente.'}
-            </p>
+            <p>{step.kind === 'success' && submissionMessage(step.status).description}</p>
             <Button onClick={() => void navigate(back)}>Volver al listado</Button>
           </Modal>
         </>

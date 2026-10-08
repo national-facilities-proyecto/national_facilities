@@ -50,6 +50,11 @@ it('exige motivo de 10 caracteres, pide confirmación y cancelar no llama a la A
   const request = vi.spyOn(repos.visits, 'markNotPerformed')
   const onConfirmed = vi.fn()
   renderPage(<NotPerformedAction visit={visit} onConfirmed={onConfirmed} />, repos)
+  const action = await screen.findByRole('button', { name: 'Marcar como no realizado' })
+  expect(action).toHaveClass('nf-button--exception')
+  expect(action).toHaveAccessibleDescription(
+    'Usa esta acción si no se pudo realizar el trabajo. Debes indicar el motivo.',
+  )
   fireEvent.click(await screen.findByRole('button', { name: 'Marcar como no realizado' }))
   expect(screen.getByText('No realizado no cuenta como trabajo completado.')).toBeVisible()
   fireEvent.change(screen.getByLabelText('Motivo'), { target: { value: 'corto' } })

@@ -260,3 +260,19 @@ it('guardado encolado durante upload utiliza la asociación y revisión ya sincr
   expect(test.server().revision).toBe(10)
   expect(test.editor().conflict).toBe(false)
 })
+
+it.each(['completed', 'pending_approval', 'correction_required'] as const)(
+  'conserva %s devuelto por backend para el mensaje de envío',
+  async (status) => {
+    const test = await setup()
+    vi.spyOn(test.repos.visits, 'complete').mockResolvedValue({
+      ...test.server(),
+      status,
+      phase: 'results',
+    })
+    await act(async () => {
+      await test.editor().confirmFinish()
+    })
+    expect(test.editor().step).toEqual({ kind: 'success', status })
+  },
+)

@@ -1,7 +1,7 @@
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Prefetch, prefetch_related_objects
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -17,6 +17,8 @@ from .models import (
     Visita,
     Ticket,
     Evidencia,
+    Excepcion,
+    Evento,
     CategoriaProblema,
     NivelUrgencia,
     Zona,
@@ -679,11 +681,62 @@ def exception_data(exc):
         "approved": None if exc.decision == "pending" else exc.decision == "approved",
         "reviewReason": exc.motivo_decision,
         "evidenceIds": (
-            [str(e.client_id) for e in exc.evidencias.filter(eliminada_en__isnull=True)]
+            [str(e.client_id) for e in exc.evidencias.all() if e.eliminada_en is None]
             if exc.pk and not exc._state.adding
             else []
         ),
     }
+
+
+def prepare_visit_audit(visits):
+    """Carga identidades autorizadas en lote, incluso las de snapshots históricos."""
+    visits = list(visits)
+    for visit in visits:
+        for attr in ("_audit_exceptions", "_audit_events", "_audit_names"):
+            if hasattr(visit, attr):
+                delattr(visit, attr)
+    prefetch_related_objects(
+        visits,
+        Prefetch(
+            "excepciones",
+            queryset=Excepcion.objects.order_by("pk").prefetch_related("evidencias"),
+            to_attr="_audit_exceptions",
+        ),
+        Prefetch(
+            "eventos", queryset=Evento.objects.order_by("pk"), to_attr="_audit_events"
+        ),
+    )
+    ids = set()
+    for visit in visits:
+        ids.update([visit.tecnico_id, visit.excepcion_revisada_por_id])
+        for exc in visit._audit_exceptions:
+            ids.update([exc.autor_id, exc.revisor_id])
+        for event in visit._audit_events:
+            snapshot = event.datos.get("exception", {})
+            ids.update(
+                [
+                    event.actor_id,
+                    event.datos.get("technicianId"),
+                    snapshot.get("authorId"),
+                    snapshot.get("reviewerId"),
+                ]
+            )
+    names = {
+        u.pk: u.get_full_name().strip() or None
+        for u in Usuario.objects.filter(pk__in=ids - {None}).only(
+            "id", "first_name", "last_name"
+        )
+    }
+    for visit in visits:
+        visit._audit_names = names
+    return visits
+
+
+def visit_list_data(visits, user):
+    return [
+        visit_data(visit, user=user, audit_prepared=True)
+        for visit in prepare_visit_audit(visits)
+    ]
 
 
 def legacy_location(latitude, longitude):
@@ -699,8 +752,20 @@ def legacy_location(latitude, longitude):
     }
 
 
-def visit_data(visit, user=None):
+def visit_data(visit, user=None, *, audit_prepared=False):
     from django.utils import timezone
+
+    if not audit_prepared:
+        prepare_visit_audit([visit])
+    names = visit._audit_names
+
+    def named_exception(snapshot):
+        # Copia para presentación: nunca reescribe el JSON de auditoría.
+        return {
+            **snapshot,
+            "authorName": names.get(snapshot.get("authorId")),
+            "reviewerName": names.get(snapshot.get("reviewerId")),
+        }
 
     checklist = getattr(visit, "checklist", None)
     tasks = checklist.tareas_snapshot if checklist else []
@@ -723,7 +788,7 @@ def visit_data(visit, user=None):
         "no_realizada": "cancelled",
         "correccion_requerida": "correction_required",
     }.get(visit.estado, "claimed" if visit.tecnico_id else "available")
-    exceptions = [exception_data(e) for e in visit.excepciones.order_by("pk")]
+    exceptions = [named_exception(exception_data(e)) for e in visit._audit_exceptions]
     location_exception = None
     if visit.excepcion_ubicacion:
         location_exception = {
@@ -735,6 +800,7 @@ def visit_data(visit, user=None):
             "requestedAt": None,
             "reviewedAt": None,
             "reviewerId": visit.excepcion_revisada_por_id,
+            "reviewerName": names.get(visit.excepcion_revisada_por_id),
             "approved": visit.excepcion_aprobada,
             "reviewReason": visit.comentario_revision_ubicacion or None,
         }
@@ -768,6 +834,7 @@ def visit_data(visit, user=None):
         "id": visit.pk,
         "storeId": visit.tienda_id,
         "technicianId": visit.tecnico_id,
+        "technicianName": names.get(visit.tecnico_id),
         "ticketId": visit.ticket_origen_id,
         "period": iso(visit.periodo),
         "quota": visit.cuota if visit.origen == "checklist" and visit.periodo else None,
@@ -812,15 +879,16 @@ def visit_data(visit, user=None):
                 "id": str(e.pk),
                 "at": iso(e.fecha),
                 "actorId": e.actor_id,
+                "actorName": names.get(e.actor_id),
                 "kind": e.tipo,
                 "technicianId": e.datos.get("technicianId", e.actor_id),
+                "technicianName": names.get(e.datos.get("technicianId", e.actor_id)),
                 "claimedAt": e.datos.get("claimedAt"),
                 "expiresAt": e.datos.get("expiresAt"),
                 "text": e.texto,
             }
-            for e in visit.eventos.filter(tipo__in=["claim", "claim_release"]).order_by(
-                "pk"
-            )
+            for e in visit._audit_events
+            if e.tipo in ("claim", "claim_release")
         ],
         "expiresAt": iso(visit.formulario_vence_en),
         "submittedAt": iso(visit.enviado_en),
@@ -840,10 +908,11 @@ def visit_data(visit, user=None):
                 "id": str(e.pk),
                 "at": iso(e.fecha),
                 "actorId": e.actor_id,
+                "actorName": names.get(e.actor_id),
                 "kind": e.tipo,
-                "exception": e.datos["exception"],
+                "exception": named_exception(e.datos["exception"]),
             }
-            for e in visit.eventos.order_by("pk")
+            for e in visit._audit_events
             if "exception" in e.datos
         ],
         "totalSeconds": duration(visit.enviado_en, visit.iniciado_en),

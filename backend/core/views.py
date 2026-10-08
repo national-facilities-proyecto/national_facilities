@@ -40,6 +40,8 @@ from .serializers import (
     ItemPlantillaSerializer,
     UsuarioSerializer,
     visit_data,
+    visit_list_data,
+    prepare_visit_audit,
     ZonaSerializer,
     CategoriaProblemaSerializer,
     ClienteEspecialidadSerializer,
@@ -160,7 +162,7 @@ class VisitListView(APIView):
         release_expired_claims(tiendas_visibles_para(request.user))
         if self.origin:
             visits = visits.filter(origen=self.origin)
-        return Response([visit_data(v, user=request.user) for v in visits])
+        return Response(visit_list_data(visits, user=request.user))
 
 
 class ChecklistListView(VisitListView):
@@ -177,12 +179,12 @@ class VisitPoolListView(VisitListView):
     def get(self, request):
         asegurar_bolsa_mes_actual(request.user)
         return Response(
-            [
-                visit_data(v, user=request.user)
-                for v in visible_visits(request.user).filter(
+            visit_list_data(
+                visible_visits(request.user).filter(
                     origen="checklist", tecnico__isnull=True, estado="programada"
-                )
-            ]
+                ),
+                user=request.user,
+            )
         )
 
 
@@ -311,7 +313,7 @@ class PendingReviewsView(APIView):
             .order_by("enviado_en", "pk")
         )
         result = []
-        for visit in visits:
+        for visit in prepare_visit_audit(visits):
             try:
                 validate_content(visit)
                 from .services import validate_physical_end
@@ -319,7 +321,7 @@ class PendingReviewsView(APIView):
                 validate_physical_end(visit)
             except (ValidationError, Conflict):
                 continue
-            result.append(visit_data(visit, user=request.user))
+            result.append(visit_data(visit, user=request.user, audit_prepared=True))
         return Response(result)
 
 
@@ -339,24 +341,23 @@ class WorkRecoveryView(APIView):
                 "activeExecution": (
                     visit_data(active, user=request.user) if active else None
                 ),
-                "reservations": [
-                    visit_data(v, user=request.user)
-                    for v in visits.filter(
+                "reservations": visit_list_data(
+                    visits.filter(
                         origen="checklist",
                         estado="programada",
                         iniciado_en__isnull=True,
-                    )
-                ],
-                "corrections": [
-                    visit_data(v, user=request.user)
-                    for v in visits.filter(estado="correccion_requerida")
-                ],
-                "inReview": [
-                    visit_data(v, user=request.user)
-                    for v in visits.filter(
+                    ),
+                    user=request.user,
+                ),
+                "corrections": visit_list_data(
+                    visits.filter(estado="correccion_requerida"), user=request.user
+                ),
+                "inReview": visit_list_data(
+                    visits.filter(
                         estado="pendiente_validacion", enviado_en__isnull=False
-                    )
-                ],
+                    ),
+                    user=request.user,
+                ),
             }
         )
 

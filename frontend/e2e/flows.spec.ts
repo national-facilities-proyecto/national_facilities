@@ -20,9 +20,27 @@ import {
 } from './helpers.js'
 import type { APIRequestContext, Page } from '@playwright/test'
 
+// Un fallo conserva su intento y libera exclusivamente el caso ficticio creado aquí.
+let currentCaseId: number | undefined
+test.beforeEach(() => {
+  currentCaseId = undefined
+})
+test.afterEach(async ({ request }, info) => {
+  if (info.status === info.expectedStatus || currentCaseId === undefined) return
+  const token = await access(request, 'tech')
+  const current = object(await call(request, `/visitas/${currentCaseId}/`, token))
+  if (['claimed', 'in_progress', 'correction_required'].includes(String(current.status)))
+    await call(request, `/visitas/${currentCaseId}/no-realizada/`, token, {
+      reason: 'Intento ficticio interrumpido por un fallo E2E; se conserva su historial.',
+    })
+})
+
 async function setup(request: APIRequestContext, origin: 'checklist' | 'ticket') {
   const token = await access(request, 'tech')
-  if (origin === 'checklist') return { id: checklistCase(), token, path: '/checklists/' }
+  if (origin === 'checklist') {
+    currentCaseId = checklistCase()
+    return { id: currentCaseId, token, path: '/checklists/' }
+  }
   const storeToken = await access(request, 'store')
   const stores: unknown = await call(request, '/tiendas/', storeToken)
   if (!Array.isArray(stores) || !stores.length) throw new Error('Sin tienda aislada.')
@@ -54,7 +72,8 @@ async function setup(request: APIRequestContext, origin: 'checklist' | 'ticket')
   )
   if (typeof scheduled.visitId !== 'number') throw new Error('Sin visita.')
   await waitUntilScheduled(request, scheduled.visitId, token)
-  return { id: scheduled.visitId, token, path: '/routes/' }
+  currentCaseId = scheduled.visitId
+  return { id: currentCaseId, token, path: '/routes/' }
 }
 async function start(page: Page, id: number, path: string) {
   await arrive(page, id, path === '/checklists/' ? 'checklist' : 'ticket')
@@ -127,10 +146,38 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await editor.getByRole('button', { name: 'Finalizar', exact: true }).click()
       await expect(editor.getByRole('dialog', { name: 'Recuperar sesión' })).toBeVisible()
       await editor.getByLabel('Contraseña para recuperar sesión').fill(password)
+      const recoveredVisit = editor.waitForResponse(
+        (response) =>
+          response.request().method() === 'GET' &&
+          response.url() === `${api}/visitas/${data.id}/` &&
+          response.ok(),
+      )
       await editor.getByRole('button', { name: 'Autenticar y continuar' }).click()
+      await recoveredVisit
       await expect(editor.getByRole('dialog', { name: 'Recuperar sesión' })).not.toBeVisible()
-      await editor.getByRole('button', { name: 'Guardar borrador', exact: true }).click()
-      await expect(editor.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      const conflict = editor.getByRole('heading', { name: 'Borrador modificado en otra sesión' })
+      const saved = editor.getByText('Borrador guardado.', { exact: true })
+      const saveButton = editor.getByRole('button', { name: 'Guardar borrador', exact: true })
+      await expect
+        .poll(async () => (await conflict.isVisible()) || (await saveButton.isEnabled()))
+        .toBe(true)
+      if (!(await conflict.isVisible())) await saveButton.click()
+      await expect(saved.or(conflict)).toBeVisible()
+      if (await conflict.isVisible()) {
+        // La reautenticación puede coincidir con el autosave. Verifica el contenido antes de conciliar.
+        const current = object(
+          await call(request, `/visitas/${data.id}/`, await access(request, 'tech')),
+        )
+        if (origin === 'ticket')
+          expect(current.workDescription).toBe('Local edits remain during network loss.')
+        else {
+          const answers = Array.isArray(current.answers) ? current.answers.map(object) : []
+          expect(answers[0]?.observation).toBe('Local edits remain during network loss.')
+        }
+        await editor.getByRole('button', { name: 'Usar versión del servidor', exact: true }).click()
+        await saveButton.click()
+        await expect(saved).toBeVisible()
+      }
       const renewed = await access(request, 'tech')
       expect((await visit(request, data.id, renewed)).expiresAt).toBe(original)
       const otherContext = await browser.newContext({

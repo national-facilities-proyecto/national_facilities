@@ -1,44 +1,22 @@
-import { exceptionLabel, type Visit } from '../../types/models'
+import { type Visit } from '../../types/models'
 import { Badge, Card } from '../../components/ui'
 import { EvidenceGallery } from '../../components/EvidenceGallery'
-import { displayDate } from '../../utils/dates'
+import { VisitTiming } from './VisitTiming'
+import { ExceptionSummary } from './ExceptionSummary'
 import { ExceptionHistory } from './ExceptionHistory'
 
 export function VisitRecord({ visit }: { visit: Visit }) {
   return (
     <>
       <Card title="Registro de la intervención">
-        <p>Inicio real: {displayDate(visit.startedAt)}</p>
-        <p>Primera apertura: {displayDate(visit.formOpenedAt)}</p>
-        <p>
-          Envío aceptado: {displayDate(visit.submittedAt)} · Finalización:{' '}
-          {displayDate(visit.completedAt)}
-        </p>
-        <p>
-          Duración total: {visit.totalSeconds ?? 'No registrado'} s · Antes del formulario:{' '}
-          {visit.executionSeconds ?? 'No registrado'} s · Registro:{' '}
-          {visit.registrationSeconds ?? 'No registrado'} s
-        </p>
-        {visit.legacy && (
-          <p>Historial anterior: los eventos que faltan permanecen sin registrar.</p>
-        )}
-        {visit.expiresAt && (
-          <p>
-            Vencimiento histórico: {displayDate(visit.expiresAt)}. El registro actual no tiene
-            plazo.
-          </p>
-        )}
-        {(visit.exceptions ?? []).map((item) => (
-          <div key={item.id}>
-            <p>
-              {exceptionLabel(item)}: {item.reason} ·{' '}
-              {item.approved === undefined ? 'Pendiente' : item.approved ? 'Aprobada' : 'Rechazada'}{' '}
-              · {item.reviewReason} · {displayDate(item.reviewedAt)} · Autor:{' '}
-              {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Revisor:{' '}
-              {item.reviewerId ? `Usuario #${item.reviewerId}` : 'Pendiente'}
-            </p>
-            <EvidenceGallery ids={item.evidenceIds ?? []} />
-          </div>
+        <VisitTiming visit={visit} />
+        {(visit.exceptions?.length
+          ? visit.exceptions
+          : visit.exception
+            ? [visit.exception]
+            : []
+        ).map((item, index) => (
+          <ExceptionSummary key={item.id ?? index} item={item} />
         ))}
       </Card>
       <ExceptionHistory visit={visit} />
