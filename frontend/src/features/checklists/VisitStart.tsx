@@ -50,8 +50,8 @@ export function VisitStart({
         {current.radiusMeters === undefined ? 'No registrado' : `${current.radiusMeters} m`}.
       </p>
       <p>
-        El trabajo físico no tiene plazo de cinco minutos. El formulario se abre después de terminar
-        el recorrido o atención.
+        El registro no tiene límite de tiempo. El formulario se abre después de terminar el
+        recorrido o atención.
       </p>
       {current.claimExpiresAt && <p>Reserva hasta {displayDate(current.claimExpiresAt)}.</p>}
       {error && <Alert>{error}</Alert>}

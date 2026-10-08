@@ -215,8 +215,8 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async openForm(id) {
         return mapVisit(await mutate('/visitas/' + id + '/formulario/', {}))
       },
-      async recordEndGps(id, location) {
-        return mapVisit(await mutate('/visitas/' + id + '/ubicacion-cierre/', { location }))
+      async finishPhysicalWork(id) {
+        return mapVisit(await mutate('/visitas/' + id + '/terminar/', {}))
       },
       async submitReview(id, input) {
         return mapVisit(
@@ -379,6 +379,7 @@ export function createHttpRepositories(apiUrl: string): Repositories {
         data.set('id', evidence.id)
         data.set('foto', evidence.blob, evidence.name)
         data.set('source', evidence.source)
+        if (evidence.purpose) data.set('purpose', evidence.purpose)
         if (evidence.capturedAt) data.set('capturedAt', evidence.capturedAt)
         if (evidence.taskId !== undefined) data.set('taskId', String(evidence.taskId))
         if (evidence.visitId !== undefined) data.set('visitId', String(evidence.visitId))

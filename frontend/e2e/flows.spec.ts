@@ -15,6 +15,7 @@ import {
   mapVisit,
   arrive,
   openResults,
+  arrivalException,
   waitUntilScheduled,
 } from './helpers.js'
 import type { APIRequestContext, Page } from '@playwright/test'
@@ -71,7 +72,7 @@ async function form(page: Page, origin: 'checklist' | 'ticket') {
 
 for (const origin of ['checklist', 'ticket'] as const) {
   test(
-    origin + ': cierre de pestaña, conexión perdida, sesión expirada y justificación tras vencer',
+    origin + ': cierre de pestaña, conexión perdida, sesión expirada y formulario sin plazo',
     async ({ page, context, request, browser }) => {
       const data = await setup(request, origin)
       await login(page)
@@ -146,40 +147,21 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await otherContext.close()
       advance(data.id, 'expire')
       await editor.reload()
-      await expect(editor.getByRole('dialog', { name: 'Justificación por demora' })).toBeVisible()
-      const expired = (await visit(request, data.id, renewed)).expiresAt
-      await editor
-        .getByLabel('Justificación obligatoria')
-        .fill('Recovered after device power loss and session expiration.')
-      await editor
-        .getByRole('button', { name: 'Guardar justificación y continuar', exact: true })
-        .click()
-      await editor.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
+      await expect(editor.getByRole('dialog', { name: 'Justificación por demora' })).toHaveCount(0)
+      await expect(
+        editor.getByRole('region', { name: 'Tiempo de registro del formulario' }),
+      ).toHaveCount(0)
+      await editor.getByRole('button', { name: 'Finalizar', exact: true }).click()
       await editor.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
-      await expect(editor.getByRole('heading', { name: 'En revisión' })).toBeVisible()
+      await expect(editor.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
       const recorded = object(await call(request, `/visitas/${data.id}/`, renewed))
-      expect(object(recorded.endLocation).validated).toBe(true)
-      await expect(editor.getByLabel('Descripción del trabajo realizado')).toHaveCount(0)
-      await expect(
-        editor.getByRole('button', { name: 'Terminar recorrido', exact: true }),
-      ).toHaveCount(0)
-      await expect(
-        editor.getByRole('button', { name: 'Terminar atención', exact: true }),
-      ).toHaveCount(0)
-      await expect(editor.getByRole('textbox')).toHaveCount(0)
-      expect((await visit(request, data.id, renewed)).status).toBe('pending_approval')
+      expect(recorded.endLocation).toBeNull()
+      expect(recorded.status).toBe('completed')
+      expect(recorded.expiresAt).toBeNull()
+      expect(recorded.registrationSeconds).toBeGreaterThan(300)
       await editor.close()
       const reviewer = await context.newPage()
       await login(reviewer, 'account')
-      await reviewer.goto('/technical-supervisor/checklists/' + data.id)
-      await reviewer.getByRole('button', { name: 'Aprobar excepción', exact: true }).click()
-      await reviewer
-        .getByLabel('Motivo de aprobación')
-        .fill('Verified complete content, evidence and timing justification.')
-      await reviewer.getByRole('button', { name: 'Confirmar decisión', exact: true }).click()
-      await expect(reviewer.getByRole('dialog')).toHaveCount(0)
-      expect((await visit(request, data.id, renewed)).status).toBe('completed')
-      expect((await visit(request, data.id, renewed)).expiresAt).toBe(expired)
       await reviewer.goto('/technical-supervisor/reports')
       await expect(reviewer.getByRole('heading', { name: 'Indicadores y reportes' })).toBeVisible()
       const downloading = reviewer.waitForEvent('download')
@@ -191,24 +173,27 @@ for (const origin of ['checklist', 'ticket'] as const) {
 
 for (const origin of ['checklist', 'ticket'] as const) {
   test(
-    origin +
-      ': completar tras vencer, rechazo, corrección y aprobación conservan ejecución y plazo',
+    origin + ': excepción de llegada con foto, rechazo y corrección conservan eventos originales',
     async ({ page, context, request }) => {
       const data = await setup(request, origin)
       await login(page)
-      await start(page, data.id, data.path)
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'geolocation', {
+          configurable: true,
+          value: {
+            getCurrentPosition(_ok: PositionCallback, error: PositionErrorCallback) {
+              error({ code: 1 } as GeolocationPositionError)
+            },
+          },
+        })
+      })
+      await arrivalException(page, data.id, origin)
       await openResults(page, origin)
       advance(data.id, 'expire')
       await page.reload()
-      await expect(page.getByRole('dialog', { name: 'Justificación por demora' })).toBeVisible()
-      const deadline = (await visit(request, data.id, data.token)).expiresAt
-      await page
-        .getByLabel('Justificación obligatoria')
-        .fill('Connection failed while uploading the evidence photographs.')
-      await page
-        .getByRole('button', { name: 'Guardar justificación y continuar', exact: true })
-        .click()
-      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(page.getByRole('dialog', { name: 'Justificación por demora' })).toHaveCount(0)
+      const original = object(await call(request, `/visitas/${data.id}/`, data.token))
+      const deadline = original.expiresAt
       expect((await visit(request, data.id, data.token)).status).toBe('in_progress')
       if (origin === 'checklist')
         await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
@@ -242,9 +227,9 @@ for (const origin of ['checklist', 'ticket'] as const) {
         'correction_required',
       )
       await expect(page.getByText('Justificación rechazada:', { exact: false })).toBeVisible()
-      await expect(page.locator('.nf-evidence img')).toHaveCount(1)
+      await expect(page.locator('.nf-evidence img')).toHaveCount(2)
       await page
-        .getByLabel('Justificación de la demora')
+        .getByLabel('Justificación GPS de llegada')
         .fill(
           'A mobile network interruption prevented sending the previously gathered photographs.',
         )
@@ -265,7 +250,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await expect(
         page.getByRole('button', { name: 'Enviar a revisión', exact: true }),
       ).toHaveCount(0)
-      expect((await visit(request, data.id, data.token)).expiresAt).toBe(deadline)
+      expect((await visit(request, data.id, data.token)).expiresAt).toBe(deadline ?? undefined)
       await reviewer.reload()
       await reviewer.getByRole('button', { name: 'Aprobar excepción', exact: true }).click()
       await reviewer
@@ -276,6 +261,9 @@ for (const origin of ['checklist', 'ticket'] as const) {
       const completed = object(await call(request, '/visitas/' + data.id + '/', data.token))
       expect(completed.workStatus).toBe('finished')
       expect(completed.expiresAt).toBe(deadline)
+      expect(object(completed.startLocation).validated).toBe(false)
+      for (const key of ['startedAt', 'physicalEndedAt', 'formOpenedAt', 'startLocation'])
+        expect(completed[key]).toEqual(original[key])
       if (!Array.isArray(completed.exceptionHistory))
         throw new Error('Sin historial de decisiones.')
       const history = completed.exceptionHistory
@@ -287,7 +275,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await expect(
         page.getByRole('heading', { name: 'Historial de justificaciones y decisiones' }),
       ).toBeVisible()
-      await expect(page.locator('.nf-evidence img')).toHaveCount(1)
+      await expect(page.locator('.nf-evidence img')).toHaveCount(2)
       await reviewer.close()
     },
   )

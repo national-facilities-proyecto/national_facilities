@@ -33,13 +33,15 @@ for (const width of [320, 1440]) {
     await login(page)
     await expect(page.getByRole('heading', { name: 'Mis Checklist', exact: true })).toBeVisible()
     const navigation = page.getByRole('navigation', {
-      name: width < 1024 ? 'Accesos del técnico' : 'Navegación principal',
+      name: width < 1024 ? 'Navegación móvil' : 'Navegación principal',
     })
     try {
+      if (width < 1024) await page.getByRole('button', { name: 'Abrir menú' }).click()
       await navigation.getByRole('link', { name: 'Atenciones', exact: true }).click()
       await expect(page.locator('#main-content .nf-loading--list')).toBeVisible()
       await expect(page.getByRole('button', { name: /Perfil de/ })).toBeVisible()
-      await expect(navigation).toBeVisible()
+      if (width >= 1024) await expect(navigation).toBeVisible()
+      else await expect(page.getByRole('button', { name: 'Abrir menú' })).toBeVisible()
       await expect(page.getByRole('status')).toContainText('Preparando tu vista')
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
       expect(

@@ -5,7 +5,6 @@ import type { Answer, Evidence, Visit } from '../../types/models'
 import { registrationEditable } from '../../types/models'
 import { AppError, errorMessage } from '../../services/errors'
 import { pendingItems } from './validation'
-import { formExpired } from './clock'
 import { useAuth } from '../auth/AuthProvider'
 
 type Step =
@@ -14,7 +13,6 @@ type Step =
   | { kind: 'camera'; taskId?: number }
   | { kind: 'validating' }
   | { kind: 'confirm_finish' }
-  | { kind: 'time_exception' }
   | { kind: 'success'; pending: boolean }
 export function useVisitEditor(initial: Visit) {
   const repos = useRepositories()
@@ -26,9 +24,7 @@ export function useVisitEditor(initial: Visit) {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [reason, setReason] = useState('')
   const [corrections, setCorrections] = useState<Record<string, string>>({})
-  const [exceptionBusy, setExceptionBusy] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [remote, setRemote] = useState<Visit>()
   const [pendingPhoto, setPendingPhoto] = useState<{ photo: Evidence; taskId?: number }>()
@@ -293,13 +289,6 @@ export function useVisitEditor(initial: Visit) {
       setError(pending.join(' '))
       return
     }
-    if (
-      formExpired(latest.current) &&
-      !latest.current.exceptions?.some((item) => item.type === 'time_limit')
-    ) {
-      setStep({ kind: 'time_exception' })
-      return
-    }
     setStep({ kind: 'validating' })
     setError('')
     try {
@@ -345,6 +334,18 @@ export function useVisitEditor(initial: Visit) {
     (task) => !pendingItems({ ...visit, tasks: [task] }).length,
   ).length
   const editable = registrationEditable(visit)
+  const finishPhysicalWork = async () => {
+    if (saving) return
+    setError('')
+    setSaving(true)
+    try {
+      applyConfirmed(await repos.visits.finishPhysicalWork(visit.id))
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
   const openForm = async () => {
     setError('')
     setSaving(true)
@@ -368,10 +369,6 @@ export function useVisitEditor(initial: Visit) {
     saving,
     error,
     setError,
-    reason,
-    setReason,
-    exceptionBusy,
-    setExceptionBusy,
     latest,
     mustComplete,
     back,
@@ -387,6 +384,7 @@ export function useVisitEditor(initial: Visit) {
     doneTasks,
     editable,
     openForm,
+    finishPhysicalWork,
     applyConfirmed,
     markNotPerformed,
     needsReview,

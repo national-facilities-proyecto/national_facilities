@@ -9,10 +9,7 @@ export function VisitRecord({ visit }: { visit: Visit }) {
     <>
       <Card title="Registro de la intervención">
         <p>Inicio real: {displayDate(visit.startedAt)}</p>
-        <p>
-          Primera apertura: {displayDate(visit.formOpenedAt)} · Vencimiento:{' '}
-          {displayDate(visit.expiresAt)}
-        </p>
+        <p>Primera apertura: {displayDate(visit.formOpenedAt)}</p>
         <p>
           Envío aceptado: {displayDate(visit.submittedAt)} · Finalización:{' '}
           {displayDate(visit.completedAt)}
@@ -25,14 +22,23 @@ export function VisitRecord({ visit }: { visit: Visit }) {
         {visit.legacy && (
           <p>Historial anterior: los eventos que faltan permanecen sin registrar.</p>
         )}
-        {(visit.exceptions ?? []).map((item) => (
-          <p key={item.id}>
-            {exceptionLabel(item)}: {item.reason} ·{' '}
-            {item.approved === undefined ? 'Pendiente' : item.approved ? 'Aprobada' : 'Rechazada'} ·{' '}
-            {item.reviewReason} · {displayDate(item.reviewedAt)} · Autor:{' '}
-            {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Revisor:{' '}
-            {item.reviewerId ? `Usuario #${item.reviewerId}` : 'Pendiente'}
+        {visit.expiresAt && (
+          <p>
+            Vencimiento histórico: {displayDate(visit.expiresAt)}. El registro actual no tiene
+            plazo.
           </p>
+        )}
+        {(visit.exceptions ?? []).map((item) => (
+          <div key={item.id}>
+            <p>
+              {exceptionLabel(item)}: {item.reason} ·{' '}
+              {item.approved === undefined ? 'Pendiente' : item.approved ? 'Aprobada' : 'Rechazada'}{' '}
+              · {item.reviewReason} · {displayDate(item.reviewedAt)} · Autor:{' '}
+              {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Revisor:{' '}
+              {item.reviewerId ? `Usuario #${item.reviewerId}` : 'Pendiente'}
+            </p>
+            <EvidenceGallery ids={item.evidenceIds ?? []} />
+          </div>
         ))}
       </Card>
       <ExceptionHistory visit={visit} />

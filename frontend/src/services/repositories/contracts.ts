@@ -55,7 +55,7 @@ export interface VisitRepository {
   get(id: number, options?: RequestOptions): Promise<Visit>
   start(id: number, location: Coordinates): Promise<Visit>
   openForm(id: number): Promise<Visit>
-  recordEndGps(id: number, location: Coordinates): Promise<Visit>
+  finishPhysicalWork(id: number): Promise<Visit>
   submitReview(id: number, input: ReviewSubmission): Promise<Visit>
   complete(id: number, input: ReviewSubmission): Promise<Visit>
   markNotPerformed(id: number, reason: string): Promise<Visit>

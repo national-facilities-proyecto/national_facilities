@@ -27,14 +27,23 @@ async function start(id = 1, gpsAvailable = true) {
     capturedAt: Date.now(),
   }
   await repos.visits.start(id, coordinates)
-  if (gpsAvailable) await repos.visits.recordEndGps(id, coordinates)
-  else
-    await repos.visits.requestException(id, {
-      type: 'location',
-      scope: 'closure',
-      reason: 'Sin señal al terminar el trabajo.',
-      failure: 'unavailable',
-    })
+  if (gpsAvailable) await repos.visits.finishPhysicalWork(id)
+  else {
+    await repos.visits.finishPhysicalWork(id)
+    const db = readDatabase()
+    db.visits.find((v) => v.id === id)!.exceptions = [
+      {
+        id: 1,
+        revision: 0,
+        type: 'location',
+        scope: 'closure',
+        reason: 'Sin señal al terminar el trabajo (histórico).',
+        failure: 'unavailable',
+        requestedAt: new Date().toISOString(),
+      },
+    ]
+    writeDatabase(db)
+  }
   await repos.visits.openForm(id)
   return { visit, coordinates }
 }
@@ -74,7 +83,8 @@ it('completa la segunda tienda con sus coordenadas y guarda el cierre', async ()
     exceptions: [],
   })
   expect(result.status).toBe('completed')
-  expect(result.endLocation?.longitude).toBe(coordinates.longitude)
+  expect(result.startLocation?.longitude).toBe(coordinates.longitude)
+  expect(result.endLocation).toBeUndefined()
   const repeated = await repos.visits.complete(2, {
     revision: (await repos.visits.get(2)).revision ?? 0,
     exceptions: [],
@@ -191,7 +201,7 @@ it('creación, programación, reasignación y resolución se ven entre roles', a
   const store = await repos.stores.get(1)
   const coordinates = { ...store, accuracy: 8, capturedAt: Date.now() }
   await repos.visits.start(visit.id, coordinates)
-  await repos.visits.recordEndGps(visit.id, coordinates)
+  await repos.visits.finishPhysicalWork(visit.id)
   await repos.visits.openForm(visit.id)
   await repos.checklists.saveDraft(visit.id, {
     revision: (await repos.visits.get(visit.id)).revision ?? 0,
@@ -341,24 +351,13 @@ it('tienda puede consultar el técnico asignado sin ver usuarios de otras tienda
   expect(users.some((user) => user.id === 1)).toBe(true)
   expect(users.some((user) => user.id === 6 || user.role === 'administrator')).toBe(false)
 })
-it('persiste el límite de cinco minutos y envía la excepción por tiempo vencido', async () => {
+it('no establece vencimiento ni permite nuevas excepciones de tiempo', async () => {
   await start(1)
   const started = await repos.checklists.get(1)
-  expect(started.timeLimitSeconds).toBe(300)
-  expect(Date.parse(started.expiresAt!) - Date.parse(started.formOpenedAt!)).toBe(300000)
-  const db = readDatabase()
-  const visit = db.visits.find((item) => item.id === 1)!
-  visit.expiresAt = new Date(Date.now() - 1000).toISOString()
-  writeDatabase(db)
-  await expect(repos.visits.requestTimeException(1, '   ')).rejects.toMatchObject({
-    code: 'validation',
-  })
-  const pending = await repos.visits.requestTimeException(
-    1,
-    'La inspección requirió detener el equipo de forma segura.',
-  )
-  expect(pending.status).toBe('in_progress')
-  expect(pending.submittedAt).toBeUndefined()
-  expect(pending.exception?.type).toBe('time_limit')
-  expect(pending.timeExceptionStatus).toBe('pending')
+  expect(started.expiresAt).toBeUndefined()
+  expect(started.timeLimitSeconds).toBeUndefined()
+  await expect(
+    repos.visits.requestTimeException(1, 'La conexión falló durante el registro.'),
+  ).rejects.toMatchObject({ code: 'validation' })
+  expect((await repos.visits.get(1)).exceptions).toBeUndefined()
 })

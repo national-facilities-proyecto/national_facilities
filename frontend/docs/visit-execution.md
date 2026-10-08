@@ -1,62 +1,73 @@
-# Ejecución, formulario y recuperación
+# Ejecución y recuperación — P0 del issue #18
 
-Aplicable por igual a checklists y tickets. Estas reglas sustituyen el temporizador desde inicio, la cámara exclusiva y los reinicios automáticos anteriores.
+Aplicable a checklist y atención. La especificación canónica es
+[Business logic V2](../../docs/business-logic-v2.md); esta revisión sustituye el
+GPS de cierre y el formulario de cinco minutos anteriores.
 
-## Estados
+## Llegada y trabajo físico
 
-Pendiente, En proceso y Finalizado son los estados habituales de ambos tipos de trabajo. En revisión identifica el registro con justificación, revisado por el supervisor de National Facilities. La asignación y programación se muestran como información adicional; el vencimiento es una condición del plazo, no otro estado operativo.
+El checklist se reserva durante dos horas; una atención usa su programación.
+Registrar llegada pide una lectura GPS nueva al dispositivo y la valida el backend.
+Una lectura válida inicia sin foto. Ante permiso denegado, tiempo agotado, posición
+indisponible, caducada, imprecisa o fuera de radio, hay reintento o excepción.
+Esta exige motivo de al menos diez caracteres y foto del establecimiento desde la
+cámara de la app, guardada en el servidor. No permite seleccionar galería.
 
-## Etapa A — Trabajo
+Una excepción pendiente permite trabajar con presencia sin validar; no acredita
+presencia aprobada. Se conserva la telemetría real, sin inventar coordenadas.
+El técnico ve mensajes humanos. El trabajo físico no tiene límite temporal.
+Terminar recorrido/atención registra un único fin físico auditado sin pedir GPS.
+Los datos de cierre antiguos se conservan.
 
-El técnico reclama la visita mensual o usa el ticket asignado. Iniciar checklist/Iniciar atención obtiene GPS nuevo y pide inicio al servidor. Django comprueba propiedad, tienda, asignación, contrato, estado y ubicación; registra inicio real y snapshot aplicable.
+## Registro de resultados o resolución
 
-Se muestran tareas, inicio y tiempo transcurrido. No se abre el formulario ni empieza su plazo. Se puede trabajar más de cinco minutos y reunir fotografías previamente. Repetir el inicio o volver a ingresar no altera el timestamp.
+La primera apertura del formulario es un evento distinto del fin físico. No hay
+contador, vencimiento nuevo, diálogo de demora ni límite para enviar. Reabrir o
+reautenticar conserva apertura y duraciones reales. Históricos de demora mantienen
+sus decisiones pendientes; no se crean nuevas excepciones de tiempo ni cierre.
 
-## Etapa B — Registro
+Cada respuesta del checklist permite cámara o galería directamente en el ítem.
+No hay galería genérica ni asociación posterior. Conforme requiere foto si está
+configurada; No conforme exige observación y foto si corresponde; No aplica exige
+motivo sin foto. Las fotos se normalizan a WebP y backend limita cada una a 5 MB.
+La atención conserva descripción técnica y fotos propias de resolución.
 
-Registrar resultados/Registrar resolución llama a la primera apertura. Django fija apertura y vencimiento cinco minutos después bajo bloqueo; otra pestaña recibe exactamente esos valores. El reloj del navegador usa serverNow para mostrar el tiempo restante y nunca decide un nuevo plazo.
+## Borrador y recuperación
 
-Se completan resultados/observaciones o descripción técnica y se cargan fotos por cámara o galería. No se atribuye una fecha exacta de captura a una fotografía cuya fecha se desconoce. La fecha de subida sí es del servidor.
+Autoguardado confirma `revision` en el servidor; errores conservan cambios y
+UUID/File pendientes mientras vive la página. Conflictos entre dispositivos
+requieren conciliación explícita, conservando evidencias confirmadas.
 
-El envío exige contenido, evidencia, estado, autorización, plazo y GPS de cierre válidos. Solo se registra envío/finalización cuando procede; reintentos no crean eventos ni ejecuciones adicionales.
+Cerrar pestaña, apagar el dispositivo, perder conexión o sesión no elimina las
+fotos y respuestas ya confirmadas. Otro navegador recupera lo guardado tras login
+del mismo técnico. Los bytes nunca subidos no tienen garantía entre dispositivos.
+Las imágenes de llegada se recuperan antes de iniciar o durante la corrección;
+no cuentan como evidencia de respuesta y otra cuenta no puede acceder a ellas.
 
-## Autoguardado y conflictos
+La sesión expirada admite autenticar al mismo usuario sin perder editor en memoria.
+No se introduce una política de inactividad: debe definirse separadamente.
 
-Cambios del editor se guardan automáticamente en el servidor con revision. Guardando, guardado y pendiente por error son estados distintos: guardado exige respuesta válida y confirmada. Los envíos son serializados; una revisión antigua recibe conflicto.
+## Envío, revisión y corrección
 
-Un fallo conserva contenido y File/UUID de foto pendiente mientras la página siga abierta. Reintentar reutiliza el UUID para no duplicar. No se puede prometer recuperación de bytes o texto nunca sincronizados después de apagar/cerrar el dispositivo; se avisa antes de abandonar y se conserva todo lo confirmado en el servidor.
+Contenido completo sin excepciones finaliza directamente. Con excepción pendiente,
+el botón Enviar a revisión produce envío explícito y registro de solo lectura.
+NF revisa la foto, motivo y telemetría autorizados. Aprobar permite cerrar, pero
+la presencia excepcional sigue sin validación GPS normal.
 
-Si otro dispositivo cambió el borrador, el editor conserva sus cambios, muestra conflicto y ofrece consultar la versión del servidor, usarla o guardar explícitamente su edición sobre la revisión actual. Las evidencias confirmadas de la versión remota se conservan al conciliar. No se toma el orden de llegada de respuestas como autoridad.
+Rechazo muestra su motivo y abre Corrección requerida en la misma ejecución.
+El técnico corrige contenido o motivo con versionado; reenviar una excepción
+rechazada idéntica se bloquea. No se vuelve a pedir ubicación para probar una
+llegada pasada. Inicio, fin físico, apertura, fotos originales y decisiones previas
+se conservan. Cambiar un motivo reabre únicamente esa aprobación. NF puede decidir
+otras excepciones pendientes del registro completo después de rechazar una.
 
-## Recuperación
+La recuperación distingue trabajo físico, formulario, revisión readonly, corrección
+y finalizado. Los históricos sin eventos muestran datos no registrados, nunca
+fechas inferidas. La reserva, No realizado, cuotas, cobertura Cliente + Zona,
+exclusividad operativa, CAS e idempotencia mantienen sus reglas V2.
 
-| Estado real del servidor            | Pantalla y acción                                                                           |
-| ----------------------------------- | ------------------------------------------------------------------------------------------- |
-| Inicio sin apertura                 | Retomar ejecución; abrir formulario cuando termine el trabajo                               |
-| Formulario abierto dentro del plazo | Continuar formulario; respuestas/fotos confirmadas y tiempo restante original               |
-| En proceso, plazo transcurrido      | Cuadro de justificación automático; conserva borrador y vencimiento                         |
-| En revisión                         | Completar si aún no fue enviado; consultar decisiones o corregir tras rechazo; GPS separado |
-| Finalizado                          | Registro de resultados, fotos y tiempos; no admite otra ejecución/envío                     |
-| Histórico incompleto de metadatos   | Datos conocidos y aviso; no se fabrican timestamps/snapshots                                |
+## Verificación
 
-Recargar, cerrar pestaña, perder red o expirar sesión no pausa ni renueva el plazo. Reautenticar consulta el servidor. Si expira la sesión con editor abierto, el modal permite autenticar el mismo usuario sin descartar sus cambios aún en memoria. Otra sesión/dispositivo recupera exclusivamente lo confirmado.
-
-## Excepciones y revisión
-
-Tiempo y GPS tienen autor, tipo, motivo, fecha, decisión, revisor y razón. Son solicitudes independientes y únicas por ejecución/tipo. Aprobar una no oculta la otra. Un formulario vencido puede justificarse después de volver a autenticar sin crear una nueva visita.
-
-El contenido completo y ambas validaciones resueltas permiten aceptar cierre. La revisión pendiente no cuenta como cumplimiento. Una ubicación ausente no se sustituye por coordenadas de la tienda; se registra una lectura real o se revisa una excepción GPS.
-
-Al vencer se abre automáticamente el cuadro de justificación, también al recuperar el formulario. Si faltan resultados o fotos se puede guardar la justificación y continuar completando el mismo registro. El envío completo exige contenido y GPS de cierre o una justificación GPS independiente. Permanece En revisión hasta que el supervisor apruebe todas las excepciones necesarias.
-
-Rechazar conserva En revisión y permite corregir contenido o justificación y reenviar con el mismo vencimiento. El nuevo envío no crea otra intervención. Cada solicitud y decisión anterior permanece en el historial. Cuando se corrige contenido ya revisado, sus aprobaciones anteriores se reabren para revisar la versión nueva. Una pantalla de revisión antigua recibe 409 y debe recargar antes de decidir. No se conceden prórrogas. Otras reglas pendientes están en el [registro de decisiones](../../docs/integration/decisions-pending.md).
-
-## Tiempos e historial
-
-Se guardan por separado inicio real, primera apertura, vencimiento original, envío aceptado y finalización aprobada. Se muestran total hasta envío, tiempo previo al formulario y tiempo de registro. El tiempo hasta apertura no acredita una hora exacta de fin físico. Si no hubo evento explícito de fin físico, no se inventa.
-
-Para pruebas de vencimiento se acelera únicamente el timestamp de una base aislada mediante un helper protegido; la aplicación operativa no tiene un reloj modificable. [Validación](validation.md) detalla los recorridos reales y las decisiones que impiden completar algunos.
-
-## Reserva antes de iniciar
-
-Reservar checklist reclama la visita sin exigir GPS ni abrir el formulario. El servidor fija dos horas desde ese primer reclamo; reintentar no extiende la reserva. Si no se inicia a tiempo, vuelve automáticamente a la bolsa y queda registrado el técnico anterior, el vencimiento y la liberación. Un nuevo técnico reclama la misma obligación. Iniciar requiere GPS y una reserva vigente; una pantalla antigua recibe error y permite actualizar. Una ejecución iniciada no se libera al pasar dos horas. Las cuotas mensuales son visitas independientes y pueden repetir técnico.
+Backend y E2E usan PostgreSQL y almacenamiento locales aislados con datos ficticios.
+Los E2E ejercitan cámara del navegador, API, persistencia, recarga y otro contexto.
+No equivalen a validación en teléfonos físicos ni contra GCS de producción.

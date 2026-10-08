@@ -26,24 +26,22 @@ vi.mock('../technician/CameraModal', () => ({
   }) =>
     open ? <button onClick={() => void onCapture(photo)}>Confirmar foto del test</button> : null,
 }))
-const tasks = [{ id: 7, title: 'Revisar luminarias', photoRequired: true, order: 1, active: true }]
 
-it('captura durante el recorrido, recupera al remontar y solo sube al asociar', async () => {
+it('recupera fotos temporales históricas de atención y sube al asociar a resolución', async () => {
   const scope = crypto.randomUUID()
   const associate = vi.fn().mockResolvedValue(undefined)
-  const view = render(<ChecklistPhotos scope={scope} tasks={tasks} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Tomar fotografía del recorrido' }))
+  const view = render(<ChecklistPhotos scope={scope} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Tomar fotografía de la atención' }))
   fireEvent.click(screen.getByRole('button', { name: 'Confirmar foto del test' }))
   await screen.findByAltText('Fotografía pendiente de asociación')
   expect(associate).not.toHaveBeenCalled()
   expect(await checklistPhotos.list(scope)).toHaveLength(1)
   view.unmount()
-  render(<ChecklistPhotos scope={scope} tasks={tasks} onAssociate={associate} />)
+  render(<ChecklistPhotos scope={scope} onAssociate={associate} />)
   await screen.findByAltText('Fotografía pendiente de asociación')
-  fireEvent.change(screen.getByLabelText('Ítem para fotografía 1'), { target: { value: '7' } })
   fireEvent.click(screen.getByRole('button', { name: 'Asociar fotografía' }))
   await waitFor(() =>
-    expect(associate).toHaveBeenCalledWith(expect.objectContaining({ id: photo.id }), 7),
+    expect(associate).toHaveBeenCalledWith(expect.objectContaining({ id: photo.id })),
   )
   await waitFor(() =>
     expect(screen.queryByAltText('Fotografía pendiente de asociación')).not.toBeInTheDocument(),
@@ -58,9 +56,8 @@ it('conserva la foto cuando falla la subida y permite reintentar', async () => {
     .fn()
     .mockRejectedValueOnce(new AppError('network', 'Sin conexión'))
     .mockResolvedValue(undefined)
-  render(<ChecklistPhotos scope={scope} tasks={tasks} onAssociate={associate} />)
+  render(<ChecklistPhotos scope={scope} onAssociate={associate} />)
   await screen.findByAltText('Fotografía pendiente de asociación')
-  fireEvent.change(screen.getByLabelText('Ítem para fotografía 1'), { target: { value: '7' } })
   fireEvent.click(screen.getByRole('button', { name: 'Asociar fotografía' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Sin conexión')
   expect(await checklistPhotos.list(scope)).toHaveLength(1)

@@ -46,18 +46,28 @@ class Zona(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["cliente", "nombre"], name="zona_cliente_nombre_unico"),
+            models.UniqueConstraint(
+                fields=["cliente", "nombre"], name="zona_cliente_nombre_unico"
+            ),
         ]
-        indexes = [models.Index(fields=["cliente", "activo"], name="zona_cliente_activo_idx")]
+        indexes = [
+            models.Index(fields=["cliente", "activo"], name="zona_cliente_activo_idx")
+        ]
 
     def clean(self):
         super().clean()
         if self.pk and self.cliente_id:
             previous = Zona.objects.using(self._state.db).filter(pk=self.pk)
             if previous.exclude(cliente_id=self.cliente_id).exists():
-                if (self.tiendas.exclude(cliente_id=self.cliente_id).exists()
-                        or self.coberturas.exclude(cliente_id=self.cliente_id).exists()):
-                    raise ValidationError({"cliente": "No puede cambiarse el cliente de una zona con tiendas o coberturas de otro cliente."})
+                if (
+                    self.tiendas.exclude(cliente_id=self.cliente_id).exists()
+                    or self.coberturas.exclude(cliente_id=self.cliente_id).exists()
+                ):
+                    raise ValidationError(
+                        {
+                            "cliente": "No puede cambiarse el cliente de una zona con tiendas o coberturas de otro cliente."
+                        }
+                    )
 
     def save(self, *args, **kwargs):
         # También protege el cambio de cliente al guardar desde el ORM normal.
@@ -74,7 +84,12 @@ def _validar_cliente_zona(cliente_id, zona_id, using=None):
         return
     # Consulta el cliente persistido, no una relación cacheada potencialmente antigua.
     # La existencia de zona/cliente queda además protegida por sus FK en la DB.
-    zona_cliente_id = Zona.objects.using(using).filter(pk=zona_id).values_list("cliente_id", flat=True).first()
+    zona_cliente_id = (
+        Zona.objects.using(using)
+        .filter(pk=zona_id)
+        .values_list("cliente_id", flat=True)
+        .first()
+    )
     if zona_cliente_id is not None and zona_cliente_id != cliente_id:
         raise ValidationError({"zona": "La zona debe pertenecer al mismo cliente."})
 
@@ -87,20 +102,33 @@ def _validar_cliente_zona_update_fields(instance, update_fields, using=None):
     changes_zone = bool(fields & {"zona", "zona_id"})
     if changes_client == changes_zone:
         return
-    previous = type(instance).objects.using(using).filter(pk=instance.pk).values("cliente_id", "zona_id").first()
+    previous = (
+        type(instance)
+        .objects.using(using)
+        .filter(pk=instance.pk)
+        .values("cliente_id", "zona_id")
+        .first()
+    )
     if previous:
         # Los atributos omitidos en update_fields conservarán su valor en la DB.
-        _validar_cliente_zona(instance.cliente_id if changes_client else previous["cliente_id"],
-                             instance.zona_id if changes_zone else previous["zona_id"], using)
+        _validar_cliente_zona(
+            instance.cliente_id if changes_client else previous["cliente_id"],
+            instance.zona_id if changes_zone else previous["zona_id"],
+            using,
+        )
 
 
 class Tienda(models.Model):
     # La tienda es una entidad operativa independiente de quién tenga acceso a ella.
     # La relación con usuarios (supervisor de tienda, supervisor de cuenta) se
     # resuelve mediante AsignacionTienda, no con una FK directa aquí.
-    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="tiendas")
+    cliente = models.ForeignKey(
+        Cliente, on_delete=models.PROTECT, related_name="tiendas"
+    )
     # Nullable durante la transición: las tiendas existentes requieren asignación explícita.
-    zona = models.ForeignKey(Zona, on_delete=models.PROTECT, related_name="tiendas", null=True, blank=True)
+    zona = models.ForeignKey(
+        Zona, on_delete=models.PROTECT, related_name="tiendas", null=True, blank=True
+    )
     nombre = models.CharField(max_length=150)
     direccion = models.CharField(max_length=250)
     latitud = models.DecimalField(max_digits=9, decimal_places=6)
@@ -114,7 +142,9 @@ class Tienda(models.Model):
 
     def save(self, *args, **kwargs):
         self.clean()
-        _validar_cliente_zona_update_fields(self, kwargs.get("update_fields"), kwargs.get("using") or self._state.db)
+        _validar_cliente_zona_update_fields(
+            self, kwargs.get("update_fields"), kwargs.get("using") or self._state.db
+        )
         return super().save(*args, **kwargs)
 
     def __str__(self):
@@ -135,8 +165,12 @@ class AsignacionTienda(models.Model):
     Al desvincularse una persona, se elimina o desactiva su asignación;
     la tienda y su historial de visitas y tickets no se ven afectados.
     """
-    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name="tiendas_asignadas")
-    tienda = models.ForeignKey(Tienda, on_delete=models.CASCADE, related_name="usuarios_asignados")
+    usuario = models.ForeignKey(
+        Usuario, on_delete=models.CASCADE, related_name="tiendas_asignadas"
+    )
+    tienda = models.ForeignKey(
+        Tienda, on_delete=models.CASCADE, related_name="usuarios_asignados"
+    )
     activo = models.BooleanField(default=True)
     asignado_en = models.DateTimeField(auto_now_add=True)
 
@@ -149,17 +183,28 @@ class AsignacionTienda(models.Model):
 
 class CoberturaUsuario(models.Model):
     # Base V2 para Técnico y Supervisor NF; todavía no participa en permisos.
-    usuario = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name="coberturas")
-    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="coberturas_usuario")
+    usuario = models.ForeignKey(
+        Usuario, on_delete=models.PROTECT, related_name="coberturas"
+    )
+    cliente = models.ForeignKey(
+        Cliente, on_delete=models.PROTECT, related_name="coberturas_usuario"
+    )
     zona = models.ForeignKey(Zona, on_delete=models.PROTECT, related_name="coberturas")
     activo = models.BooleanField(default=True)
     asignado_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["usuario", "cliente", "zona"], name="cobertura_usuario_cliente_zona_unica"),
+            models.UniqueConstraint(
+                fields=["usuario", "cliente", "zona"],
+                name="cobertura_usuario_cliente_zona_unica",
+            ),
         ]
-        indexes = [models.Index(fields=["usuario", "activo"], name="cobertura_usuario_activo_idx")]
+        indexes = [
+            models.Index(
+                fields=["usuario", "activo"], name="cobertura_usuario_activo_idx"
+            )
+        ]
 
     def clean(self):
         super().clean()
@@ -167,7 +212,9 @@ class CoberturaUsuario(models.Model):
 
     def save(self, *args, **kwargs):
         self.clean()
-        _validar_cliente_zona_update_fields(self, kwargs.get("update_fields"), kwargs.get("using") or self._state.db)
+        _validar_cliente_zona_update_fields(
+            self, kwargs.get("update_fields"), kwargs.get("using") or self._state.db
+        )
         return super().save(*args, **kwargs)
 
     def __str__(self):
@@ -184,7 +231,9 @@ class PlantillaChecklist(models.Model):
 
 
 class ItemPlantilla(models.Model):
-    plantilla = models.ForeignKey(PlantillaChecklist, on_delete=models.CASCADE, related_name="items")
+    plantilla = models.ForeignKey(
+        PlantillaChecklist, on_delete=models.CASCADE, related_name="items"
+    )
     descripcion = models.CharField(max_length=200)
     orden = models.PositiveIntegerField(default=0)
     activo = models.BooleanField(default=True)  # soft-deactivate, nunca se borra
@@ -199,14 +248,20 @@ class ItemPlantilla(models.Model):
 
 
 class Contrato(models.Model):
-    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="contratos")
-    plantilla_checklist = models.ForeignKey(PlantillaChecklist, on_delete=models.PROTECT)
+    cliente = models.ForeignKey(
+        Cliente, on_delete=models.PROTECT, related_name="contratos"
+    )
+    plantilla_checklist = models.ForeignKey(
+        PlantillaChecklist, on_delete=models.PROTECT
+    )
     frecuencia_visitas_mensual = models.PositiveIntegerField(default=1)
     # Mínimo mensual de atenciones de tickets por cada tienda, separado del checklist.
     # El sistema NO genera prontos automáticamente
     # al llegar a este número: solo alimenta el indicador de riesgo de
     # incumplimiento que ve el supervisor de cuenta (HU-20/HU-21).
-    minimo_intervenciones_mensual = models.PositiveIntegerField(default=2, validators=[MinValueValidator(2)])
+    minimo_intervenciones_mensual = models.PositiveIntegerField(
+        default=2, validators=[MinValueValidator(2)]
+    )
     # Radio de validación de proximidad geográfica, en metros. 100 por
     # defecto: cubre el margen de error típico del GPS de un celular
     # (5-20 m en exteriores, mayor dentro de un local techado), sin dejar
@@ -218,11 +273,32 @@ class Contrato(models.Model):
 
     class Meta:
         constraints = [
-            models.CheckConstraint(condition=Q(minimo_intervenciones_mensual__gte=2), name="contrato_minimo_dos_por_tienda"),
-            models.CheckConstraint(condition=Q(fecha_fin__isnull=True) | Q(fecha_fin__gte=F("fecha_inicio")), name="contrato_fechas_ordenadas"),
-            ExclusionConstraint(name="contrato_activo_sin_superposicion", condition=Q(activo=True),
-                expressions=[("cliente", RangeOperators.EQUAL),
-                    (models.Func("fecha_inicio", "fecha_fin", models.Value("[]"), function="DATERANGE", output_field=DateRangeField()), RangeOperators.OVERLAPS)]),
+            models.CheckConstraint(
+                condition=Q(minimo_intervenciones_mensual__gte=2),
+                name="contrato_minimo_dos_por_tienda",
+            ),
+            models.CheckConstraint(
+                condition=Q(fecha_fin__isnull=True)
+                | Q(fecha_fin__gte=F("fecha_inicio")),
+                name="contrato_fechas_ordenadas",
+            ),
+            ExclusionConstraint(
+                name="contrato_activo_sin_superposicion",
+                condition=Q(activo=True),
+                expressions=[
+                    ("cliente", RangeOperators.EQUAL),
+                    (
+                        models.Func(
+                            "fecha_inicio",
+                            "fecha_fin",
+                            models.Value("[]"),
+                            function="DATERANGE",
+                            output_field=DateRangeField(),
+                        ),
+                        RangeOperators.OVERLAPS,
+                    ),
+                ],
+            ),
         ]
 
     def __str__(self):
@@ -244,17 +320,31 @@ class Visita(models.Model):
     ]
 
     tienda = models.ForeignKey(Tienda, on_delete=models.PROTECT, related_name="visitas")
-    origen = models.CharField(max_length=20, choices=ORIGEN_CHOICES, default="checklist")
+    origen = models.CharField(
+        max_length=20, choices=ORIGEN_CHOICES, default="checklist"
+    )
     tecnico = models.ForeignKey(
-        Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="visitas_asignadas"
+        Usuario,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="visitas_asignadas",
     )
     ticket_origen = models.ForeignKey(
-        "Ticket", on_delete=models.PROTECT, null=True, blank=True, related_name="visitas_generadas"
+        "Ticket",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="visitas_generadas",
     )
     fecha_programada = models.DateTimeField()
-    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="programada")
+    estado = models.CharField(
+        max_length=20, choices=ESTADO_CHOICES, default="programada"
+    )
     justificacion = models.TextField(blank=True)
-    contrato = models.ForeignKey(Contrato, on_delete=models.PROTECT, null=True, blank=True)
+    contrato = models.ForeignKey(
+        Contrato, on_delete=models.PROTECT, null=True, blank=True
+    )
     periodo = models.DateField(null=True, blank=True)
     cuota = models.PositiveIntegerField(default=1)
     vigente = models.BooleanField(default=True)
@@ -266,8 +356,13 @@ class Visita(models.Model):
     iniciado_en = models.DateTimeField(null=True, blank=True)
     terminado_en = models.DateTimeField(null=True, blank=True)
     no_realizada_en = models.DateTimeField(null=True, blank=True)
-    intento_anterior = models.OneToOneField("self", on_delete=models.PROTECT, null=True, blank=True,
-                                          related_name="siguiente_intento")
+    intento_anterior = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="siguiente_intento",
+    )
     formulario_abierto_en = models.DateTimeField(null=True, blank=True)
     formulario_vence_en = models.DateTimeField(null=True, blank=True)
     enviado_en = models.DateTimeField(null=True, blank=True)
@@ -281,21 +376,37 @@ class Visita(models.Model):
     # guarda siempre (no solo el resultado sí/no de la validación) para
     # dejar evidencia verificable ante el cliente y poder recalibrar el
     # umbral con datos reales de operación.
-    latitud_cierre = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    longitud_cierre = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    distancia_medida_metros = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    latitud_cierre = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    longitud_cierre = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    distancia_medida_metros = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True
+    )
     proximidad_validada = models.BooleanField(default=False)
 
-    latitud_inicio = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    longitud_inicio = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    distancia_inicio_metros = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    latitud_inicio = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    longitud_inicio = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    distancia_inicio_metros = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True
+    )
     proximidad_inicio_validada = models.BooleanField(default=False)
 
     excepcion_tiempo = models.BooleanField(default=False)
     justificacion_excepcion_tiempo = models.TextField(blank=True)
     excepcion_tiempo_aprobada = models.BooleanField(null=True, blank=True)
     excepcion_tiempo_revisada_por = models.ForeignKey(
-        Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name="excepciones_tiempo_revisadas"
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="excepciones_tiempo_revisadas",
     )
     comentario_revision_tiempo = models.TextField(blank=True)
 
@@ -305,32 +416,96 @@ class Visita(models.Model):
     justificacion_excepcion = models.TextField(blank=True)
     descripcion_fallo_ubicacion = models.TextField(blank=True)
     excepcion_revisada_por = models.ForeignKey(
-        Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="excepciones_revisadas"
+        Usuario,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="excepciones_revisadas",
     )
     comentario_revision_ubicacion = models.TextField(blank=True)
     excepcion_aprobada = models.BooleanField(null=True, blank=True)  # None = pendiente
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["tienda", "periodo", "cuota"], condition=Q(origen="checklist", periodo__isnull=False, vigente=True), name="visita_cuota_mensual_unica"),
-            models.UniqueConstraint(fields=["tecnico"], condition=Q(tecnico__isnull=False, iniciado_en__isnull=False,
-                enviado_en__isnull=True, estado__in=["en_curso", "pendiente_validacion"]), name="tecnico_una_ejecucion_activa"),
-            models.CheckConstraint(condition=Q(terminado_en__isnull=True) | Q(iniciado_en__isnull=False,
-                terminado_en__gte=F("iniciado_en")), name="visita_fin_fisico_despues_inicio"),
-            models.CheckConstraint(condition=Q(terminado_en__isnull=True) | Q(formulario_abierto_en__isnull=True) |
-                Q(formulario_abierto_en__gte=F("terminado_en")), name="visita_formulario_despues_fin"),
-            models.UniqueConstraint(fields=["ticket_origen"], condition=Q(origen="ticket", vigente=True, ticket_origen__isnull=False), name="ticket_una_visita_vigente"),
-            models.CheckConstraint(condition=Q(reclamada_en__isnull=True, reclamo_vence_en__isnull=True) | Q(origen="checklist", reclamada_en__isnull=False, reclamo_vence_en__isnull=False, reclamo_vence_en=F("reclamada_en") + timedelta(hours=2)), name="visita_reclamo_dos_horas"),
-            models.CheckConstraint(condition=Q(formulario_abierto_en__isnull=True, formulario_vence_en__isnull=True) | Q(iniciado_en__isnull=False, formulario_abierto_en__isnull=False, formulario_vence_en__isnull=False, formulario_abierto_en__gte=F("iniciado_en"), formulario_vence_en=F("formulario_abierto_en") + timedelta(minutes=5)), name="visita_formulario_plazo_original"),
-            models.CheckConstraint(condition=Q(enviado_en__isnull=True) | Q(formulario_abierto_en__isnull=False, enviado_en__gte=F("formulario_abierto_en")), name="visita_envio_despues_apertura"),
-            models.CheckConstraint(condition=Q(completado_en__isnull=True) | Q(enviado_en__isnull=False, completado_en__gte=F("enviado_en")), name="visita_finalizacion_despues_envio"),
+            models.UniqueConstraint(
+                fields=["tienda", "periodo", "cuota"],
+                condition=Q(origen="checklist", periodo__isnull=False, vigente=True),
+                name="visita_cuota_mensual_unica",
+            ),
+            models.UniqueConstraint(
+                fields=["tecnico"],
+                condition=Q(
+                    tecnico__isnull=False,
+                    iniciado_en__isnull=False,
+                    enviado_en__isnull=True,
+                    estado__in=["en_curso", "pendiente_validacion"],
+                ),
+                name="tecnico_una_ejecucion_activa",
+            ),
+            models.CheckConstraint(
+                condition=Q(terminado_en__isnull=True)
+                | Q(iniciado_en__isnull=False, terminado_en__gte=F("iniciado_en")),
+                name="visita_fin_fisico_despues_inicio",
+            ),
+            models.CheckConstraint(
+                condition=Q(terminado_en__isnull=True)
+                | Q(formulario_abierto_en__isnull=True)
+                | Q(formulario_abierto_en__gte=F("terminado_en")),
+                name="visita_formulario_despues_fin",
+            ),
+            models.UniqueConstraint(
+                fields=["ticket_origen"],
+                condition=Q(origen="ticket", vigente=True, ticket_origen__isnull=False),
+                name="ticket_una_visita_vigente",
+            ),
+            models.CheckConstraint(
+                condition=Q(reclamada_en__isnull=True, reclamo_vence_en__isnull=True)
+                | Q(
+                    origen="checklist",
+                    reclamada_en__isnull=False,
+                    reclamo_vence_en__isnull=False,
+                    reclamo_vence_en=F("reclamada_en") + timedelta(hours=2),
+                ),
+                name="visita_reclamo_dos_horas",
+            ),
+            models.CheckConstraint(
+                condition=Q(
+                    formulario_abierto_en__isnull=True, formulario_vence_en__isnull=True
+                )
+                | Q(
+                    iniciado_en__isnull=False,
+                    formulario_abierto_en__isnull=False,
+                    formulario_abierto_en__gte=F("iniciado_en"),
+                )
+                & (
+                    Q(formulario_vence_en__isnull=True)
+                    | Q(formulario_vence_en__gte=F("formulario_abierto_en"))
+                ),
+                name="visita_formulario_cronologia",
+            ),
+            models.CheckConstraint(
+                condition=Q(enviado_en__isnull=True)
+                | Q(
+                    formulario_abierto_en__isnull=False,
+                    enviado_en__gte=F("formulario_abierto_en"),
+                ),
+                name="visita_envio_despues_apertura",
+            ),
+            models.CheckConstraint(
+                condition=Q(completado_en__isnull=True)
+                | Q(enviado_en__isnull=False, completado_en__gte=F("enviado_en")),
+                name="visita_finalizacion_despues_envio",
+            ),
         ]
 
     def __str__(self):
         return f"Visita a {self.tienda.nombre} - {self.fecha_programada:%Y-%m-%d}"
 
+
 class Checklist(models.Model):
-    visita = models.OneToOneField(Visita, on_delete=models.CASCADE, related_name="checklist")
+    visita = models.OneToOneField(
+        Visita, on_delete=models.CASCADE, related_name="checklist"
+    )
     plantilla = models.ForeignKey(PlantillaChecklist, on_delete=models.PROTECT)
     reporte_general = models.TextField(blank=True)
     creado_en = models.DateTimeField(auto_now_add=True)
@@ -348,13 +523,19 @@ class RespuestaItem(models.Model):
         ("no_aplica", "No aplica"),
     ]
 
-    checklist = models.ForeignKey(Checklist, on_delete=models.CASCADE, related_name="respuestas")
+    checklist = models.ForeignKey(
+        Checklist, on_delete=models.CASCADE, related_name="respuestas"
+    )
     item = models.ForeignKey(ItemPlantilla, on_delete=models.PROTECT)
     resultado = models.CharField(max_length=20, choices=RESULTADO_CHOICES)
     observacion = models.TextField(blank=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["checklist", "item"], name="respuesta_checklist_item_unica")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["checklist", "item"], name="respuesta_checklist_item_unica"
+            )
+        ]
 
     def __str__(self):
         return f"{self.item.descripcion}: {self.resultado}"
@@ -362,17 +543,53 @@ class RespuestaItem(models.Model):
 
 class Evidencia(models.Model):
     # La fuente es metadato declarado; no demuestra autenticidad de captura.
-    checklist = models.ForeignKey(Checklist, on_delete=models.PROTECT, related_name="evidencias", null=True, blank=True)
-    visita = models.ForeignKey(Visita, on_delete=models.PROTECT, related_name="archivos", null=True, blank=True)
-    ticket = models.ForeignKey("Ticket", on_delete=models.PROTECT, related_name="archivos", null=True, blank=True)
-    item = models.ForeignKey(ItemPlantilla, on_delete=models.PROTECT, related_name="evidencias", null=True, blank=True)
+    checklist = models.ForeignKey(
+        Checklist,
+        on_delete=models.PROTECT,
+        related_name="evidencias",
+        null=True,
+        blank=True,
+    )
+    visita = models.ForeignKey(
+        Visita, on_delete=models.PROTECT, related_name="archivos", null=True, blank=True
+    )
+    proposito = models.CharField(
+        max_length=10,
+        choices=[("result", "Resultado"), ("arrival", "Llegada")],
+        default="result",
+    )
+    excepcion = models.ForeignKey(
+        "Excepcion",
+        on_delete=models.PROTECT,
+        related_name="evidencias",
+        null=True,
+        blank=True,
+    )
+    ticket = models.ForeignKey(
+        "Ticket",
+        on_delete=models.PROTECT,
+        related_name="archivos",
+        null=True,
+        blank=True,
+    )
+    item = models.ForeignKey(
+        ItemPlantilla,
+        on_delete=models.PROTECT,
+        related_name="evidencias",
+        null=True,
+        blank=True,
+    )
     autor = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=True, blank=True)
     client_id = models.UUIDField(default=uuid.uuid4, unique=True)
     nombre = models.CharField(max_length=200, blank=True)
     mime_type = models.CharField(max_length=50, blank=True)
     tamano = models.PositiveIntegerField(default=0)
     sha256 = models.CharField(max_length=64, blank=True)
-    origen = models.CharField(max_length=10, choices=[("camera", "Cámara"), ("gallery", "Galería"), ("upload", "Archivo")], default="upload")
+    origen = models.CharField(
+        max_length=10,
+        choices=[("camera", "Cámara"), ("gallery", "Galería"), ("upload", "Archivo")],
+        default="upload",
+    )
     capturada_en = models.DateTimeField(null=True, blank=True)
     eliminada_en = models.DateTimeField(null=True, blank=True)
     foto = models.ImageField(upload_to="evidencias/%Y/%m/")
@@ -392,16 +609,24 @@ class CategoriaProblema(models.Model):
 
 
 class ClienteEspecialidad(models.Model):
-    cliente = models.ForeignKey(Cliente, on_delete=models.PROTECT, related_name="especialidades")
-    categoria = models.ForeignKey(CategoriaProblema, on_delete=models.PROTECT, related_name="clientes_habilitados")
+    cliente = models.ForeignKey(
+        Cliente, on_delete=models.PROTECT, related_name="especialidades"
+    )
+    categoria = models.ForeignKey(
+        CategoriaProblema, on_delete=models.PROTECT, related_name="clientes_habilitados"
+    )
     activo = models.BooleanField(default=True)
     habilitada_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["cliente", "categoria"], name="cliente_especialidad_unica"),
+            models.UniqueConstraint(
+                fields=["cliente", "categoria"], name="cliente_especialidad_unica"
+            ),
         ]
-        indexes = [models.Index(fields=["cliente", "activo"], name="cliente_espec_activo_idx")]
+        indexes = [
+            models.Index(fields=["cliente", "activo"], name="cliente_espec_activo_idx")
+        ]
 
     def __str__(self):
         return f"{self.cliente.razon_social} → {self.categoria.nombre}"
@@ -424,6 +649,7 @@ class Ticket(models.Model):
     tickets desde el campo (decisión de alcance validada el 31/08/2026,
     ver docs/artefactos/05-reglas-de-negocio y HU-18 retirada en Jira).
     """
+
     ESTADO_CHOICES = [
         ("abierto", "Pendiente"),
         ("programado", "Pendiente"),
@@ -437,9 +663,15 @@ class Ticket(models.Model):
     tienda = models.ForeignKey(Tienda, on_delete=models.PROTECT, related_name="tickets")
     categoria = models.ForeignKey(CategoriaProblema, on_delete=models.PROTECT)
     urgencia = models.ForeignKey(NivelUrgencia, on_delete=models.PROTECT)
-    reportado_por = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name="tickets_reportados")
+    reportado_por = models.ForeignKey(
+        Usuario, on_delete=models.PROTECT, related_name="tickets_reportados"
+    )
     tecnico_asignado = models.ForeignKey(
-        Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="tickets_asignados"
+        Usuario,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="tickets_asignados",
     )
     fecha_programada = models.DateTimeField(null=True, blank=True)
     asignado_en = models.DateTimeField(null=True, blank=True)
@@ -468,54 +700,119 @@ class ReasignacionTicket(models.Model):
     tecnico_asignado sin registro, para no perder la trazabilidad que
     es el objetivo central del sistema.
     """
-    ticket = models.ForeignKey(Ticket, on_delete=models.PROTECT, related_name="reasignaciones")
+
+    ticket = models.ForeignKey(
+        Ticket, on_delete=models.PROTECT, related_name="reasignaciones"
+    )
     tecnico_anterior = models.ForeignKey(
-        Usuario, on_delete=models.PROTECT, null=True, related_name="reasignaciones_salientes"
+        Usuario,
+        on_delete=models.PROTECT,
+        null=True,
+        related_name="reasignaciones_salientes",
     )
     tecnico_nuevo = models.ForeignKey(
-        Usuario, on_delete=models.PROTECT, null=True, related_name="reasignaciones_entrantes"
+        Usuario,
+        on_delete=models.PROTECT,
+        null=True,
+        related_name="reasignaciones_entrantes",
     )
     reasignado_por = models.ForeignKey(
-        Usuario, on_delete=models.PROTECT, null=True, related_name="reasignaciones_realizadas"
+        Usuario,
+        on_delete=models.PROTECT,
+        null=True,
+        related_name="reasignaciones_realizadas",
     )
     reasignado_en = models.DateTimeField(auto_now_add=True)
     motivo = models.TextField(blank=True)
     fecha_anterior = models.DateTimeField(null=True, blank=True)
     fecha_nueva = models.DateTimeField(null=True, blank=True)
-    urgencia_anterior = models.ForeignKey(NivelUrgencia, on_delete=models.PROTECT, null=True, blank=True, related_name="cambios_salientes")
-    urgencia_nueva = models.ForeignKey(NivelUrgencia, on_delete=models.PROTECT, null=True, blank=True, related_name="cambios_entrantes")
+    urgencia_anterior = models.ForeignKey(
+        NivelUrgencia,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="cambios_salientes",
+    )
+    urgencia_nueva = models.ForeignKey(
+        NivelUrgencia,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="cambios_entrantes",
+    )
 
     def __str__(self):
-        return f"Ticket #{self.ticket_id}: {self.tecnico_anterior} → {self.tecnico_nuevo}"
+        return (
+            f"Ticket #{self.ticket_id}: {self.tecnico_anterior} → {self.tecnico_nuevo}"
+        )
 
 
 class Excepcion(models.Model):
-    visita = models.ForeignKey(Visita, on_delete=models.PROTECT, related_name="excepciones")
-    tipo = models.CharField(max_length=20, choices=[("time_limit", "Tiempo"), ("location", "GPS")])
-    scope = models.CharField(max_length=10, choices=[("arrival", "Llegada"), ("closure", "Cierre"),
-        ("form", "Formulario"), ("legacy", "Origen no registrado")], default="legacy")
+    visita = models.ForeignKey(
+        Visita, on_delete=models.PROTECT, related_name="excepciones"
+    )
+    tipo = models.CharField(
+        max_length=20, choices=[("time_limit", "Tiempo"), ("location", "GPS")]
+    )
+    scope = models.CharField(
+        max_length=10,
+        choices=[
+            ("arrival", "Llegada"),
+            ("closure", "Cierre"),
+            ("form", "Formulario"),
+            ("legacy", "Origen no registrado"),
+        ],
+        default="legacy",
+    )
     telemetria = models.JSONField(null=True, blank=True)
-    autor = models.ForeignKey(Usuario, on_delete=models.PROTECT, related_name="excepciones_solicitadas")
+    autor = models.ForeignKey(
+        Usuario, on_delete=models.PROTECT, related_name="excepciones_solicitadas"
+    )
     motivo = models.TextField()
     fallo = models.CharField(max_length=50, blank=True)
     solicitada_en = models.DateTimeField(auto_now_add=True)
-    decision = models.CharField(max_length=10, choices=[("pending", "Pendiente"), ("approved", "Aprobada"), ("rejected", "Rechazada")], default="pending")
+    decision = models.CharField(
+        max_length=10,
+        choices=[
+            ("pending", "Pendiente"),
+            ("approved", "Aprobada"),
+            ("rejected", "Rechazada"),
+        ],
+        default="pending",
+    )
     revisada_en = models.DateTimeField(null=True, blank=True)
-    revisor = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=True, blank=True, related_name="decisiones_excepcion")
+    revisor = models.ForeignKey(
+        Usuario,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="decisiones_excepcion",
+    )
     motivo_decision = models.TextField(blank=True)
     revision = models.PositiveIntegerField(default=0)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["visita", "tipo", "scope"], name="visita_tipo_scope_excepcion_unica"),
-            models.CheckConstraint(condition=Q(scope="legacy") | Q(tipo="location", scope__in=["arrival", "closure"]) |
-                Q(tipo="time_limit", scope="form"), name="excepcion_scope_corresponde_tipo"),
+            models.UniqueConstraint(
+                fields=["visita", "tipo", "scope"],
+                name="visita_tipo_scope_excepcion_unica",
+            ),
+            models.CheckConstraint(
+                condition=Q(scope="legacy")
+                | Q(tipo="location", scope__in=["arrival", "closure"])
+                | Q(tipo="time_limit", scope="form"),
+                name="excepcion_scope_corresponde_tipo",
+            ),
         ]
 
 
 class Evento(models.Model):
-    visita = models.ForeignKey(Visita, on_delete=models.PROTECT, related_name="eventos", null=True, blank=True)
-    ticket = models.ForeignKey(Ticket, on_delete=models.PROTECT, related_name="eventos", null=True, blank=True)
+    visita = models.ForeignKey(
+        Visita, on_delete=models.PROTECT, related_name="eventos", null=True, blank=True
+    )
+    ticket = models.ForeignKey(
+        Ticket, on_delete=models.PROTECT, related_name="eventos", null=True, blank=True
+    )
     actor = models.ForeignKey(Usuario, on_delete=models.PROTECT, null=True, blank=True)
     fecha = models.DateTimeField(auto_now_add=True)
     tipo = models.CharField(max_length=50)
@@ -523,7 +820,13 @@ class Evento(models.Model):
     datos = models.JSONField(default=dict)
 
     class Meta:
-        constraints = [models.CheckConstraint(condition=Q(actor__isnull=False) | Q(tipo="claim_release", visita__isnull=False, ticket__isnull=True), name="evento_actor_o_liberacion_sistema")]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(actor__isnull=False)
+                | Q(tipo="claim_release", visita__isnull=False, ticket__isnull=True),
+                name="evento_actor_o_liberacion_sistema",
+            )
+        ]
 
 
 class Operacion(models.Model):
@@ -535,4 +838,8 @@ class Operacion(models.Model):
     creada_en = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["usuario", "clave"], name="operacion_idempotente_unica")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["usuario", "clave"], name="operacion_idempotente_unica"
+            )
+        ]

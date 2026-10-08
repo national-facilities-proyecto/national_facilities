@@ -5,6 +5,7 @@ import {
   LocationError,
   validateLocation,
 } from '../../features/geolocation/location'
+import { localEvidenceRepository } from './evidence'
 import { pendingItems } from '../../features/checklists/validation'
 import type {
   Visit,
@@ -178,7 +179,7 @@ export function createVisitsRepository(): Repositories['visits'] {
         .map(operationalVisit)
         .filter(
           (v) =>
-            v.phase === 'in_review' &&
+            ['in_review', 'correction_required'].includes(v.phase ?? '') &&
             v.submittedAt &&
             !pendingItems(v).length &&
             v.exceptions?.some((e) => e.approved === undefined),
@@ -206,7 +207,7 @@ export function createVisitsRepository(): Repositories['visits'] {
           db.stores.find((item) => item.id === visit.storeId)!,
           visit.radiusMeters ?? 100,
         )
-        visit.startLocation = location
+        visit.startLocation = { ...location, validated: true }
         visit.startedAt = new Date().toISOString()
         visit.timeLimitExceeded = false
         visit.status = 'in_progress'
@@ -214,17 +215,11 @@ export function createVisitsRepository(): Repositories['visits'] {
         return operationalVisit(visit)
       })
     },
-    async recordEndGps(id, location) {
+    async finishPhysicalWork(id) {
       return mutate((db) => {
         const visit = getVisit(db, id, true)
         required(visit.status === 'in_progress' && visit.startedAt, 'Registra primero la llegada.')
         if (!visit.physicalEndedAt) {
-          validateLocation(
-            location,
-            db.stores.find((item) => item.id === visit.storeId)!,
-            visit.radiusMeters ?? 100,
-          )
-          visit.endLocation = location
           visit.physicalEndedAt = new Date().toISOString()
         }
         return operationalVisit(visit)
@@ -239,8 +234,6 @@ export function createVisitsRepository(): Repositories['visits'] {
         )
         if (!visit.formOpenedAt) {
           visit.formOpenedAt = new Date().toISOString()
-          visit.expiresAt = new Date(Date.parse(visit.formOpenedAt) + 300000).toISOString()
-          visit.timeLimitSeconds = 300
         }
         return operationalVisit(visit)
       })
@@ -252,6 +245,13 @@ export function createVisitsRepository(): Repositories['visits'] {
       return submit(id, input, true)
     },
     async requestException(id, input) {
+      if (input.evidenceId) {
+        const photo = await localEvidenceRepository.get(input.evidenceId)
+        required(
+          photo?.visitId === id && photo.purpose === 'arrival' && photo.source === 'camera',
+          'Adjunta una foto del establecimiento tomada desde la app.',
+        )
+      }
       return mutate((db) => correctException(db, id, input))
     },
     async requestTimeException(id, reason, revision) {
@@ -267,7 +267,7 @@ export function createVisitsRepository(): Repositories['visits'] {
         allow(currentUser(db), ['account_supervisor'])
         const visit = getVisit(db, id)
         required(
-          visit.status === 'pending_approval' && visit.submittedAt,
+          ['pending_approval', 'correction_required'].includes(visit.status) && visit.submittedAt,
           'Solo se decide después del envío completo.',
         )
         const exception = visit.exceptions?.find((e) => e.id === exceptionId)
@@ -306,11 +306,20 @@ export function createVisitsRepository(): Repositories['visits'] {
     const existing = list.find((e) => e.type === input.type && e.scope === input.scope)
     let telemetry = existing?.telemetry
     let failure = input.failure ?? existing?.failure ?? ''
+    required(
+      existing || (input.type === 'location' && input.scope === 'arrival'),
+      'El formulario no vence y el cierre no requiere GPS.',
+    )
+    required(!existing || !input.location, 'La corrección conserva el GPS del evento original.')
+    required(
+      existing || input.evidenceId,
+      'Adjunta una foto del establecimiento tomada desde la app.',
+    )
     if (input.type === 'location' && (input.location || !existing)) {
       const location = input.location
       const store = { ...db.stores.find((s) => s.id === visit.storeId)!, ...visit.storeSnapshot }
       const radius = visit.radiusMeters ?? 100
-      if (location && !['denied', 'timeout', 'unavailable'].includes(failure)) {
+      if (location) {
         // La causa se evalúa sobre la nueva lectura real, igual que en la API.
         failure = ''
         try {
@@ -326,7 +335,15 @@ export function createVisitsRepository(): Repositories['visits'] {
         }
       }
       required(
-        ['denied', 'timeout', 'unavailable', 'out_of_radius', 'low_accuracy'].includes(failure),
+        [
+          'denied',
+          'timeout',
+          'unavailable',
+          'out_of_radius',
+          'low_accuracy',
+          'stale',
+          'future',
+        ].includes(failure),
         'Solicita una lectura fresca normal o una excepción por fallo GPS, radio o precisión.',
       )
       telemetry = {
@@ -365,12 +382,7 @@ export function createVisitsRepository(): Repositories['visits'] {
       required(input.revision === existing.revision, 'La excepción cambió de versión.')
       audit(visit, existing, currentUser(db).id, 'exception_previous')
     }
-    if (input.type === 'time_limit')
-      required(
-        visit.expiresAt && Date.now() >= Date.parse(visit.expiresAt),
-        'El formulario todavía no ha vencido.',
-      )
-    else if (!existing) {
+    if (!existing) {
       if (input.scope === 'arrival') {
         required(
           !visit.startedAt &&
@@ -387,6 +399,13 @@ export function createVisitsRepository(): Repositories['visits'] {
           'No puedes registrar llegada antes de la fecha programada.',
         )
         visit.startedAt = new Date().toISOString()
+        visit.startLocation = {
+          ...(telemetry?.latitude != null ? { latitude: telemetry.latitude } : {}),
+          ...(telemetry?.longitude != null ? { longitude: telemetry.longitude } : {}),
+          ...(telemetry?.accuracy != null ? { accuracy: telemetry.accuracy } : {}),
+          ...(telemetry?.capturedAt != null ? { capturedAt: telemetry.capturedAt } : {}),
+          validated: false,
+        }
         visit.status = 'in_progress'
         if (visit.ticketId) getTicket(db, visit.ticketId).status = 'in_progress'
       } else {
@@ -406,10 +425,21 @@ export function createVisitsRepository(): Repositories['visits'] {
       failure,
       requestedAt: new Date().toISOString(),
       authorId: currentUser(db).id,
+      evidenceIds: [
+        ...new Set([
+          ...(existing?.evidenceIds ?? []),
+          ...(input.evidenceId ? [input.evidenceId] : []),
+        ]),
+      ],
       decision: 'pending',
       telemetry,
     }
     visit.exceptions = [...list.filter((e) => e.id !== existing?.id), exception]
+    if (input.evidenceId) {
+      visit.arrivalEvidenceIds = [
+        ...new Set([...(visit.arrivalEvidenceIds ?? []), input.evidenceId]),
+      ]
+    }
     visit.exception = exception
     if (input.type === 'time_limit') {
       visit.timeLimitExceeded = true
@@ -440,18 +470,8 @@ export function createVisitsRepository(): Repositories['visits'] {
       required(new Set(pairs).size === pairs.length, 'No repitas tipo y etapa de excepción.')
       if (review) for (const item of input.exceptions) correctException(db, id, item)
       required(
-        visit.endLocation || visit.exceptions?.some((e) => e.scope === 'closure'),
-        'Falta cierre persistido.',
-      )
-      required(
         !visit.exceptions?.some((e) => e.approved === false),
         'Corrige las excepciones rechazadas.',
-      )
-      required(
-        !visit.expiresAt ||
-          Date.now() < Date.parse(visit.expiresAt) ||
-          visit.exceptions?.some((e) => e.type === 'time_limit'),
-        'El plazo venció. Registra justificación.',
       )
       const pending = Boolean(visit.exceptions?.some((e) => e.approved === undefined))
       required(

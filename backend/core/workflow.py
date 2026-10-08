@@ -1,7 +1,4 @@
 """Estado operativo común; asignación y programación conservan su historial."""
-from datetime import timedelta
-
-FORM_DURATION = timedelta(minutes=5)
 
 VISIT_WORK_STATUS = {
     "programada": "pending",

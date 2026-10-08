@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import type { Evidence, Visit } from '../../types/models'
+import { useEffect, useRef, useState } from 'react'
+import type { Evidence } from '../../types/models'
 import { checklistPhotos } from '../../services/checklistPhotos'
 import { errorMessage } from '../../services/errors'
 import { useObjectUrl } from '../../hooks/useObjectUrl'
@@ -13,20 +13,16 @@ function Photo({ photo }: { photo: Evidence }) {
 
 export function ChecklistPhotos({
   scope,
-  tasks,
   onAssociate,
 }: {
   scope: string
-  tasks: Visit['tasks']
-  onAssociate?: (photo: Evidence, taskId: number) => Promise<void>
+  onAssociate?: (photo: Evidence) => Promise<void>
 }) {
   const [photos, setPhotos] = useState<Evidence[]>([])
-  const formId = useId()
   const [camera, setCamera] = useState(false)
   const associating = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [targets, setTargets] = useState<Record<string, string>>({})
   useEffect(() => {
     let active = true
     void checklistPhotos.list(scope).then(
@@ -46,12 +42,12 @@ export function ChecklistPhotos({
     setPhotos((current) => current.filter((photo) => photo.id !== id))
   }
   const associate = async (photo: Evidence) => {
-    if (!onAssociate || (tasks.length > 0 && !targets[photo.id]) || associating.current) return
+    if (!onAssociate || associating.current) return
     associating.current = true
     setBusy(true)
     setError('')
     try {
-      await onAssociate(photo, tasks.length ? Number(targets[photo.id]) : 0)
+      await onAssociate(photo)
       await discard(photo.id)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -61,15 +57,11 @@ export function ChecklistPhotos({
     }
   }
   return (
-    <Card title={tasks.length ? 'Fotografías del recorrido' : 'Fotografías de la atención'}>
-      <p>
-        {tasks.length
-          ? 'Estas fotos se conservan en este navegador para asociarlas a los ítems del formulario final.'
-          : 'Estas fotos se conservan en este navegador para asociarlas al registro de resolución.'}
-      </p>
+    <Card title="Fotografías de la atención">
+      <p>Estas fotos se conservan en este navegador para asociarlas al registro de resolución.</p>
       {!onAssociate && (
         <Button variant="secondary" onClick={() => setCamera(true)}>
-          {tasks.length ? 'Tomar fotografía del recorrido' : 'Tomar fotografía de la atención'}
+          Tomar fotografía de la atención
         </Button>
       )}
       {error && <Alert>{error}</Alert>}
@@ -80,32 +72,7 @@ export function ChecklistPhotos({
             <figcaption>Fotografía {index + 1} · pendiente de asociación</figcaption>
             {onAssociate && (
               <>
-                {tasks.length > 0 && (
-                  <>
-                    <label htmlFor={`${formId}-${photo.id}`}>
-                      Ítem para fotografía {index + 1}
-                    </label>
-                    <select
-                      id={`${formId}-${photo.id}`}
-                      value={targets[photo.id] ?? ''}
-                      disabled={busy}
-                      onChange={(event) =>
-                        setTargets((current) => ({ ...current, [photo.id]: event.target.value }))
-                      }
-                    >
-                      <option value="">Selecciona un ítem</option>
-                      {tasks.map((task) => (
-                        <option key={task.id} value={task.id}>
-                          {task.title}
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                )}
-                <Button
-                  disabled={busy || (tasks.length > 0 && !targets[photo.id])}
-                  onClick={() => void associate(photo)}
-                >
+                <Button disabled={busy} onClick={() => void associate(photo)}>
                   Asociar fotografía
                 </Button>
               </>

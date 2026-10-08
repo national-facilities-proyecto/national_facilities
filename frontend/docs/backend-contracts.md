@@ -49,17 +49,23 @@ La visita incluye IDs, origin, scheduledAt, status, tasks/answers, workDescripti
 
 `workStatus` es autoritativo: pending (Pendiente), in_progress (En proceso), in_review (En revisión), finished (Finalizado). cancelled/No realizada solo describe ejecuciones históricas invalidadas. `status` conserva available/claimed para disponibilidad/asignación e in_progress/pending_approval/completed/cancelled para compatibilidad. Los mappers verifican que ambos campos sean coherentes. `formOpenedAt` distingue las etapas sin inventar un fin físico; no existe estado form_expired.
 
-| POST sobre visita             | Entrada y condición                                                                                                           |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| visitas/pool/:id/tomar/       | Reclamo atómico; mismo dueño puede repetir; otro técnico recibe 409                                                           |
-| visitas/:id/iniciar/          | `location`; asignación vigente, estado compatible y GPS válido; registra iniciado_en, no abre formulario                      |
-| visitas/:id/formulario/       | Primera apertura registra abierto_en y vence_en = apertura + 300 s; repeticiones devuelven el mismo plazo                     |
-| visitas/:id/borrador/         | `revision,answers,workDescription,evidenceIds`; CAS bajo bloqueo; incrementa revisión; no cierra                              |
-| visitas/:id/finalizar/        | `location`; valida contenido completo, plazo y GPS; registra envío/finalización una sola vez                                  |
-| visitas/:id/ubicacion-cierre/ | `location`; conserva GPS real para revisión pendiente y finaliza si se reúnen todos los requisitos                            |
-| visitas/:id/excepciones/      | type,reason,failure; revision para corregir una solicitud existente                                                           |
-| visitas/:id/revisar/          | exceptionId,approved,reason,revision,exceptionRevision; supervisor de National Facilities de la cartera                       |
-| visitas/:id/enviar-revision/  | revision,location,exceptions (type,reason,failure,revision); contenido completo; GPS real o justificación GPS; plazo original |
+| POST sobre visita             | Entrada y condición                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| visitas/pool/:id/tomar/       | Reserva dos horas; retries no amplían el vencimiento                                                                     |
+| visitas/:id/iniciar/          | `location`; GPS de llegada fresco validado por backend; no abre formulario                                               |
+| visitas/:id/terminar/         | `{}`; fin físico autoritativo idempotente, sin ubicación                                                                 |
+| visitas/:id/ubicacion-cierre/ | Alias compatible de terminar; no consume ni sustituye GPS histórico                                                      |
+| visitas/:id/formulario/       | Primera apertura después de fin físico; sin nuevo vencimiento; retries conservan apertura                                |
+| visitas/:id/borrador/         | `revision,answers,workDescription,evidenceIds`; CAS; incrementa revisión                                                 |
+| visitas/:id/finalizar/        | `revision`; contenido completo y validación de llegada o decisiones aprobadas; sin GPS ni plazo                          |
+| visitas/:id/excepciones/      | `type=location,scope=arrival,reason,failure,evidenceId,location?`; foto cámara propia confirmada; `revision` al corregir |
+| visitas/:id/revisar/          | `exceptionId,approved,reason,revision,exceptionRevision`; NF de cobertura, registro completo enviado                     |
+| visitas/:id/enviar-revision/  | `revision,exceptions?`; envío explícito de registro completo; sin GPS ni límite temporal                                 |
+
+Nuevas excepciones de tiempo/cierre se rechazan. Las históricas admiten decisiones
+independientes y corrección con su revisión. Corregir ubicación no admite una
+lectura nueva: conserva la telemetría original. La excepción añade `evidenceIds`;
+la visita añade `arrivalEvidenceIds` para recuperar fotos de llegada confirmadas.
 
 Las aperturas, reclamos, envíos, justificaciones y revisiones se serializan con bloqueos y claves/restricciones. Borradores concurrentes antiguos reciben 409: no sobrescriben al nuevo.
 
@@ -67,17 +73,36 @@ La bolsa genera tantas visitas independientes por tienda/mes como indica la frec
 
 Consultar bolsa/lista/detalle y reclamar/iniciar comprueba reservas vencidas en el servidor. El servicio `expire_checklist_claims --watch --interval 60` también las libera sin tráfico. `claimHistory` devuelve id, at, actorId nullable, kind (`claim`/`claim_release`), technicianId, claimedAt, expiresAt y text. El autor nulo representa una liberación automática del sistema; no una cuenta ficticia. Un reclamo histórico sin fecha/evento comprobable queda protegido para revisión.
 
-Los timestamps pueden ser nulos. Históricos sin snapshot/timestamps no se reinician ni se completan inventando datos; requieren decisión de migración. Nuevas visitas tienen una pareja apertura/vencimiento coherente y restricciones de orden en PostgreSQL.
+Los timestamps pueden ser nulos. Históricos sin snapshot/timestamps no se reinician ni se completan inventando datos; requieren decisión de migración. Nuevas aperturas no generan vencimiento; los vencimientos históricos se conservan. PostgreSQL valida el orden de eventos.
 
-## Contenido, plazo y GPS
+## Contenido y GPS de llegada
 
-Todas las tareas deben tener un resultado y pertenecer a la plantilla fijada. No conforme exige observación; cada tarea con foto obligatoria exige evidencia confirmada asociada. Ticket exige descripción técnica y foto de resolución, separadas del reporte original.
+Todas las tareas deben tener resultado y pertenecer al snapshot. No conforme
+exige observación; conforme/no conforme exigen foto si `photoRequired=true`.
+No aplica exige motivo y nunca foto. Las fotos del checklist se cargan en el ítem
+al responderlo; no hay galería de recorrido. Ticket exige descripción técnica y
+foto de resolución, separadas del reporte original y de la foto de llegada.
 
-Inicio y cierre aceptan `location={latitude,longitude,accuracy,capturedAt}`; capturedAt es epoch ms de la lectura. Números finitos, latitud ±90, longitud ±180, precisión no negativa, antigüedad máxima 60 s, futuro máximo 5 s y precisión ≤ min(radio,100 m), alineados con los controles existentes de esta rama. El servidor calcula distancia Haversine contra el snapshot y rechaza fuera del radio. No acepta distancia/validación calculadas por el cliente como autoridad. La confirmación operativa de estos umbrales figura entre las preguntas pendientes.
+Solo llegada acepta `location={latitude,longitude,accuracy,capturedAt}` (epoch ms).
+El backend valida números finitos, latitud ±90, longitud ±180, precisión no negativa,
+antigüedad máxima 60 s, futuro máximo 5 s y precisión ≤ min(radio,100 m). Calcula
+Haversine contra el snapshot y rechaza fuera del radio. Si falla, el técnico puede
+reintentar o aportar motivo de diez caracteres y foto desde cámara de la app.
+La excepción inicia trabajo con presencia sin validar; aprobación NF permite
+finalizar pero no convierte GPS inválido en presencia normal. Una lectura completa
+fuera de radio no se clasifica como permiso denegado por una declaración del cliente.
 
-Los cinco minutos empiezan en la primera apertura del formulario, aunque se cierre la página o sesión. La ejecución anterior no tiene límite de cinco minutos. Tras vencer, se conserva contenido y evidencia y se exige excepción de tiempo para una finalización aceptada. Las excepciones de tiempo/GPS son independientes y únicas por tipo y ejecución.
+El formulario no tiene plazo, contador ni excepción de demora. Apertura y
+fin físico son eventos separados e inmutables. `timeLimitSeconds=null`;
+`expiresAt`/marcas de demora existentes solo describen historial. Duraciones no
+se recortan. No se impone una política nueva de inactividad de sesión.
 
-El técnico puede completar el formulario vencido y enviarlo con justificación sin renovar el plazo. El registro enviado permanece En revisión. Aprobar exige un envío completo y solo finaliza si todas las excepciones necesarias están aprobadas y hay GPS válido o excepción GPS aprobada. Rechazar registra decisión/motivo/autor/fecha y mantiene En revisión, permitiendo corregir y reenviar en la misma ejecución. La edición del contenido tras rechazo reabre aprobaciones anteriores conservando su historial. Un reenvío registra una nueva fecha de envío aceptado; las anteriores permanecen en eventos.
+Sin excepciones, contenido completo finaliza normalmente. Con excepción pendiente,
+el técnico envía explícitamente a NF y queda solo lectura. Rechazo produce
+Corrección requerida y exige cambio real versionado antes de reenviar en la misma
+ejecución. Motivos/decisiones previas, fotos, respuestas y timestamps se conservan;
+las aprobaciones independientes permanecen. NF puede resolver otras excepciones
+pendientes aun después de un rechazo. Un nuevo envío queda auditado.
 
 Cada excepción devuelve revision. exceptionHistory contiene id, at, actorId, kind y un snapshot exception de cada solicitud, corrección, reapertura y decisión. Revisar exige la revisión del borrador y de la excepción que se mostró al supervisor: una versión antigua recibe 409. Las evidencias se protegen durante un envío pendiente de decisión; incompleto o rechazado admite edición controlada.
 
@@ -102,7 +127,7 @@ workStatus sigue los mismos cuatro estados que el checklist. status conserva ope
 
 GET evidencias/ permite al supervisor de tienda recuperar exclusivamente sus adjuntos temporales sin asociación, incluyendo fotos confirmadas antes de recargar el reporte.
 
-POST evidencias/ multipart: `id` UUID estable, `foto` File/Blob, source (camera/gallery/upload), visitId y taskId cuando corresponde, capturedAt opcional. El servidor verifica imagen, formato/extensión/MIME coincidentes JPEG/PNG/WebP, 1 byte–5 MB y hasta cinco por tarea, resolución o reporte temporal.
+POST evidencias/ multipart: `id` UUID estable, `foto` File/Blob, source (camera/gallery/upload), visitId y taskId cuando corresponde, capturedAt opcional para resultados, y `purpose=result|arrival` (default result). Llegada exige visita propia autorizada, cámara, capturedAt y ningún taskId; queda vinculada a la excepción y no se ofrece al Supervisor de tienda. El servidor verifica imagen, formato/extensión/MIME coincidentes JPEG/PNG/WebP, 1 byte–5 MB y hasta cinco por tarea, resolución o reporte temporal.
 
 GET evidencias/:uuid/ devuelve metadatos; GET evidencias/:uuid/archivo/ devuelve Blob autorizado con no-store/nosniff. DELETE aplica baja lógica del autor durante formulario editable; no borra evidencia cerrada ni del reporte original. Reintento de mismo UUID+contenido+contexto no crea otra foto; otro contenido, autor/contexto o archivo eliminado da 409.
 

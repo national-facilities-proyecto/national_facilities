@@ -12,13 +12,16 @@ Las expectativas antiguas no pueden obligar a V2 a conservar una regla incorrect
 Los documentos anteriores conservan su valor histórico y técnico donde no
 contradigan esta especificación; no constituyen una fuente paralela de reglas V2.
 
-**Fase:** 0, especificación documental. **Fecha:** 2026-10-04.
+**Actualización P0:** issue [#18](https://github.com/national-facilities-proyecto/national_facilities/issues/18), 2026-10-08.
+Las reglas siguientes incorporan la llegada excepcional con foto, el fin físico
+sin GPS y el formulario sin plazo. El resto mantiene su alcance; esta actualización
+no afirma que todos los puntos futuros estén implementados.
 **Rama de referencia:** `refactor/logica-negocio-v2`, con main incorporado,
 incluidos los PR #16 y #17 de despliegue.
 
-Este documento describe el comportamiento objetivo; no afirma que ya esté
-implementado. No define nuevos endpoints, columnas, códigos de estado de DB ni
-parámetros operativos no confirmados. Las diez precisiones de cierre de Fase 0
+Este documento describe el comportamiento objetivo. El contrato técnico de P0
+está en [frontend/docs/backend-contracts.md](../frontend/docs/backend-contracts.md);
+los demás puntos conservan su alcance y decisiones pendientes. Las diez precisiones de cierre de Fase 0
 están incorporadas como reglas canónicas. Solo quedan aspectos de diseño o
 políticas futuras expresamente delimitados al final; no deben resolverse mediante
 valores inventados o expectativas legacy.
@@ -104,7 +107,7 @@ preservan según la sección 14.
 - Obtiene una lectura GPS nueva y la envía al backend para validar timestamp,
   precisión, distancia y radio.
 - Registra llegada/inicio y comienza la ejecución física.
-- No abre el formulario ni inicia los cinco minutos.
+- No abre el formulario.
 - No se presenta como “Iniciar checklist”.
 
 Los fallos o lecturas inválidas siguen la sección 7. Solicitar una excepción GPS
@@ -115,32 +118,30 @@ depende de esa excepción no puede finalizar hasta la decisión correspondiente.
 
 ### Recorrido de inspección
 
-No tiene límite temporal. El técnico puede capturar fotografías durante el
-recorrido. Las fotografías temporales y confirmadas tienen las garantías de
-persistencia indicadas en las secciones 12 y 20.
+No tiene límite temporal. Las fotos del checklist se toman o seleccionan
+directamente en cada ítem al responderlo en el registro de resultados; no hay
+galería genérica de recorrido ni asociación posterior. Las garantías de
+persistencia están en las secciones 12 y 20.
 
 ### Terminar recorrido
 
 - Es una sola acción visible llamada **Terminar recorrido**.
-- Obtiene una lectura GPS de cierre, que el backend valida y persiste.
+- No solicita GPS ni crea una excepción GPS de cierre.
 - Registra el fin físico y después permite abrir el formulario final.
 - No se presenta como “Finalizar checklist”.
 - El envío final no vuelve a solicitar GPS.
 
-Un fallo de GPS ofrece inmediatamente reintento o solicitud de excepción según
-la sección 7; no se registra una lectura válida ficticia.
+El timestamp de fin físico se registra de forma idempotente y auditada por el
+servidor. Se conservan las coordenadas y excepciones de cierre históricas.
 
 ### Registro de resultados
 
-Es una etapa/pantalla separada del recorrido, no un formulario añadido debajo de
-la etapa física. Los cinco minutos empiezan cuando el backend persiste
-exitosamente la primera apertura, según la sección 8. Reabrir, refrescar, cerrar
-el navegador, cambiar de dispositivo o reloguearse no reinicia el plazo. El
-servidor es autoridad del vencimiento, incluso si se pierde la respuesta o falla
-el renderizado del formulario.
+Es una etapa/pantalla separada del recorrido, sin límite temporal, contador ni
+justificación de demora. El servidor conserva la primera apertura y las
+duraciones reales aunque se recargue, cambie de dispositivo o reloguee.
 
 El fin físico y la apertura del formulario son eventos distintos. Terminar el
-recorrido no inicia por sí mismo el reloj. El técnico sigue ocupado hasta enviar
+recorrido no abre por sí mismo el formulario. El técnico sigue ocupado hasta enviar
 el registro completo o finalizar directamente, según la sección 6.
 
 ## 5. Incidencias y atenciones correctivas
@@ -177,10 +178,9 @@ reprogramar son acciones del módulo Incidencias.
 
 Registrar llegada es una sola acción de solicitud, validación y registro GPS,
 con la vía de ejecución bajo excepción pendiente de la sección 7. La atención
-física no tiene límite de cinco minutos. Terminar atención obtiene y persiste
-una sola lectura de cierre y registra fin físico antes del formulario. Los cinco
-minutos empiezan al persistir el backend la primera apertura del registro de
-resolución. El envío utiliza el cierre persistido, sin pedir otra lectura.
+física no tiene límite temporal. Terminar atención registra el fin físico sin
+pedir ubicación. El registro de resolución tampoco tiene plazo; el envío no
+solicita GPS. Los eventos y la telemetría históricos se conservan.
 
 ## 6. Exclusividad de ejecución
 
@@ -199,7 +199,7 @@ sección 19 y libera esa ocupación sin declarar cumplimiento.
 | Llegada registrada y trabajo físico en curso | Sí |
 | Ejecución bajo excepción GPS pendiente, antes del envío completo | Sí |
 | Fin físico registrado, formulario aún no enviado | Sí |
-| Formulario vencido/incompleto que todavía debe completarse | Sí |
+| Formulario incompleto que todavía debe completarse | Sí |
 | Registro completo enviado a revisión | No |
 | Espera de aprobación | No |
 | Corrección requerida de un registro previamente enviado | No |
@@ -220,15 +220,12 @@ como ejecución activa. No se simula un envío normal ni una finalización váli
 
 ## 7. GPS
 
-### Llegada y cierre
+### Llegada
 
 Se conserva evidencia real de latitud, longitud, precisión, `capturedAt`,
-distancia, radio y resultado de validación. Para el cierre se obtiene una lectura
-al terminar recorrido/atención y se persiste antes del formulario.
-
-El envío final utiliza el cierre guardado: no obtiene otra lectura ni reemplaza
-el cierre por la ubicación del dispositivo durante el registro. Recuperar el
-formulario no convierte esa evidencia persistida en una nueva captura GPS.
+distancia, radio y resultado de validación de llegada. Una llegada válida no
+requiere foto. El cierre y el envío no piden ubicación; las lecturas de cierre
+históricas se conservan sin reemplazarlas por otra captura.
 
 ### Parámetros iniciales V2
 
@@ -247,11 +244,10 @@ acepta silenciosamente como validación normal.
 ### Lectura stale
 
 Si una lectura se vuelve demasiado antigua antes de enviarse para registrar la
-llegada o el cierre, se solicita una lectura nueva automáticamente. No se deja
+llegada, se solicita una lectura nueva automáticamente. No se deja
 al usuario atrapado con una lectura caducada.
 
-Esta recuperación no autoriza nuevas lecturas durante el envío del formulario:
-allí se utiliza la evidencia de cierre ya persistida en su etapa correspondiente.
+Esta recuperación no autoriza nuevas lecturas durante una corrección ni el envío.
 
 ### Fallos y excepciones
 
@@ -265,16 +261,20 @@ Se permite nueva lectura y solicitud de excepción controlada, conservando la
 lectura real, distancia, precisión y demás evidencia disponible para revisión.
 
 Solicitar una excepción no significa aprobarla ni convertir una lectura fallida
-en válida. Tampoco implica entrar automáticamente a En revisión o esperar a que
-venzan los cinco minutos.
+en válida. Tampoco implica entrar automáticamente a En revisión.
 
 ### GPS inválido en llegada: continuación bajo excepción pendiente
 
-Ante `denied`, `timeout`, `unavailable`, fuera de radio o precisión insuficiente,
+Ante `denied`, `timeout`, `unavailable`, lectura caducada, fecha inválida, fuera
+de radio o precisión insuficiente,
 el técnico puede reintentar o solicitar excepción GPS. La excepción puede
 permitir continuar físicamente el trabajo bajo el estado conceptual
 **ejecución bajo excepción pendiente**, sin esperar en la tienda a que el
-Supervisor NF apruebe para empezar.
+Supervisor NF apruebe para empezar. Exige motivo de al menos diez caracteres y
+foto del establecimiento tomada desde la cámara de la app, confirmada en el
+servidor y vinculada a la excepción con autor y fecha. No admite galería para
+esta foto. El origen declarado por el cliente no prueba por sí solo la
+autenticidad física de la captura.
 
 Se guarda toda la telemetría realmente disponible: coordenadas si existen,
 precisión, distancia, error/failure y timestamp. Una lectura real rechazada no se
@@ -288,32 +288,22 @@ solicitud temprana y la continuación física no equivalen a enviar a revisión 
 registro incompleto.
 
 Una ubicación inexistente nunca se sustituye por las coordenadas de la tienda.
-La captura normal de cierre o su incidencia controlada siguen conservando toda
-evidencia real disponible; el envío del formulario no pide otro GPS.
+La aprobación remota permite finalizar el registro pero nunca convierte esta
+presencia en una validación GPS normal. La interfaz del técnico usa mensajes
+humanos, sin códigos internos ni listados extensos de coordenadas.
 
-## 8. Cinco minutos
+## 8. Formulario sin plazo
 
-Los cinco minutos pertenecen al registro final, no al trabajo físico. Empiezan
-cuando el **backend persiste exitosamente la primera apertura** y tienen un
-vencimiento autoritativo en el servidor.
+El backend registra una única primera apertura; no asigna vencimiento a nuevos
+formularios. No se bloquea el envío por tiempo ni se exige excepción de demora.
+Recargar, reautenticar o corregir no altera apertura, inicio ni fin físico.
+Las duraciones se calculan a partir de los eventos reales, sin recortarlas.
 
-- Si el backend persiste la apertura pero se pierde la respuesta o el frontend
-  no logra renderizar, el reloj ya comenzó. Se recupera el timestamp del servidor.
-- Si la petición nunca fue aceptada/persistida por backend, el reloj no comenzó.
-- Ningún retry crea otra apertura ni reinicia el reloj.
-
-Al vencer:
-
-- No se borra contenido ni evidencia.
-- Se conserva y recupera el borrador confirmado.
-- Se solicita justificación de demora.
-- Se permite seguir completando el mismo registro.
-- No se concede prórroga ni se crea otro reloj.
-- Si falta contenido, el trabajo no entra en revisión.
-
-Primero se completa el registro y después se envía explícitamente. La
-justificación sola no equivale a ese envío. Reloguearse, cambiar de dispositivo
-o corregir un rechazo no modifica la primera apertura ni el vencimiento.
+Los vencimientos, marcas de demora y excepciones existentes son históricos:
+se mantienen y sus decisiones pendientes pueden revisarse individualmente. No
+se generan nuevas excepciones de tiempo ni se reescriben datos para migrarlos.
+Una política futura de inactividad de sesión requiere decisión expresa; no se
+reutilizan cinco minutos como límite implícito.
 
 ## 9. Resultados del checklist
 
@@ -328,8 +318,9 @@ reglas pertenece al backend y se refleja en el frontend.
 
 ## 10. Excepciones y revisión
 
-Los tipos actuales son `time_limit` (demora de registro) y `location`
-(ubicación/GPS). Sus claves son técnicas; la interfaz utiliza textos humanos.
+Las nuevas excepciones son `location` de llegada. `time_limit` y GPS de cierre
+se mantienen exclusivamente para históricos y sus correcciones. Sus claves son
+técnicas; la interfaz utiliza textos humanos.
 
 Crear una excepción no cambia automáticamente el estado a En revisión. Puede
 documentarse antes del envío; se conserva su cronología individual.
@@ -352,6 +343,9 @@ Si alguna se rechaza, el estado es **Corrección requerida**, no En revisión
 editable. Un registro sin decisiones pendientes y con todas las excepciones
 necesarias aprobadas debe finalizar, no permanecer en una bandeja vacía.
 
+Si se rechaza una excepción, NF puede decidir las otras pendientes del mismo
+registro completo. La bandeja incluye esos registros en Corrección requerida.
+
 ### Corrección requerida
 
 Son inmutables:
@@ -364,6 +358,11 @@ El técnico puede editar únicamente según necesidad: contenido final,
 observaciones, evidencias permitidas, motivo de la excepción rechazada y datos
 explícitamente reparables. Se conserva la evidencia histórica y no se reemplaza
 el historial de versiones o decisiones.
+
+La telemetría de llegada original no se reemplaza: no se pide un GPS nuevo para
+probar presencia pasada. Una excepción rechazada exige una corrección real y
+versionada del motivo, causa o evidencia adicional; reenviar lo mismo se rechaza.
+Las fotos vinculadas a la excepción no se eliminan durante la corrección.
 
 ### Independencia de aprobaciones
 
@@ -406,9 +405,8 @@ Después del login, el servidor permite detectar trabajos continuables. Si exist
 una ejecución activa, se presenta prominentemente **Tienes un trabajo en curso**
 con tienda, tipo, inicio, etapa y acción **Continuar trabajo**.
 
-- Formulario abierto: recuperar borrador confirmado y vencimiento original;
-  mostrar tiempo restante o expirado, aunque se haya perdido la respuesta de la
-  apertura ya persistida.
+- Formulario abierto: recuperar borrador, fotos y primera apertura confirmados,
+  sin contador ni diálogo de demora, incluso tras perder la respuesta de apertura.
 - Reserva no iniciada: mostrar Pendiente de iniciar y expiración de reserva.
 - Corrección requerida: mostrarla claramente.
 - En revisión: solo lectura; no impide empezar otro trabajo.
@@ -417,7 +415,7 @@ con tienda, tipo, inicio, etapa y acción **Continuar trabajo**.
 
 | Persistencia | Datos |
 | --- | --- |
-| Servidor | Reserva, timestamps, respuestas confirmadas, archivos subidos, cierre GPS, excepciones y decisiones |
+| Servidor | Reserva, timestamps, respuestas confirmadas, archivos subidos, GPS de llegada e histórico, excepciones y decisiones |
 | IndexedDB del mismo navegador/origen | Fotografías temporales todavía no sincronizadas |
 
 No se promete recuperación en otro dispositivo de bytes nunca subidos. Los
@@ -594,7 +592,7 @@ PostgreSQL conserva exclusivamente metadatos, relaciones, hashes y referencias,
 no binarios de imagen. En producción, los archivos se almacenan en Google Cloud
 Storage.
 
-Cámara y galería comparten un pipeline de normalización cuyo objetivo es WebP,
+Cámara y galería de resultados comparten un pipeline de normalización a WebP,
 lado mayor aproximado de 1600 px y calidad de 0.82–0.85, conservando detalle
 suficiente para etiquetas y seriales.
 
@@ -618,7 +616,10 @@ Nunca se elimina automáticamente evidencia ya asociada a un trabajo operativo.
 La limpieza de temporales no puede borrar evidencia histórica de intentos,
 correcciones o decisiones.
 
-Esta fase no implementa WebP, almacenamiento real ni optimizaciones de descarga.
+El máximo por archivo es 5 MB. Las fotos de llegada tienen propósito y vínculo
+propios: no satisfacen requisitos de resultados y no son accesibles al Supervisor
+de tienda. Archivos confirmados se recuperan del servidor tras cerrar navegador,
+perder sesión o cambiar dispositivo; no se mezclan datos de otra cuenta.
 
 ## 21. Históricos
 
@@ -630,13 +631,13 @@ valores para satisfacer DTOs ni se utiliza configuración actual como si fuera l
 histórica.
 
 No se reescriben las migraciones `0001`–`0016`. Cualquier migración nueva
-continúa después de las existentes. Esta fase no crea migraciones ni transforma
-datos históricos.
+continúa después de las existentes. La migración P0 `0019` añade relaciones de
+evidencia y permite apertura sin vencimiento, sin transformar datos anteriores.
 
 ## 22. Consistencia y concurrencia
 
 Se conservan las garantías útiles de idempotencia, CAS/versionado del borrador,
-locks de reserva, reserva de dos horas, primer reloj del formulario, snapshots
+locks de reserva, reserva de dos horas, primera apertura del formulario, snapshots
 mensuales y prohibición de reasignación tras inicio.
 
 ### Finalización y contenido
@@ -731,11 +732,11 @@ Las garantías mínimas futuras incluyen:
 - Zona propia del cliente, nombre único por cliente y combinaciones consistentes.
 - Una ejecución operativa simultánea, incluido formulario aún no enviado.
 - Continuidad después de cambiar cobertura.
-- GPS de cierre una sola vez y envío sin nueva captura.
+- Fin físico idempotente sin GPS, conservando cierre histórico.
 - Continuación de llegada bajo excepción pendiente, sin aprobación ficticia,
   conservando telemetría y parámetros GPS centralizados.
-- Reloj original no reiniciable y recorrido sin límite de cinco minutos.
-- Apertura persistida con respuesta perdida/render fallido y retry sin reloj nuevo.
+- Primera apertura inmutable y trabajo/formulario sin límite temporal.
+- Apertura persistida con respuesta perdida/render fallido y retry sin nueva apertura.
 - No aplica con motivo y sin foto obligatoria.
 - Revisión solo de registros completos enviados y readonly.
 - Corrección tras rechazo y múltiples excepciones independientes.
@@ -752,7 +753,7 @@ Las garantías mínimas futuras incluyen:
 - Legacy no registrado, sin ceros u otros valores ficticios para DTOs.
 - Concurrencia de operaciones y edición administrativa sensible.
 
-No se modifican ni ejecutan tests como parte de esta fase documental.
+P0 actualiza tests backend, componentes, mocks y E2E; su verificación se informa en el PR.
 
 ## 27. Seguridad funcional desde esta fase
 
@@ -765,9 +766,10 @@ No se confía en datos enviados por el frontend ni se exponen eventos internos a
 roles no autorizados. La excepción de continuidad por cobertura no equivale a
 acceso global ni elimina las demás validaciones.
 
-## 28. Fuera de esta fase
+## 28. Alcance histórico de Fase 0 (2026-10-04)
 
-La Fase 0 crea únicamente este documento. No implementa cambios de código,
+Este párrafo conserva el alcance de la fase documental original; no limita el
+P0 autorizado por el issue #18. La Fase 0 creó únicamente este documento. No implementa cambios de código,
 migraciones, tests, Dockerfiles, `nginx.conf`, configuración de despliegue,
 pentesting ofensivo completo, Cloud Run adicional, Cloud SQL, GCS real,
 Flyway/Liquibase, rediseño visual, WebP, optimización SQL ni nuevas dependencias.
@@ -780,7 +782,7 @@ No autoriza commit ni push.
 | Técnico/Supervisor NF asignados tienda por tienda | Cobertura explícita Cliente + Zona; tienda directa solo para Supervisor de tienda |
 | Revisión de un borrador incompleto o de una excepción recién creada | Solo registro completo enviado explícitamente con decisión pendiente |
 | Rechazo permanece En revisión editable | Corrección requerida, con edición controlada y nuevo ciclo de revisión |
-| GPS solicitado al finalizar/enviar o añadido normalmente desde En revisión | Cierre capturado y persistido al terminar el trabajo; envío sin nueva captura; revisión readonly |
+| GPS solicitado al finalizar/enviar o añadido normalmente desde En revisión | Fin físico sin GPS; llegada validada o excepción con foto; envío sin nueva captura; revisión readonly |
 | Ocupación limitada al trabajo físico | Ocupación desde llegada hasta envío completo/finalización directa, incluido formulario |
 | “Iniciar checklist” / “Finalizar checklist” para acciones físicas | Registrar llegada / Terminar recorrido |
 | Programación de visitas y Mis rutas como módulos de negocio | Programación dentro de Incidencias; técnico navega Atenciones |
@@ -791,7 +793,7 @@ No autoriza commit ni push.
 | Historial interno completo en DTO de Supervisor de tienda | Proyección mínima por rol, también en objetos anidados |
 | Fallback histórico con datos actuales o inferidos | Desconocido/legacy explícito; no fabricación de datos |
 | Esperar aprobación GPS en tienda o aceptar una lectura inválida como presencia aprobada | Continuación bajo excepción pendiente, con telemetría real y decisión NF antes de finalizar |
-| Reiniciar apertura porque se perdió la respuesta o falló el render | El reloj empieza al persistir backend; recuperación/retry conserva ese timestamp |
+| Reiniciar apertura porque se perdió la respuesta o falló el render | La apertura se registra en backend; recuperación/retry conserva ese timestamp sin plazo |
 | Reabrir todas las aprobaciones por cualquier corrección | Reabrir únicamente la aprobación del dato o excepción que cambió |
 | Zona compartida entre clientes solo por tener el mismo nombre | Zona pertenece a Cliente y tiene nombre único dentro de él |
 | Intento No realizado satisface o aumenta una cuota | Obligación pendiente; nuevo intento contra la misma cuota con historial conservado |
@@ -799,8 +801,8 @@ No autoriza commit ni push.
 | Acceso histórico indefinido por una asignación pasada | Autorización vigente tras Finalizado/No realizado |
 | Temporales agrupados solo por usuario | Contexto concreto, retención mínima de 24 horas y primera limpieza lógica |
 
-Las garantías anteriores compatibles —por ejemplo reserva de dos horas, primer
-reloj, idempotencia y snapshots— se conservan. La tabla no modifica documentos o
+Las garantías anteriores compatibles —por ejemplo reserva de dos horas, primera
+apertura, idempotencia y snapshots— se conservan. La tabla no modifica documentos o
 tests antiguos: establece su precedencia para el refactor futuro.
 
 ## Decisiones cerradas y diseño posterior
@@ -830,14 +832,14 @@ Siguen fuera de la especificación detallada de esta fase:
 Estos aspectos se precisarán en el diseño o fase correspondiente. No reabren las
 diez decisiones ni autorizan políticas nuevas por inferencia.
 
-## Verificación de coherencia de la Fase 0
+## Coherencia vigente tras P0
 
 - **Revisión/corrección:** completo y enviado es condición de revisión; rechazo
   abre corrección diferenciada, sin nuevo inicio o plazo. Cada aprobación se
   reabre solo si cambia el dato o excepción que validaba.
-- **GPS/cinco minutos:** cierre físico persistido antes del formulario; el reloj
-  nace al persistir backend la primera apertura, incluso con respuesta perdida,
-  y el envío no captura otra ubicación. Llegada bajo excepción pendiente no
+- **GPS/formulario:** fin físico sin ubicación; primera apertura inmutable,
+  incluso con respuesta perdida, sin vencimiento ni excepción de tiempo nueva.
+  El envío no captura otra ubicación. Llegada bajo excepción pendiente no
   aprueba presencia ni permite finalizar sin decisión NF.
 - **Cobertura/continuidad:** cobertura actual para trabajos nuevos, continuidad
   autorizada del trabajo iniciado y sus reintentos; después de Finalizado/No
@@ -853,6 +855,6 @@ diez decisiones ni autorizan políticas nuevas por inferencia.
 - **Privacidad:** proyecciones backend por rol y nombres humanos sin exposición
   de auditoría interna al Supervisor de tienda.
 
-La revisión de Fase 0 distingue las reglas funcionales cerradas del diseño aún no
-implementado. No autoriza cambios de aplicación, migraciones, tests, despliegue,
-commit ni push.
+La implementación P0 se revisa en su PR contra V2. Las decisiones futuras de
+inactividad, eliminación física y validación operativa en dispositivos reales
+no se consideran resueltas por las pruebas locales. No se despliega producción.

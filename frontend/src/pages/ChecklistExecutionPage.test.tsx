@@ -16,7 +16,7 @@ async function page() {
   await repos.checklists.claim(1)
   const store = await repos.stores.get(1)
   await repos.visits.start(1, { ...store, accuracy: 8, capturedAt: Date.now() })
-  await repos.visits.recordEndGps(1, { ...store, accuracy: 8, capturedAt: Date.now() })
+  await repos.visits.finishPhysicalWork(1)
   await repos.visits.openForm(1)
   renderPage(<VisitEditor id={1} origin="checklist" />, repos)
   await screen.findByText('Finalizar')
@@ -44,7 +44,7 @@ it('sincroniza observaciones entre tareas y guarda el borrador', async () => {
   )
 })
 
-it('muestra tareas y cámara sin formulario ni plazo durante el trabajo físico', async () => {
+it('muestra tareas y termina sin GPS ni galería genérica durante el trabajo físico', async () => {
   const repos = createMockRepositories()
   await repos.auth.login({ kind: 'demo', userId: 1 })
   await repos.checklists.claim(1)
@@ -57,7 +57,9 @@ it('muestra tareas y cámara sin formulario ni plazo durante el trabajo físico'
   expect(visit.formOpenedAt).toBeUndefined()
   expect(visit.expiresAt).toBeUndefined()
   for (const task of visit.tasks) expect(screen.getByText(task.title)).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Tomar fotografía del recorrido' })).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Tomar fotografía del recorrido' }),
+  ).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '✓ Conforme' })).not.toBeInTheDocument()
   expect(
     screen.queryByRole('region', { name: 'Tiempo de registro del formulario' }),
@@ -79,14 +81,14 @@ it('muestra tareas y cámara sin formulario ni plazo durante el trabajo físico'
   ).not.toBeInTheDocument()
   expect((await repos.visits.get(1)).formOpenedAt).toBeUndefined()
   fireEvent.click(screen.getByRole('button', { name: 'Registrar resultados' }))
-  await screen.findByRole('region', { name: 'Tiempo de registro del formulario' })
+  await screen.findByLabelText('Reporte general del checklist')
   const opened = await repos.visits.get(1)
-  expect(Date.parse(opened.expiresAt!) - Date.parse(opened.formOpenedAt!)).toBe(300000)
-  expect(getCurrentPosition).toHaveBeenCalledOnce()
+  expect(opened.expiresAt).toBeUndefined()
+  expect(getCurrentPosition).not.toHaveBeenCalled()
   expect(screen.getByLabelText('Reporte general del checklist')).toBeVisible()
 })
 
-it('cierre excepcional registra fin físico sin abrir formulario', async () => {
+it('cierre con GPS denegado registra fin físico sin abrir formulario', async () => {
   const repos = createMockRepositories()
   await repos.auth.login({ kind: 'demo', userId: 1 })
   await repos.checklists.claim(1)
@@ -104,22 +106,16 @@ it('cierre excepcional registra fin físico sin abrir formulario', async () => {
   renderPage(<VisitEditor id={1} origin="checklist" />, repos)
   await screen.findByRole('heading', { name: 'Recorrido de inspección' })
   fireEvent.click(screen.getByRole('button', { name: 'Terminar recorrido' }))
-  await screen.findByRole('button', { name: 'Reintentar ubicación' })
-  fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
-  fireEvent.change(screen.getByLabelText('Justificación de la excepción'), {
-    target: { value: 'Permiso denegado en el navegador.' },
-  })
-  fireEvent.click(screen.getByRole('button', { name: 'Guardar excepción GPS' }))
   await screen.findByRole('heading', { name: 'Recorrido terminado' })
   const closed = await repos.visits.get(1)
   expect(closed.physicalEndedAt).toBeDefined()
   expect(closed.formOpenedAt).toBeUndefined()
   expect(closed.submittedAt).toBeUndefined()
-  expect(closed.exceptions?.[0].scope).toBe('closure')
-  expect(closed.exceptions?.[0].telemetry?.latitude).toBeNull()
+  expect(closed.exceptions).toBeUndefined()
+  expect(closed.endLocation).toBeUndefined()
   expect(open).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Registrar resultados' }))
-  await screen.findByRole('region', { name: 'Tiempo de registro del formulario' })
+  await screen.findByLabelText('Reporte general del checklist')
   expect(open).toHaveBeenCalledWith(1)
 })
 
@@ -130,7 +126,7 @@ it('envío normal usa cierre guardado y no obtiene GPS', async () => {
   const store = await repos.stores.get(1)
   const gps = { ...store, accuracy: 8, capturedAt: Date.now() }
   await repos.visits.start(1, gps)
-  await repos.visits.recordEndGps(1, gps)
+  await repos.visits.finishPhysicalWork(1)
   const visit = await repos.visits.openForm(1)
   await repos.checklists.saveDraft(1, {
     revision: visit.revision,
@@ -181,7 +177,7 @@ async function reviewedRecord(state: 'pending_approval' | 'correction_required')
   const store = await repos.stores.get(1)
   const gps = { ...store, accuracy: 8, capturedAt: Date.now() }
   await repos.visits.start(1, gps)
-  await repos.visits.recordEndGps(1, gps)
+  await repos.visits.finishPhysicalWork(1)
   const opened = await repos.visits.openForm(1)
   const db = readDatabase()
   const visit = db.visits.find((v) => v.id === 1)!
@@ -272,9 +268,7 @@ it('corrección de cierre conserva arrival aprobado, timestamps y envío anterio
   const submit = vi.spyOn(repos.visits, 'submitReview')
   renderPage(<VisitEditor id={1} origin="checklist" />, repos)
   await screen.findByRole('heading', { name: 'Corrección requerida' })
-  expect(screen.getByLabelText('Justificación GPS de llegada')).toHaveValue(
-    'GPS rechazado al registrar llegada.',
-  )
+  expect(screen.queryByLabelText('Justificación GPS de llegada')).not.toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Reporte general del checklist'), {
     target: { value: 'Descripción técnica corregida.' },
   })

@@ -47,7 +47,7 @@ export default function TechnicalSupervisorChecklistDetailPage() {
         <p>Fin físico: {displayDate(visit.physicalEndedAt)}</p>
         <p>Finalización: {displayDate(visit.completedAt)}</p>
         <p>Primera apertura: {displayDate(visit.formOpenedAt)}</p>
-        <p>Vencimiento: {displayDate(visit.expiresAt)}</p>
+        {visit.expiresAt && <p>Vencimiento histórico: {displayDate(visit.expiresAt)}</p>}
         <p>Envío: {displayDate(visit.submittedAt)}</p>
         <p>
           Intervención: {visit.totalSeconds ?? 'No registrado'} s · Previo a formulario:{' '}
@@ -55,14 +55,14 @@ export default function TechnicalSupervisorChecklistDetailPage() {
           {visit.registrationSeconds ?? 'No registrado'} s
         </p>
         <p>
-          {visit.endLocation?.validated === true
+          {visit.startLocation?.validated === true
             ? 'Proximidad validada por el servidor.'
-            : visit.endLocation
-              ? 'El GPS de cierre no tiene una validación normal confirmada.'
-              : 'Sin lectura GPS de cierre registrada.'}
+            : visit.startLocation
+              ? 'La llegada no tiene una validación normal confirmada.'
+              : 'Sin ubicación de llegada registrada.'}
         </p>
         {(visit.exceptions ?? []).map((item) => (
-          <Alert key={item.id} success>
+          <Alert key={item.id} success={item.approved === true}>
             {exceptionLabel(item)}: {item.reason} · Autor:{' '}
             {item.authorId ? `Usuario #${item.authorId}` : 'No registrado'} · Solicitud:{' '}
             {displayDate(item.requestedAt)}
@@ -82,9 +82,10 @@ export default function TechnicalSupervisorChecklistDetailPage() {
                 </p>
               </>
             )}
+            <EvidenceGallery ids={item.evidenceIds ?? []} />
           </Alert>
         ))}
-        {visit.phase === 'in_review' &&
+        {['in_review', 'correction_required'].includes(visit.phase ?? '') &&
           visit.submittedAt &&
           (visit.exceptions ?? [])
             .filter((item) => item.approved === undefined)

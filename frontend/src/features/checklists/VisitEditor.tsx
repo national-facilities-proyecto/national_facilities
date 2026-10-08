@@ -1,9 +1,9 @@
-import { useCallback, useRef, useState, useEffect } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { exceptionLabel, operationalVisitLabel, type Store, type Visit } from '../../types/models'
-import { AppError, errorMessage } from '../../services/errors'
+import { errorMessage } from '../../services/errors'
 import { ChecklistTaskCard } from '../../components/ChecklistTaskCard'
 import { ObservationDialog } from '../../components/ObservationDialog'
 import { CameraModal } from '../technician/CameraModal'
@@ -13,15 +13,12 @@ import { Alert, Badge, Button, Card, PageHeader, Textarea } from '../../componen
 import { QueryState } from '../../components/feedback/QueryState'
 import { TicketReport } from '../tickets/TicketReport'
 import { useVisitEditor } from './useVisitEditor'
-import { ChecklistTimer } from './ChecklistTimer'
 import { validateFiles } from '../../services/evidence'
-import { formExpired } from './clock'
 import { PendingVisit } from './PendingVisit'
 import { VisitRecord } from './VisitRecord'
 import { useAuth } from '../auth/AuthProvider'
 import { ExceptionHistory } from './ExceptionHistory'
 import { ChecklistPhotos } from './ChecklistPhotos'
-import { GpsAction } from './GpsAction'
 import { optimizeEvidenceImage } from '../../services/optimizeEvidenceImage'
 import { NotPerformedAction } from './NotPerformedAction'
 import { WorkRecovery } from './WorkRecovery'
@@ -46,7 +43,6 @@ export function VisitEditor({ id, origin }: { id: number; origin: Visit['origin'
 }
 function Editor({ initial, store }: { initial: Visit; store: Store }) {
   const auth = useAuth()
-  const expiryPrompted = useRef<string | undefined>(undefined)
   const galleryInput = useRef<HTMLInputElement>(null)
   const galleryTaskId = useRef<number | undefined>()
   const {
@@ -59,10 +55,6 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     saving,
     error,
     setError,
-    reason,
-    setReason,
-    exceptionBusy,
-    setExceptionBusy,
     mustComplete,
     back,
     blocker,
@@ -77,7 +69,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     doneTasks,
     editable,
     openForm,
-    applyConfirmed,
+    finishPhysicalWork,
     markNotPerformed,
     needsReview,
     conflict,
@@ -89,43 +81,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     corrections,
     setCorrections,
   } = useVisitEditor(initial)
-  const [expired, setExpired] = useState(false)
   const [optimizing, setOptimizing] = useState(false)
-  useEffect(() => {
-    const updateClock = () => {
-      setExpired(formExpired(visit))
-    }
-    updateClock()
-    const timer = window.setInterval(updateClock, 1000)
-    return () => window.clearInterval(timer)
-  }, [visit])
-  useEffect(() => {
-    if (
-      !expired ||
-      !editable ||
-      !visit.expiresAt ||
-      visit.exceptions?.some((item) => item.type === 'time_limit')
-    )
-      return
-    if (step.kind === 'time_exception') expiryPrompted.current = visit.expiresAt
-    if (
-      auth.status === 'authenticated' &&
-      step.kind === 'editing' &&
-      expiryPrompted.current !== visit.expiresAt
-    ) {
-      expiryPrompted.current = visit.expiresAt
-      setStep({ kind: 'time_exception' })
-    }
-  }, [
-    auth.status,
-    expired,
-    visit.status,
-    visit.expiresAt,
-    step.kind,
-    setStep,
-    editable,
-    visit.exceptions,
-  ])
   if (visit.phase === 'in_review' && visit.submittedAt)
     return (
       <>
@@ -183,7 +139,7 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
               Ejecutando bajo excepción GPS pendiente; la presencia todavía no está aprobada.
             </Alert>
           )}
-          <p>El plazo de cinco minutos comienza únicamente al abrir el registro final.</p>
+          <p>Termina el trabajo físico y registra los resultados sin límite de tiempo.</p>
           {visit.phase === 'physical_work' ? (
             <>
               {visit.tasks.length > 0 && (
@@ -193,14 +149,14 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                   ))}
                 </ol>
               )}
-              {auth.session && !visit.readOnly && (
-                <ChecklistPhotos
-                  scope={`${repos.source}:${auth.session.user.id}:${visit.id}`}
-                  tasks={visit.tasks}
-                />
-              )}
               {!visit.readOnly && (
-                <GpsAction visit={visit} scope="closure" onConfirmed={applyConfirmed} />
+                <Button disabled={saving} onClick={() => void finishPhysicalWork()}>
+                  {saving
+                    ? 'Registrando fin…'
+                    : visit.origin === 'checklist'
+                      ? 'Terminar recorrido'
+                      : 'Terminar atención'}
+                </Button>
               )}
             </>
           ) : (
@@ -296,55 +252,41 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         <Card title="Corrección requerida">
           <p>
             Completa o corrige este mismo formulario y envíalo al supervisor de National Facilities.
-            El vencimiento original se conserva.
+            Se conservan las fotos y fechas originales. La presencia sigue sin validación normal.
           </p>
-          {(visit.exceptions ?? []).map((item) => (
-            <div key={item.id}>
-              {item.approved === false && (
-                <Alert>Justificación rechazada: {item.reviewReason}</Alert>
-              )}
-              <Textarea
-                label={
-                  item.type === 'time_limit'
-                    ? 'Justificación de la demora'
-                    : `Justificación ${exceptionLabel(item)}`
-                }
-                minLength={10}
-                maxLength={500}
-                value={corrections[`${item.type}:${item.scope}`] ?? item.reason}
-                onChange={(event) =>
-                  setCorrections((current) => ({
-                    ...current,
-                    [`${item.type}:${item.scope}`]: event.target.value,
-                  }))
-                }
-              />
-            </div>
-          ))}
+          {(visit.exceptions ?? [])
+            .filter((item) => item.approved === false)
+            .map((item) => (
+              <div key={item.id}>
+                {item.approved === false && (
+                  <Alert>Justificación rechazada: {item.reviewReason}</Alert>
+                )}
+                <Textarea
+                  label={
+                    item.type === 'time_limit'
+                      ? 'Justificación de la demora'
+                      : `Justificación ${exceptionLabel(item)}`
+                  }
+                  minLength={10}
+                  maxLength={500}
+                  value={corrections[`${item.type}:${item.scope}`] ?? item.reason}
+                  onChange={(event) =>
+                    setCorrections((current) => ({
+                      ...current,
+                      [`${item.type}:${item.scope}`]: event.target.value,
+                    }))
+                  }
+                />
+                <EvidenceGallery ids={item.evidenceIds ?? []} />
+              </div>
+            ))}
         </Card>
       )}
-      <ChecklistTimer visit={visit} />
       <NotPerformedAction
         visit={visit}
         disabled={saving || optimizing || conflict || Boolean(pendingPhoto)}
         submit={markNotPerformed}
       />
-      {expired && visit.status === 'in_progress' && (
-        <Card title="Justificación requerida">
-          <p>
-            El trabajo sigue En proceso y el borrador está conservado. Explica la demora en el
-            registro del formulario; la justificación no envía el registro: completa el contenido y
-            pulsa Enviar a revisión.
-          </p>
-          <Button
-            onClick={() => {
-              setStep({ kind: 'time_exception' })
-            }}
-          >
-            Justificar vencimiento
-          </Button>
-        </Card>
-      )}
       <input
         ref={galleryInput}
         className="sr-only"
@@ -383,35 +325,11 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         }}
       />
       <fieldset
-        disabled={
-          step.kind === 'validating' ||
-          saving ||
-          optimizing ||
-          exceptionBusy ||
-          step.kind === 'success'
-        }
+        disabled={step.kind === 'validating' || saving || optimizing || step.kind === 'success'}
         className="nf-editor-fields"
       >
         {visit.origin === 'checklist' ? (
           <>
-            {auth.session && (
-              <ChecklistPhotos
-                scope={`${repos.source}:${auth.session.user.id}:${visit.id}`}
-                tasks={visit.tasks}
-                onAssociate={async (photo, taskId) => {
-                  const count =
-                    visit.answers.find((answer) => answer.taskId === taskId)?.evidenceIds.length ??
-                    0
-                  const validation = validateFiles(
-                    [new File([photo.blob], photo.name, { type: photo.mimeType })],
-                    count,
-                  )
-                  if (validation.errors.length)
-                    throw new AppError('validation', validation.errors.join(' '))
-                  await capture(photo, taskId)
-                }}
-              />
-            )}
             <div className="nf-progress" role="status">
               <span>
                 {doneTasks} de {visit.tasks.length} tareas completadas
@@ -456,7 +374,6 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             {auth.session && (
               <ChecklistPhotos
                 scope={`${repos.source}:${auth.session.user.id}:${visit.id}`}
-                tasks={[]}
                 onAssociate={(photo) => capture(photo)}
               />
             )}
@@ -639,58 +556,8 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
             title="Confirmar envío del registro"
             onClose={() => setStep({ kind: 'editing' })}
           >
-            <p>Se utiliza el GPS de cierre ya registrado. No se solicita otra ubicación.</p>
+            <p>Se conservan la llegada y el fin físico registrados.</p>
             <Button onClick={() => void confirmFinish()}>Confirmar envío</Button>
-          </Modal>
-          <Modal
-            open={step.kind === 'time_exception' && auth.status === 'authenticated'}
-            title="Justificación por demora"
-            busy={exceptionBusy}
-            onClose={() => setStep({ kind: 'editing' })}
-          >
-            <Alert>Venció el plazo de cinco minutos para registrar el formulario.</Alert>
-            <p>
-              Explica por qué te demoraste o no pudiste completar el formulario. La justificación
-              será revisada por el supervisor de National Facilities. Se conserva el plazo original.
-            </p>
-            <p>
-              Inicio:{' '}
-              {visit.startedAt
-                ? new Date(visit.startedAt).toLocaleString('es-PE')
-                : 'No registrado'}
-            </p>
-            <p>
-              Vencimiento:{' '}
-              {visit.expiresAt
-                ? new Date(visit.expiresAt).toLocaleString('es-PE')
-                : 'No registrado'}
-            </p>
-            <Textarea
-              label="Justificación obligatoria"
-              value={reason}
-              maxLength={500}
-              onChange={(event) => setReason(event.target.value)}
-            />
-            <Button
-              disabled={exceptionBusy || reason.trim().length < 10}
-              onClick={() => {
-                if (step.kind !== 'time_exception' || exceptionBusy) return
-                setExceptionBusy(true)
-                void save()
-                  .then(() => repos.visits.requestTimeException(visit.id, reason))
-                  .then((next) => {
-                    applyConfirmed(next)
-                    setStep({ kind: 'editing' })
-                  })
-                  .catch((cause) => {
-                    setError(errorMessage(cause))
-                    setStep({ kind: 'editing' })
-                  })
-                  .finally(() => setExceptionBusy(false))
-              }}
-            >
-              Guardar justificación y continuar
-            </Button>
           </Modal>
           <Modal
             open={step.kind === 'success'}

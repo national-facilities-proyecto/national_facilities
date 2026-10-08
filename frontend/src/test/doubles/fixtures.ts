@@ -162,7 +162,6 @@ export function createFixtures(): MockDatabase {
     evidenceIds: [],
     workDescription: '',
     radiusMeters: 100,
-    timeLimitSeconds: 300,
     timeLimitExceeded: false,
   }))
   const tickets: Ticket[] = [-2, 0, 2].map((offset, index) => ({
