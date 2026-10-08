@@ -1,7 +1,7 @@
 import type { Session, UserRole } from '../../types/models'
 export const roleHomes: Record<UserRole, string> = {
   technician: '/checklists',
-  store_supervisor: '/supervisor/tickets',
+  store_supervisor: '/supervisor/tickets/new',
   account_supervisor: '/technical-supervisor/visits',
   administrator: '/admin/users',
 }
