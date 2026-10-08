@@ -5,7 +5,7 @@ import { ErrorBoundary } from '../../components/feedback/ErrorBoundary'
 const Map = lazy(async () => ({
   default: (await import('./AssignedLocationsMap')).AssignedLocationsMap,
 }))
-export function LazyMap(props: { stores: MapLocation[]; onSelect?: (store: MapLocation) => void }) {
+export function LazyMap(props: { stores: MapLocation[] }) {
   if (!props.stores.length) return null
   return (
     <ErrorBoundary>

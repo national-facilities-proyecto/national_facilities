@@ -1,154 +1,120 @@
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ChecklistListPage from './ChecklistListPage'
 import { renderPage } from '../test/render'
 import { createFixtures } from '../test/doubles/fixtures'
 import { createMockRepositories } from '../test/doubles/repositories'
 import type { Store, Visit, VisitStatus } from '../types/models'
-
-vi.mock('../features/checklists/WorkRecovery', () => ({ WorkRecovery: () => null }))
+vi.mock('../features/checklists/WorkRecovery', () => ({
+  WorkRecovery: () => <section aria-label="Recuperación de trabajos" />,
+}))
 vi.mock('../features/technician/LazyMap', () => ({
-  LazyMap: ({ stores, onSelect }: { stores: Store[]; onSelect: (store: Store) => void }) => (
+  LazyMap: ({ stores }: { stores: Store[] }) => (
     <section aria-label="Mapa de tiendas">
       {stores.map((store) => (
-        <button key={store.id} onClick={() => onSelect(store)}>
-          {store.name}
-        </button>
+        <p key={store.id}>{store.name}</p>
       ))}
     </section>
   ),
 }))
-
 const stores = createFixtures().stores
-function visit(id: number, status: VisitStatus, storeId = stores[0].id): Visit {
-  return { ...createFixtures().visits[0], id, status, storeId, storeSnapshot: undefined }
+function visit(id: number, status: VisitStatus, technicianId = 1): Visit {
+  return { ...createFixtures().visits[0], id, status, technicianId, storeSnapshot: undefined }
 }
-async function setup(visits: Visit[], catalog = stores) {
+async function setup(visits: Visit[] = [], catalog = stores, failure = false) {
   const repos = createMockRepositories()
+  await repos.auth.login({ kind: 'demo', userId: 1 })
   repos.checklists.generate = vi.fn().mockResolvedValue(undefined)
-  vi.spyOn(repos.checklists, 'list').mockResolvedValue(visits)
+  const list = vi.spyOn(repos.checklists, 'list')
+  if (failure) list.mockRejectedValue(new Error('Offline'))
+  else list.mockResolvedValue(visits)
   vi.spyOn(repos.stores, 'list').mockResolvedValue(catalog)
   const result = renderPage(<ChecklistListPage />, repos)
-  await screen.findByRole('heading', { name: 'Mis Checklist' })
+  await screen.findByRole('region', { name: 'Mapa de tiendas' })
+  if (!failure) await screen.findByRole('button', { name: 'Bolsa compartida' })
   return result
 }
-
-describe('Mapa general de Mis Checklist', () => {
+const map = () => within(screen.getByRole('region', { name: 'Mapa de tiendas' }))
+describe('Mis Checklist por cobertura y propietario', () => {
   beforeEach(() => localStorage.clear())
-
-  it('conserva las tiendas finalizadas en todas las pestañas', async () => {
-    await setup([visit(10, 'completed'), visit(11, 'completed', stores[1].id)])
-    for (const tab of ['Bolsa compartida', 'Mis trabajos', 'En revisión', 'Finalizados']) {
+  it('muestra tiendas sin visitas debajo de recuperación y conserva el mapa en tres pestañas', async () => {
+    await setup()
+    expect(screen.getByText('No tienes checklists disponibles por ahora.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Mis trabajos' })).not.toBeInTheDocument()
+    expect(
+      screen
+        .getByRole('region', { name: 'Recuperación de trabajos' })
+        .compareDocumentPosition(screen.getByRole('region', { name: 'Mapa de tiendas' })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    for (const tab of ['Bolsa compartida', 'En revisión', 'Finalizados']) {
       fireEvent.click(screen.getByRole('button', { name: tab }))
-      expect(screen.getByRole('region', { name: 'Mapa de tiendas' })).toBeVisible()
-      for (const store of stores)
-        expect(screen.getByRole('button', { name: store.name })).toBeVisible()
+      for (const store of stores) expect(map().getByText(store.name)).toBeVisible()
     }
   })
-
-  it('agrupa cuotas y entradas duplicadas por tienda y abre una finalizada', async () => {
-    const { router } = await setup(
+  it('no deriva acceso de snapshots cuando el catálogo autorizado está vacío', async () => {
+    await setup([{ ...visit(10, 'in_progress'), storeSnapshot: stores[0] }], [])
+    expect(screen.getByText('No tienes tiendas asignadas por ahora.')).toBeVisible()
+    for (const store of stores) expect(map().queryByText(store.name)).not.toBeInTheDocument()
+  })
+  it('descarta inactivas y agrupa por ID sin depender de cuotas', async () => {
+    await setup(
       [visit(10, 'completed'), visit(11, 'completed')],
-      [stores[0], stores[0]],
+      [stores[0], stores[0], { ...stores[1], active: false }],
     )
-    expect(screen.getAllByRole('button', { name: stores[0].name })).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: stores[0].name }))
-    expect(router.state.location.pathname).toBe('/checklists/10')
+    expect(map().getAllByText(stores[0].name)).toHaveLength(1)
+    expect(map().queryByText(stores[1].name)).not.toBeInTheDocument()
   })
-
-  it.each<VisitStatus>([
-    'available',
-    'claimed',
-    'in_progress',
-    'correction_required',
-    'pending_approval',
-  ])('prioriza %s sobre una visita finalizada incluso desde Finalizados', async (status) => {
-    const { router } = await setup([visit(10, 'completed'), visit(12, status)])
+  it('Finalizados solo contiene visitas completadas por el técnico conectado', async () => {
+    await setup([visit(10, 'completed'), visit(11, 'completed', 5), visit(12, 'available')])
     fireEvent.click(screen.getByRole('button', { name: 'Finalizados' }))
-    fireEvent.click(screen.getByRole('button', { name: stores[0].name }))
-    expect(router.state.location.pathname).toBe('/checklists/12')
+    const links = screen.getAllByRole('link', { name: 'Ver detalle' })
+    expect(links).toHaveLength(1)
+    expect(links[0]).toHaveAttribute('href', '/checklists/10')
   })
-
-  it('prioriza retomar un trabajo activo sobre tomar otro disponible', async () => {
-    const { router } = await setup([visit(10, 'available'), visit(12, 'in_progress')])
-    fireEvent.click(screen.getByRole('button', { name: stores[0].name }))
-    expect(router.state.location.pathname).toBe('/checklists/12')
+  it('En revisión exige propietario, envío y fase real de revisión', async () => {
+    const review = {
+      ...visit(10, 'pending_approval'),
+      phase: 'in_review' as const,
+      submittedAt: '2026-10-08T15:00:00Z',
+    }
+    await setup([
+      review,
+      { ...review, id: 11, technicianId: 5 },
+      { ...review, id: 12, phase: 'results', submittedAt: undefined },
+      { ...review, id: 13, submittedAt: undefined },
+      visit(14, 'correction_required'),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'En revisión' }))
+    const links = screen.getAllByRole('link', { name: 'Ver detalle' })
+    expect(links).toHaveLength(1)
+    expect(links[0]).toHaveAttribute('href', '/checklists/10')
   })
-
-  it.each<Visit['phase']>(['physical_finished', 'results'])(
-    'prioriza retomar la etapa %s antes de tomar otra visita disponible',
-    async (phase) => {
-      const { router } = await setup([
-        visit(10, 'available'),
-        { ...visit(12, 'pending_approval'), phase },
-      ])
-      fireEvent.click(screen.getByRole('button', { name: stores[0].name }))
-      expect(router.state.location.pathname).toBe('/checklists/12')
+  it('la bolsa solo muestra disponibles, no reservas ni trabajos activos', async () => {
+    await setup([visit(10, 'available'), visit(11, 'claimed'), visit(12, 'in_progress')])
+    const links = screen.getAllByRole('link', { name: 'Ver detalle' })
+    expect(links).toHaveLength(1)
+    expect(links[0]).toHaveAttribute('href', '/checklists/10')
+  })
+  it('un fallo de visitas no oculta las tiendas autorizadas', async () => {
+    await setup([], stores, true)
+    for (const store of stores) expect(map().getByText(store.name)).toBeVisible()
+  })
+  it.each([NaN, Infinity, 91].map((latitude) => ({ latitude })))(
+    'explica ubicaciones no disponibles sin inventarlas: $latitude',
+    async ({ latitude }) => {
+      await setup([], [{ ...stores[0], latitude }])
+      expect(
+        screen.getByText('Tus tiendas asignadas aún no tienen una ubicación disponible.'),
+      ).toBeVisible()
+      expect(map().queryByText(stores[0].name)).not.toBeInTheDocument()
     },
   )
-
-  it('solo incluye tiendas con visitas checklist accesibles', async () => {
-    await setup([
-      visit(10, 'completed'),
-      { ...visit(12, 'in_progress', stores[1].id), origin: 'ticket' },
-    ])
-    expect(screen.getByRole('button', { name: stores[0].name })).toBeVisible()
-    expect(screen.queryByRole('button', { name: stores[1].name })).not.toBeInTheDocument()
-  })
-
-  it('usa el snapshot autorizado si falta la tienda en el catálogo actual', async () => {
-    const { name, address, latitude, longitude, clientId } = stores[0]
-    const { router } = await setup(
-      [
-        {
-          ...visit(12, 'in_progress'),
-          storeSnapshot: { name, address, latitude, longitude, clientId },
-        },
-      ],
-      [],
-    )
-    fireEvent.click(screen.getByRole('button', { name }))
-    expect(router.state.location.pathname).toBe('/checklists/12')
-  })
-
-  it.each(
-    [
-      [],
-      [{ ...stores[0], latitude: NaN }],
-      [{ ...stores[0], longitude: Infinity }],
-      [{ ...stores[0], latitude: 91 }],
-      [{ ...stores[0], longitude: -181 }],
-    ].map((catalog) => ({ catalog })),
-  )('explica la ausencia de ubicaciones válidas sin ocultar las visitas', async ({ catalog }) => {
-    await setup([visit(10, 'completed')], catalog)
-    expect(screen.getByText(/No hay ubicaciones válidas/)).toBeVisible()
-    expect(screen.queryByRole('button', { name: stores[0].name })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Finalizados' }))
-    expect(screen.getByRole('link', { name: 'Ver detalle' })).toHaveAttribute(
-      'href',
-      '/checklists/10',
-    )
-  })
-
-  it('muestra el estado vacío cuando no hay visitas accesibles', async () => {
-    await setup([])
-    expect(screen.getByText(/No hay ubicaciones válidas/)).toBeVisible()
-    expect(screen.queryByRole('button', { name: stores[0].name })).not.toBeInTheDocument()
-  })
-
   it.each([
     { latitude: 0, longitude: 0 },
     { latitude: -90, longitude: 180 },
-  ])('admite coordenadas válidas cero y límites geográficos', async (coordinates) => {
-    await setup([visit(10, 'completed')], [{ ...stores[0], ...coordinates }])
-    expect(screen.getByRole('button', { name: stores[0].name })).toBeVisible()
-    expect(screen.queryByText(/No hay ubicaciones válidas/)).not.toBeInTheDocument()
-  })
-
-  it('descarta un snapshot sin coordenadas sin inventar una ubicación', async () => {
-    const snapshot = { ...stores[0] }
-    Reflect.set(snapshot, 'latitude', null)
-    await setup([{ ...visit(10, 'completed'), storeSnapshot: snapshot }], [])
-    expect(screen.getByText(/No hay ubicaciones válidas/)).toBeVisible()
+  ])('conserva coordenadas válidas cero y límites geográficos', async (coordinates) => {
+    await setup([], [{ ...stores[0], ...coordinates }])
+    expect(map().getByText(stores[0].name)).toBeVisible()
   })
 })

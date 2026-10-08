@@ -21,7 +21,7 @@ import { validateFiles } from '../../services/evidence'
 import { PendingVisit } from './PendingVisit'
 import { VisitRecord } from './VisitRecord'
 import { useAuth } from '../auth/AuthProvider'
-import { ExceptionHistory } from './ExceptionHistory'
+import { ExceptionSummary } from './ExceptionSummary'
 import { ChecklistPhotos } from './ChecklistPhotos'
 import { optimizeEvidenceImage } from '../../services/optimizeEvidenceImage'
 import { NotPerformedAction } from './NotPerformedAction'
@@ -88,6 +88,11 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
     setCorrections,
   } = useVisitEditor(initial)
   const [optimizing, setOptimizing] = useState(false)
+  const exceptions = visit.exceptions?.length
+    ? visit.exceptions
+    : visit.exception
+      ? [visit.exception]
+      : []
   if (visit.phase === 'in_review' && visit.submittedAt)
     return (
       <>
@@ -138,7 +143,9 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
                 : 'Atención terminada'
           }
         >
-          {visit.gpsExceptionPending && <Badge>Llegada pendiente de revisión</Badge>}
+          {exceptions.map((item, index) => (
+            <ExceptionSummary key={item.id ?? index} item={item} />
+          ))}
           {visit.phase === 'physical_work' ? (
             <>
               {visit.tasks.length > 0 && (
@@ -264,13 +271,18 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
           ? 'En curso'
           : operationalVisitLabel(visit)}
       </Badge>
+      {exceptions
+        .filter((item) => visit.phase !== 'correction_required' || item.approved !== false)
+        .map((item, index) => (
+          <ExceptionSummary key={item.id ?? index} item={item} />
+        ))}
       {visit.phase === 'correction_required' && (
         <Card title="Corrección requerida">
           <p>
             Completa o corrige este mismo formulario y envíalo al supervisor de National Facilities.
             Se conservan las fotos y fechas originales. La presencia sigue sin validación normal.
           </p>
-          {(visit.exceptions ?? [])
+          {exceptions
             .filter((item) => item.approved === false)
             .map((item) => (
               <div key={item.id}>
@@ -462,11 +474,6 @@ function Editor({ initial, store }: { initial: Visit; store: Store }) {
         disabled={saving || optimizing || conflict || Boolean(pendingPhoto)}
         submit={markNotPerformed}
       />
-      {Boolean(visit.exceptionHistory?.length) && (
-        <Disclosure title="Historial de excepciones">
-          <ExceptionHistory visit={visit} />
-        </Disclosure>
-      )}
       {pendingPhoto && (
         <Alert>
           {pendingPhoto.confirmed

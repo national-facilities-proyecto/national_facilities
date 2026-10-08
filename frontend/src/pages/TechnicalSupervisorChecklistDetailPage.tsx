@@ -11,9 +11,26 @@ import { VisitResults } from '../features/checklists/VisitResults'
 import { ExceptionSummary } from '../features/checklists/ExceptionSummary'
 import { ExceptionDetails } from '../features/checklists/ExceptionDetails'
 import { ExceptionHistory } from '../features/checklists/ExceptionHistory'
-import { exceptionLabel, visitStatusLabels } from '../types/models'
+import { exceptionLabel, visitStatusLabels, type LocationException } from '../types/models'
 import { displayDate } from '../utils/dates'
 import { AppError, errorMessage } from '../services/errors'
+
+function sameExceptionSnapshot(left: LocationException, right: LocationException) {
+  const fields = [
+    'id',
+    'type',
+    'scope',
+    'revision',
+    'reason',
+    'authorId',
+    'requestedAt',
+    'approved',
+    'reviewerId',
+    'reviewedAt',
+    'reviewReason',
+  ] as const
+  return fields.every((field) => left[field] === right[field])
+}
 
 export default function TechnicalSupervisorChecklistDetailPage() {
   const { id } = useParams()
@@ -46,17 +63,20 @@ export default function TechnicalSupervisorChecklistDetailPage() {
   const pending = exceptions.filter((item) => item.approved === undefined)
   const resolved = exceptions.filter((item) => item.approved !== undefined)
   const history = visit.exceptionHistory ?? []
-  const resolvedWithoutEvent = resolved.filter(
-    (item) =>
-      !history.some(
-        (entry) =>
-          item.id !== undefined &&
-          entry.exception.id === item.id &&
-          entry.exception.revision === item.revision &&
-          entry.exception.approved === item.approved &&
-          entry.exception.reason === item.reason &&
-          entry.exception.reviewReason === item.reviewReason,
+  // La ficha pendiente ya representa la solicitud vigente. Su metadata queda
+  // en Detalles técnicos; el historial presenta versiones y decisiones previas.
+  const historical = history.filter(
+    (entry) =>
+      !pending.some(
+        (item) =>
+          sameExceptionSnapshot(item, entry.exception) &&
+          entry.exception.approved === undefined &&
+          !entry.exception.reviewReason &&
+          entry.kind === 'exception',
       ),
+  )
+  const resolvedWithoutEvent = resolved.filter(
+    (item) => !history.some((entry) => sameExceptionSnapshot(item, entry.exception)),
   )
   const reviewable =
     ['in_review', 'correction_required'].includes(visit.phase ?? '') && Boolean(visit.submittedAt)
@@ -86,7 +106,7 @@ export default function TechnicalSupervisorChecklistDetailPage() {
             <strong>{visit.technicianName?.trim() || 'Nombre no registrado'}</strong>
           </div>
           <div>
-            <span>Fecha de visita</span>
+            <span>{visit.startedAt ? 'Fecha de ejecución' : 'Fecha programada'}</span>
             <strong>{displayDate(visit.startedAt ?? visit.scheduledAt)}</strong>
           </div>
           <Badge>{visitStatusLabels[visit.status]}</Badge>
@@ -123,12 +143,15 @@ export default function TechnicalSupervisorChecklistDetailPage() {
       <Disclosure title="Resultados del checklist y trabajo">
         <VisitResults visit={visit} />
       </Disclosure>
-      {Boolean(resolved.length || visit.exceptionHistory?.length) && (
+      {Boolean(resolvedWithoutEvent.length || historical.length) && (
         <Disclosure title="Historial de excepciones">
           {resolvedWithoutEvent.map((item, index) => (
             <ExceptionSummary key={item.id ?? index} item={item} />
           ))}
-          <ExceptionHistory visit={visit} />
+          <ExceptionHistory
+            visit={{ ...visit, exceptionHistory: historical }}
+            summarized={pending.concat(resolvedWithoutEvent)}
+          />
         </Disclosure>
       )}
       <Disclosure title="Detalles técnicos">

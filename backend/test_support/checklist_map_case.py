@@ -48,25 +48,46 @@ with transaction.atomic():
         password_initialized=True,
     )
     stores, visits = [], []
+    peer_username = None
+    supervisor_username = None
     if "--empty" not in sys.argv:
         client = Cliente.objects.create(
             razon_social="Cuenta ficticia mapa E2E", ruc=f"MAP-{suffix}"
         )
         zone = Zona.objects.create(cliente=client, nombre="Zona ficticia mapa")
         CoberturaUsuario.objects.create(usuario=user, cliente=client, zona=zone)
-        template = PlantillaChecklist.objects.create(nombre="Plantilla ficticia mapa")
-        ItemPlantilla.objects.create(
-            plantilla=template,
-            descripcion="Inspección ficticia",
-            foto_obligatoria=False,
+        if "--no-visits" not in sys.argv:
+            template = PlantillaChecklist.objects.create(
+                nombre="Plantilla ficticia mapa"
+            )
+            ItemPlantilla.objects.create(
+                plantilla=template,
+                descripcion="Inspección ficticia",
+                foto_obligatoria=False,
+            )
+            Contrato.objects.create(
+                cliente=client,
+                plantilla_checklist=template,
+                fecha_inicio=timezone.localdate().replace(day=1),
+                frecuencia_visitas_mensual=2,
+                radio_validacion_metros=100,
+            )
+        peer = Usuario.objects.create_user(
+            username=f"map-peer-{suffix}",
+            password=PASSWORD,
+            rol=Rol.objects.get(nombre="Tecnico"),
+            password_initialized=True,
         )
-        Contrato.objects.create(
-            cliente=client,
-            plantilla_checklist=template,
-            fecha_inicio=timezone.localdate().replace(day=1),
-            frecuencia_visitas_mensual=2,
-            radio_validacion_metros=100,
+        CoberturaUsuario.objects.create(usuario=peer, cliente=client, zona=zone)
+        peer_username = peer.username
+        supervisor = Usuario.objects.create_user(
+            username=f"map-supervisor-{suffix}",
+            password=PASSWORD,
+            rol=Rol.objects.get(nombre="Supervisor de cuenta"),
+            password_initialized=True,
         )
+        CoberturaUsuario.objects.create(usuario=supervisor, cliente=client, zona=zone)
+        supervisor_username = supervisor.username
         for index in range(2):
             store = Tienda.objects.create(
                 cliente=client,
@@ -77,12 +98,21 @@ with transaction.atomic():
                 longitud=-77.0181 + index * 0.01,
             )
             stores.append(store.pk)
-        generate_month(user)
+        if "--no-visits" not in sys.argv:
+            generate_month(user)
         visits = list(
             Visita.objects.filter(tienda_id__in=stores)
             .order_by("tienda_id", "cuota")
             .values_list("pk", flat=True)
         )
     print(
-        json.dumps({"username": user.username, "storeIds": stores, "visitIds": visits})
+        json.dumps(
+            {
+                "username": user.username,
+                "peerUsername": peer_username,
+                "supervisorUsername": supervisor_username,
+                "storeIds": stores,
+                "visitIds": visits,
+            }
+        )
     )

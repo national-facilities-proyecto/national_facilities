@@ -5,9 +5,30 @@ import { VisitRecord } from './VisitRecord'
 import { displayDuration } from '../../utils/durations'
 import { submissionMessage } from './submissionMessage'
 import { auditPerson } from '../../utils/auditPerson'
+import { VisitTiming } from './VisitTiming'
+import { ExceptionHistory } from './ExceptionHistory'
+import { ExceptionDetails } from './ExceptionDetails'
+import { Disclosure } from '../../components/ui/Disclosure'
+import type { Visit } from '../../types/models'
 
 vi.mock('../../components/EvidenceGallery', () => ({ EvidenceGallery: () => null }))
 afterEach(cleanup)
+// Auditoría exclusiva del supervisor, independiente del resumen del técnico.
+function AuditRecord({ visit }: { visit: Visit }) {
+  return (
+    <>
+      <Disclosure title="Detalles técnicos">
+        <VisitTiming visit={visit} />
+        {visit.exceptions?.map((item, index) => (
+          <ExceptionDetails key={item.id ?? index} item={item} />
+        ))}
+      </Disclosure>
+      <Disclosure title="Historial de excepciones">
+        <ExceptionHistory visit={visit} />
+      </Disclosure>
+    </>
+  )
+}
 
 it.each([
   [43064.997793, '11 h 57 min 44 s'],
@@ -41,7 +62,7 @@ it('conserva eventos y distingue autor, actor y revisor histórico', async () =>
     reviewReason: 'Falta detalle',
   }
   render(
-    <VisitRecord
+    <AuditRecord
       visit={{
         ...visit,
         answers: [],
@@ -140,3 +161,57 @@ it('conserva reporte general y respuestas históricas aunque ya no exista la tar
   expect(screen.getByRole('heading', { name: 'Actividad histórica #999' })).toBeVisible()
   expect(screen.getByText('Observación histórica conservada.')).toBeVisible()
 })
+
+it.each([undefined, true, false])(
+  'el técnico ve una sola excepción actual %s sin IDs, historial o telemetría',
+  (approved) => {
+    const exception = {
+      id: 41,
+      revision: 2,
+      type: 'location' as const,
+      scope: 'arrival' as const,
+      reason: 'Motivo actual de llegada.',
+      approved,
+      reviewReason: approved === undefined ? undefined : 'Decisión del supervisor.',
+      failure: 'denied',
+      telemetry: {
+        latitude: -12.123456,
+        longitude: -77.123456,
+        accuracy: 8,
+        distanceMeters: null,
+        radiusMeters: 100,
+        failure: 'denied',
+        validated: false,
+        capturedAt: Date.now(),
+      },
+      authorId: 1,
+    }
+    render(
+      <VisitRecord
+        visit={{
+          ...createFixtures().visits[0],
+          exceptions: [exception],
+          exceptionHistory: [
+            {
+              id: 'original',
+              at: '2026-10-08T15:00:00Z',
+              actorId: 1,
+              kind: 'exception',
+              exception,
+            },
+          ],
+        }}
+      />,
+    )
+    expect(screen.getAllByText(exception.reason)).toHaveLength(1)
+    expect(
+      within(screen.getByRole('region', { name: 'GPS de llegada' })).getByText(
+        approved === undefined ? 'Pendiente' : approved ? 'Aprobada' : 'Rechazada',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText('Historial de excepciones')).not.toBeInTheDocument()
+    expect(screen.queryByText('Detalles técnicos')).not.toBeInTheDocument()
+    expect(screen.queryByText('-12.123456')).not.toBeInTheDocument()
+    expect(screen.queryByText(/ID #|ID de la excepción|Usuario #/)).not.toBeInTheDocument()
+  },
+)

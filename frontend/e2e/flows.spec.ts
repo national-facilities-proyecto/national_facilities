@@ -319,9 +319,18 @@ for (const origin of ['checklist', 'ticket'] as const) {
       expect(history.map((entry) => object(entry.exception).approved)).toEqual([false, true])
       await page.reload()
       await expect(page.getByText('Esta visita ya fue finalizada.', { exact: true })).toBeVisible()
-      await page.getByText('Historial de excepciones', { exact: true }).click()
+      await expect(page.getByText('Historial de excepciones', { exact: true })).toHaveCount(0)
+      await expect(page.getByText('Detalles técnicos', { exact: true })).toHaveCount(0)
       await expect(
-        page.getByRole('heading', { name: 'Historial de justificaciones y decisiones' }),
+        page.getByText(
+          'A mobile network interruption prevented sending the previously gathered photographs.',
+          { exact: true },
+        ),
+      ).toHaveCount(1)
+      await reviewer.reload()
+      await reviewer.getByText('Historial de excepciones', { exact: true }).click()
+      await expect(
+        reviewer.getByRole('heading', { name: 'Historial de justificaciones y decisiones' }),
       ).toBeVisible()
       await expect(page.locator('.nf-evidence img')).toHaveCount(2)
       await reviewer.close()

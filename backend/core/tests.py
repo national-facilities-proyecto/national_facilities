@@ -722,6 +722,76 @@ class IntegrationTests(TestCase):
                     visit.ticket_origen.refresh_from_db()
                     self.assertEqual(visit.ticket_origen.estado, "resuelto")
 
+    def test_technician_map_catalog_without_visits_respects_exact_active_coverage(self):
+        self.assertFalse(Visita.objects.exists())
+        self.assertEqual(self.client.get("/api/checklists/").data, [])
+        catalog = self.client.get("/api/tiendas/")
+        self.assertEqual([store["id"] for store in catalog.data], [self.store.pk])
+        foreign_zone = Zona.objects.create(
+            cliente=self.store.cliente, nombre="Otra zona"
+        )
+        foreign_store = Tienda.objects.create(
+            cliente=self.store.cliente,
+            zona=foreign_zone,
+            nombre="Fuera de cobertura",
+            direccion="Dirección ficticia",
+            latitud="-12.1",
+            longitud="-77.1",
+        )
+        self.assertNotIn(
+            foreign_store.pk,
+            [store["id"] for store in self.client.get("/api/tiendas/").data],
+        )
+        self.assertEqual(
+            self.client.get(f"/api/tiendas/{foreign_store.pk}/").status_code, 404
+        )
+        self.store.activo = False
+        self.store.save(update_fields=["activo"])
+        self.assertEqual(self.client.get("/api/tiendas/").data, [])
+        self.store.activo = True
+        self.store.save(update_fields=["activo"])
+        CoberturaUsuario.objects.filter(usuario=self.users["tech"]).update(activo=False)
+        self.assertEqual(self.client.get("/api/tiendas/").data, [])
+        self.assertEqual(self.client.get("/api/checklists/").data, [])
+
+    def test_own_reviews_and_completions_cannot_be_read_by_another_technician_in_same_coverage(
+        self,
+    ):
+        visit = self.visit()
+        now = timezone.now()
+        for state in ("pendiente_validacion", "completada"):
+            with self.subTest(state=state):
+                Visita.objects.filter(pk=visit.pk).update(
+                    tecnico=self.users["tech"],
+                    estado=state,
+                    iniciado_en=now - timedelta(minutes=4),
+                    terminado_en=now - timedelta(minutes=3),
+                    formulario_abierto_en=now - timedelta(minutes=2),
+                    enviado_en=now - timedelta(minutes=1),
+                    completado_en=now if state == "completada" else None,
+                )
+                self.login_as("tech")
+                own = self.client.get("/api/checklists/")
+                self.assertEqual([item["id"] for item in own.data], [visit.pk])
+                self.assertEqual(
+                    own.data[0]["phase"],
+                    "finished" if state == "completada" else "in_review",
+                )
+                self.login_as("othertech")
+                self.assertEqual(
+                    [store["id"] for store in self.client.get("/api/tiendas/").data],
+                    [self.store.pk],
+                )
+                self.assertEqual(self.client.get("/api/checklists/").data, [])
+                self.assertEqual(
+                    self.client.get(f"/api/visitas/{visit.pk}/").status_code, 404
+                )
+                self.login_as("account")
+                self.assertEqual(
+                    [item["id"] for item in self.client.get("/api/checklists/").data],
+                    [visit.pk],
+                )
+
     def test_autosave_cas_and_idempotent_retry(self):
         visit = self.visit()
         self.start(visit)

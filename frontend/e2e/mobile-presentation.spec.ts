@@ -5,6 +5,7 @@ import { access, api, arrive, checklistCase, login, openResults, object, call } 
 test('móvil: cámara completa, rotación, repetir, confirmar y finalización según API', async ({
   page,
   request,
+  context,
 }) => {
   const token = await access(request, 'tech')
   const id = checklistCase()
@@ -97,9 +98,18 @@ test('móvil: cámara completa, rotación, repetir, confirmar y finalización se
   expect(object(await call(request, `/visitas/${id}/`, token)).status).toBe('completed')
   await page.getByRole('button', { name: 'Volver al listado' }).click()
   await page.goto(`/checklists/${id}/start`)
-  await page.getByText('Detalles técnicos', { exact: true }).click()
-  await expect(page.getByText('Trabajo físico', { exact: true })).toBeVisible()
-  await expect(page.getByText('Duración total', { exact: true })).toBeVisible()
+  await expect(page.getByText('Detalles técnicos', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Historial de excepciones', { exact: true })).toHaveCount(0)
+  await expect(
+    page.getByRole('heading', { name: 'Resultados del checklist', exact: true }),
+  ).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/mobile-completed-record.png', fullPage: true })
+  const reviewer = await context.newPage()
+  await login(reviewer, 'account')
+  await reviewer.goto(`/technical-supervisor/checklists/${id}`)
+  await reviewer.getByText('Detalles técnicos', { exact: true }).click()
+  await expect(reviewer.getByText('Trabajo físico', { exact: true })).toBeVisible()
+  await expect(reviewer.getByText('Duración total', { exact: true })).toBeVisible()
+  await reviewer.close()
 })

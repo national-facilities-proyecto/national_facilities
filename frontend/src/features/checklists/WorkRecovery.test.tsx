@@ -65,3 +65,28 @@ it('error de integridad se presenta explícito y no elige un trabajo', async () 
   expect(screen.getByRole('alert')).toHaveTextContent('Integridad incompatible')
   expect(screen.queryByRole('link', { name: 'Continuar trabajo' })).not.toBeInTheDocument()
 })
+
+it.each(['reserved', 'correction_required'] as const)(
+  'recupera %s con su enlace directo',
+  async (phase) => {
+    const repos = createMockRepositories()
+    await repos.auth.login({ kind: 'demo', userId: 1 })
+    const visit = {
+      ...createFixtures().visits[0],
+      id: 77,
+      phase,
+      startedAt: phase === 'reserved' ? undefined : '2026-10-08T15:00:00Z',
+      storeSnapshot: createFixtures().stores[0],
+    }
+    vi.spyOn(repos.visits, 'recovery').mockResolvedValue({
+      reservations: phase === 'reserved' ? [visit] : [],
+      corrections: phase === 'correction_required' ? [visit] : [],
+      inReview: [],
+    })
+    renderPage(<WorkRecovery />, repos)
+    expect(await screen.findByRole('link', { name: 'Continuar trabajo' })).toHaveAttribute(
+      'href',
+      '/checklists/77' + (visit.startedAt ? '/start' : ''),
+    )
+  },
+)

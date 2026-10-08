@@ -49,7 +49,7 @@ export default function TechnicalSupervisorChecklistsPage() {
       (!status || visitWorkStatus(visit.status) === status) &&
       (!storeId || visit.storeId === Number(storeId)) &&
       (!priority || visitPriority(visit.ticketId) === priority) &&
-      inDateRange(visit.completedAt ?? visit.scheduledAt, from, to),
+      inDateRange(visit.startedAt ?? visit.scheduledAt, from, to),
   )
   return (
     <>
@@ -91,13 +91,13 @@ export default function TechnicalSupervisorChecklistsPage() {
             ))}
           </Select>
           <Input
-            label="Fecha inicio"
+            label="Fecha de ejecución o programación desde"
             type="date"
             value={from}
             onChange={(event) => setFrom(event.target.value)}
           />
           <Input
-            label="Fecha fin"
+            label="Fecha de ejecución o programación hasta"
             type="date"
             min={from}
             value={to}
@@ -140,7 +140,10 @@ export default function TechnicalSupervisorChecklistsPage() {
             render: (visit) => (
               <>
                 {technician(visit.technicianId)}
-                <p>{displayDate(visit.completedAt ?? visit.scheduledAt)}</p>
+                <p>
+                  {visit.startedAt ? 'Ejecutada: ' : 'Programada: '}
+                  {displayDate(visit.startedAt ?? visit.scheduledAt)}
+                </p>
               </>
             ),
           },

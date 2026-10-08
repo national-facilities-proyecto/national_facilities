@@ -588,8 +588,17 @@ test('administración: cliente, tienda, contrato, usuario, cobertura y contrase�
     await call(request, '/visitas/pool/' + String(record.id) + '/tomar/', userToken, {})
   }
   await page.reload()
-  await page.getByRole('button', { name: 'Mis trabajos', exact: true }).click()
-  await expect(page.getByRole('heading', { name: storeName, exact: true })).toHaveCount(2)
+  await expect(page.getByRole('button', { name: 'Mis trabajos', exact: true })).toHaveCount(0)
+  const recovery = page.getByRole('region', { name: 'Recuperación de trabajos' })
+  await expect(
+    recovery.getByRole('heading', { name: 'Pendiente de iniciar', exact: true }),
+  ).toHaveCount(2)
+  await expect(recovery.getByRole('link', { name: 'Continuar trabajo', exact: true })).toHaveCount(
+    2,
+  )
+  for (const record of visits.map(object).slice(0, 2)) {
+    await expect(recovery.locator(`a[href="/checklists/${String(record.id)}"]`)).toBeVisible()
+  }
   await page.goto('/profile/password')
   await page.getByLabel('Contraseña actual').fill(newPassword)
   await page.getByLabel('Nueva contraseña', { exact: true }).fill('Another-secure-password-2026!')

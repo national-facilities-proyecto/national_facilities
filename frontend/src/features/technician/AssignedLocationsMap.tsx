@@ -110,13 +110,7 @@ export function OpenFreeMapLayer({
   }, [map, onError, onReady, timeoutMs])
   return null
 }
-export function AssignedLocationsMap({
-  stores,
-  onSelect,
-}: {
-  stores: MapLocation[]
-  onSelect?: (store: MapLocation) => void
-}) {
+export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [attempt, setAttempt] = useState(0)
   const [position, setPosition] = useState<[number, number]>()
@@ -161,27 +155,31 @@ export function AssignedLocationsMap({
               position={[store.latitude, store.longitude]}
               icon={icon}
               title={store.name}
-              eventHandlers={
-                onSelect
-                  ? {
-                      click: () => onSelect(store),
-                      keydown: (event) => {
-                        if (['Enter', ' '].includes(event.originalEvent.key)) {
-                          L.DomEvent.stop(event.originalEvent)
-                          onSelect(store)
-                        }
-                      },
-                    }
-                  : undefined
-              }
+              eventHandlers={{
+                keydown: (event) => {
+                  if (
+                    ['Enter', ' '].includes(event.originalEvent.key) &&
+                    event.target instanceof L.Marker
+                  ) {
+                    L.DomEvent.stop(event.originalEvent)
+                    event.target.openPopup()
+                  }
+                },
+              }}
             >
               <StoreLabel store={store} />
-              {!onSelect && (
-                <Popup>
-                  <strong>{store.name}</strong>
-                  <p>{store.address}</p>
-                </Popup>
-              )}
+              <Popup>
+                <strong>{store.name}</strong>
+                <p>{store.address}</p>
+                <a
+                  className="nf-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}
+                >
+                  Cómo llegar
+                </a>
+              </Popup>
             </Marker>
           ))}
           {position && (

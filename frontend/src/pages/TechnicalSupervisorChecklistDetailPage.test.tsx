@@ -158,3 +158,129 @@ it('conserva decisiones actuales si el historial recibido contiene únicamente u
   expect(await screen.findByText(resolved.reason)).toBeVisible()
   expect(screen.getByText('Motivo original anterior.')).toBeVisible()
 })
+
+it('no repite una solicitud pendiente como historial y conserva su telemetría expandible', async () => {
+  const current = {
+    id: 41,
+    revision: 2,
+    type: 'location' as const,
+    scope: 'arrival' as const,
+    reason: 'Solicitud vigente de llegada.',
+    failure: 'denied',
+    telemetry: {
+      latitude: -12.123456,
+      longitude: -77.123456,
+      accuracy: 8,
+      capturedAt: Date.now(),
+      distanceMeters: null,
+      radiusMeters: 100,
+      failure: 'denied',
+      validated: false,
+    },
+  }
+  await setup({
+    exceptions: [current],
+    exceptionHistory: [
+      {
+        id: 'request',
+        at: '2026-10-08T15:00:00Z',
+        actorId: 1,
+        kind: 'exception',
+        exception: current,
+      },
+    ],
+  })
+  expect(screen.getAllByText(current.reason)).toHaveLength(1)
+  expect(screen.queryByText('Historial de excepciones')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByText('Detalles técnicos'))
+  expect(await screen.findByText('-12.123456')).toBeVisible()
+  expect(screen.getAllByText(current.reason)).toHaveLength(1)
+})
+
+it('conserva eventos auténticos de solicitud y decisión sin repetir su motivo', async () => {
+  const resolved = {
+    id: 41,
+    revision: 2,
+    type: 'location' as const,
+    scope: 'arrival' as const,
+    reason: 'Motivo original auténtico.',
+    failure: 'denied',
+    approved: true,
+    reviewReason: 'Decisión histórica auténtica.',
+  }
+  await setup({
+    exceptions: [resolved],
+    exceptionHistory: [
+      {
+        id: 'request',
+        at: '2026-10-08T15:00:00Z',
+        actorId: 1,
+        kind: 'exception',
+        exception: { ...resolved, approved: undefined, reviewReason: undefined },
+      },
+      { id: 'review', at: '2026-10-08T16:00:00Z', actorId: 3, kind: 'review', exception: resolved },
+    ],
+  })
+  fireEvent.click(screen.getByText('Historial de excepciones'))
+  expect(await screen.findByText(resolved.reason)).toBeVisible()
+  expect(screen.getAllByText(resolved.reason)).toHaveLength(1)
+  expect(screen.getByText(resolved.reviewReason)).toBeVisible()
+  expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  fireEvent.click(screen.getByText('Detalles técnicos'))
+  expect(screen.getAllByText(resolved.reason)).toHaveLength(1)
+})
+
+it('una decisión legacy sin ID se muestra una sola vez y mantiene su evento histórico', async () => {
+  const resolved = {
+    type: 'location' as const,
+    scope: 'legacy' as const,
+    reason: 'Motivo histórico sin identificador.',
+    failure: 'denied',
+    approved: true,
+    reviewReason: 'Decisión histórica conservada.',
+  }
+  await setup({
+    exceptions: [resolved],
+    exceptionHistory: [
+      {
+        id: 'legacy-review',
+        at: '2026-10-08T15:00:00Z',
+        actorId: 3,
+        kind: 'review',
+        exception: resolved,
+      },
+    ],
+  })
+  fireEvent.click(screen.getByText('Historial de excepciones'))
+  expect(await screen.findByText(resolved.reason)).toBeVisible()
+  expect(screen.getAllByText(resolved.reason)).toHaveLength(1)
+  expect(screen.getAllByText(resolved.reviewReason)).toHaveLength(1)
+  expect(screen.getAllByRole('listitem')).toHaveLength(1)
+})
+
+it('mantiene un evento auténtico de corrección aunque su motivo vigente ya aparezca en el resumen', async () => {
+  const current = {
+    id: 41,
+    revision: 3,
+    type: 'location' as const,
+    scope: 'arrival' as const,
+    reason: 'Motivo vigente corregido.',
+    failure: 'denied',
+  }
+  await setup({
+    exceptions: [current],
+    exceptionHistory: [
+      {
+        id: 'corrected',
+        at: '2026-10-08T15:00:00Z',
+        actorId: 1,
+        kind: 'exception_corrected',
+        exception: current,
+      },
+    ],
+  })
+  fireEvent.click(screen.getByText('Historial de excepciones'))
+  expect(await screen.findByText('Corrección enviada')).toBeVisible()
+  expect(screen.getAllByText(current.reason)).toHaveLength(1)
+  expect(screen.getAllByRole('listitem')).toHaveLength(1)
+})
