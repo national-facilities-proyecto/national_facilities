@@ -55,6 +55,7 @@ for (const width of [320, 390, 1440]) {
       viewport: { width, height: 900 },
       hasTouch: width < 1440,
       isMobile: width < 1440,
+      permissions: ['camera'],
     })
     const page = await device.newPage()
     const reporter = object(
@@ -72,13 +73,23 @@ for (const width of [320, 390, 1440]) {
     await page.getByLabel('Prioridad', { exact: true }).selectOption({ label: 'Alta' })
     const description = `Reporte móvil aislado de una luminaria ${width}px ${crypto.randomUUID()}.`
     await page.getByLabel('Descripción del problema').fill(description)
-    if (width < 1440)
-      await expect(page.getByText('También puedes arrastrar archivos aquí.')).toBeHidden()
-    await page
-      .getByLabel('Cámara del reporte', { exact: true })
-      .setInputFiles({ name: 'camara.jpg', mimeType: 'image/jpeg', buffer: jpeg })
+    await expect(page.getByText('También puedes arrastrar archivos aquí.')).toHaveCount(0)
+    const cameraUpload = page.waitForResponse(
+      (response) =>
+        response.url() === api + '/evidencias/' &&
+        response.request().method() === 'POST' &&
+        response.ok(),
+    )
+    await cameraPhoto(page)
+    const photo = object(await (await cameraUpload).json())
+    expect(photo.source).toBe('camera')
+    expect(typeof photo.capturedAt).toBe('string')
     await expect(page.locator('.nf-evidence img')).toHaveCount(1)
-    await page.getByLabel('Fotografías del reporte', { exact: true }).setInputFiles(
+    const galleryChooser = page.waitForEvent('filechooser')
+    await page.getByRole('button', { name: 'Seleccionar fotografías', exact: true }).click()
+    await (
+      await galleryChooser
+    ).setFiles(
       [1, 2, 3, 4].map((index) => ({
         name: `galeria-${index}.jpg`,
         mimeType: 'image/jpeg',
