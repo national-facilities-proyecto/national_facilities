@@ -160,7 +160,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
         })
         .click()
       await expect(editor.getByRole('dialog', { name: 'Recuperar sesión' })).toBeVisible()
-      await editor.getByLabel('Contraseña para recuperar sesión').fill(password)
+      await editor.getByLabel('Contraseña para recuperar sesión', { exact: true }).fill(password)
       const recoveredVisit = editor.waitForResponse(
         (response) =>
           response.request().method() === 'GET' &&

@@ -11,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # Pull the official image from ECR Public to avoid Docker Hub rate limits.
+        image: public.ecr.aws/docker/library/postgres:16-alpine
         env:
           POSTGRES_DB: nf_integration
           POSTGRES_USER: nf_test

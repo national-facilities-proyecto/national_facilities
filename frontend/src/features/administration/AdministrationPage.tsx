@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { ListFilter } from 'lucide-react'
 import { useParams, Link } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
@@ -80,6 +81,10 @@ function AdminList({ kind }: { kind: AdminKind }) {
       )}
       {kind === 'users' && (
         <Card>
+          <h2 className="nf-filters-title">
+            <ListFilter size={20} aria-hidden="true" />
+            Filtros
+          </h2>
           <div className="nf-filters">
             <Input
               label="Buscar por nombre"

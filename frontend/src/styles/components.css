@@ -29,6 +29,24 @@
   .nf-field textarea {
     @apply min-h-28 resize-y;
   }
+  .nf-password-input {
+    @apply relative min-w-0;
+  }
+  .nf-field .nf-password-input input {
+    @apply pr-12;
+  }
+  .nf-password-input input::-ms-reveal {
+    display: none;
+  }
+  .nf-password-toggle {
+    @apply absolute inset-y-0 right-0 inline-flex min-h-11 w-11 items-center justify-center rounded-lg text-brand-800;
+  }
+  .nf-password-toggle:hover:not(:disabled) {
+    @apply bg-brand-50;
+  }
+  .nf-password-toggle:disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
   .nf-form {
     @apply grid gap-5;
   }
@@ -75,6 +93,9 @@
   }
   .nf-filters {
     @apply grid items-end gap-4 sm:grid-cols-2 xl:grid-cols-3;
+  }
+  .nf-filters-title {
+    @apply flex items-center gap-2;
   }
   .nf-list-filters {
     @apply my-4 rounded-xl border border-slate-300 bg-white p-3;

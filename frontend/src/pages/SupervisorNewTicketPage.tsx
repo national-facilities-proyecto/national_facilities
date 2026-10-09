@@ -5,15 +5,23 @@ import { useQuery } from '../hooks/useQuery'
 import { QueryState } from '../components/feedback/QueryState'
 import { Alert, Button, Card, PageHeader, Select, Textarea } from '../components/ui'
 import { EvidenceGallery } from '../components/EvidenceGallery'
-import type { Priority } from '../types/models'
+import { CameraModal } from '../features/technician/CameraModal'
+import type { Evidence, Priority } from '../types/models'
 import { validateFiles } from '../services/evidence'
 import { AppError, errorMessage } from '../services/errors'
 import { optimizeEvidenceImage } from '../services/optimizeEvidenceImage'
+type ReportPhoto = {
+  id: string
+  file: File
+  replaceId?: string
+  source: Evidence['source']
+  capturedAt?: string
+}
 export default function SupervisorNewTicketPage() {
   const repos = useRepositories()
   const navigate = useNavigate()
   const input = useRef<HTMLInputElement>(null)
-  const cameraInput = useRef<HTMLInputElement>(null)
+  const [camera, setCamera] = useState(false)
   const replacementId = useRef<string>()
   const [category, setCategory] = useState('')
   const [priority, setPriority] = useState<Priority>('')
@@ -23,9 +31,7 @@ export default function SupervisorNewTicketPage() {
   const ownedIds = useRef<string[]>([])
   const recovered = useRef(false)
   const mounted = useRef(true)
-  const [pendingFiles, setPendingFiles] = useState<
-    { id: string; file: File; replaceId?: string }[]
-  >([])
+  const [pendingFiles, setPendingFiles] = useState<ReportPhoto[]>([])
   const optimizedFiles = useRef(new Map<string, File>())
   const confirmedFiles = useRef(new Set<string>())
   const uploadLock = useRef(false)
@@ -62,10 +68,7 @@ export default function SupervisorNewTicketPage() {
       mounted.current = false
     }
   }, [repos])
-  const sendFiles = async (
-    queue: { id: string; file: File; replaceId?: string }[],
-    fileErrors: string[] = [],
-  ) => {
+  const sendFiles = async (queue: ReportPhoto[], fileErrors: string[] = []) => {
     if (uploading || saving || uploadLock.current) return
     uploadLock.current = true
     setUploading(true)
@@ -89,7 +92,8 @@ export default function SupervisorNewTicketPage() {
             name: file.name,
             mimeType: file.type,
             size: file.size,
-            source: 'gallery',
+            source: entry.source,
+            capturedAt: entry.capturedAt,
             replaceId: entry.replaceId,
           })
         confirmedFiles.current.add(id)
@@ -110,10 +114,9 @@ export default function SupervisorNewTicketPage() {
       uploadLock.current = false
       setUploading(false)
       if (input.current) input.current.value = ''
-      if (cameraInput.current) cameraInput.current.value = ''
     }
   }
-  const addFiles = (files: File[]) => {
+  const addFiles = (files: File[], capture?: Evidence) => {
     if (uploading || saving || uploadLock.current || pendingFiles.length) return
     const replaceId = replacementId.current
     replacementId.current = undefined
@@ -122,9 +125,15 @@ export default function SupervisorNewTicketPage() {
       ids.length - (replaceId ? 1 : 0),
       true,
     )
-    const queue = accepted.map((file) => ({ file, id: crypto.randomUUID(), replaceId }))
+    const queue = accepted.map((file) => ({
+      file,
+      id: capture?.id ?? crypto.randomUUID(),
+      replaceId,
+      source: capture?.source ?? 'gallery',
+      capturedAt: capture?.capturedAt,
+    }))
     setPendingFiles(queue)
-    void sendFiles(queue, fileErrors)
+    return sendFiles(queue, fileErrors)
   }
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
@@ -252,17 +261,6 @@ export default function SupervisorNewTicketPage() {
           >
             <p>Fotografías del reporte · Hasta 5 archivos de 5 MB</p>
             <input
-              ref={cameraInput}
-              type="file"
-              aria-label="Cámara del reporte"
-              accept="image/jpeg,image/png,image/webp"
-              capture="environment"
-              hidden
-              onChange={(event) => {
-                if (event.target.files) addFiles(Array.from(event.target.files))
-              }}
-            />
-            <input
               ref={input}
               type="file"
               aria-label="Fotografías del reporte"
@@ -279,7 +277,7 @@ export default function SupervisorNewTicketPage() {
                 disabled={uploading || saving || pendingFiles.length > 0 || ids.length >= 5}
                 onClick={() => {
                   replacementId.current = undefined
-                  cameraInput.current?.click()
+                  setCamera(true)
                 }}
               >
                 Tomar foto
@@ -296,7 +294,6 @@ export default function SupervisorNewTicketPage() {
               </Button>
             </div>
             <small>JPG, PNG o WebP.</small>
-            <small className="nf-drag-hint">También puedes arrastrar archivos aquí.</small>
           </div>
           <EvidenceGallery
             ids={ids}
@@ -356,6 +353,13 @@ export default function SupervisorNewTicketPage() {
           </div>
         </form>
       </Card>
+      <CameraModal
+        open={camera}
+        onClose={() => setCamera(false)}
+        onCapture={(photo) =>
+          addFiles([new File([photo.blob], photo.name, { type: photo.mimeType })], photo)
+        }
+      />
     </div>
   )
 }

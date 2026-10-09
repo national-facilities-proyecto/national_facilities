@@ -539,7 +539,9 @@ test('administración: cliente, tienda, contrato, usuario, cobertura y contrase�
   const dialog = page.getByRole('dialog')
   await dialog.getByLabel('Usuario de acceso', { exact: true }).fill(username)
   const initialPassword = 'V7!qx3#Hp9$Lm2zR'
-  await dialog.getByLabel('Contraseña inicial (obligatoria al crear)').fill(initialPassword)
+  await dialog
+    .getByLabel('Contraseña inicial (obligatoria al crear)', { exact: true })
+    .fill(initialPassword)
   await dialog.getByLabel('Nombre completo').fill('New Technician ' + suffix)
   await dialog.getByLabel('Correo', { exact: true }).fill(username + '@test.invalid')
   await dialog.getByRole('button', { name: 'Añadir cobertura', exact: true }).click()
@@ -595,7 +597,7 @@ test('administración: cliente, tienda, contrato, usuario, cobertura y contrase�
     await expect(recovery.locator(`a[href="/checklists/${String(record.id)}"]`)).toBeVisible()
   }
   await page.goto('/profile/password')
-  await page.getByLabel('Contraseña actual').fill(newPassword)
+  await page.getByLabel('Contraseña actual', { exact: true }).fill(newPassword)
   await page.getByLabel('Nueva contraseña', { exact: true }).fill('Another-secure-password-2026!')
   await page
     .getByLabel('Confirmar contraseña', { exact: true })
