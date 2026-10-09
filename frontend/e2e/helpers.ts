@@ -16,6 +16,8 @@ export function mapVisit(value: unknown) {
   return {
     id: v.id,
     status: string(v.status),
+    origin: string(v.origin),
+    workDescription: string(v.workDescription),
     formOpenedAt: typeof v.formOpenedAt === 'string' ? v.formOpenedAt : undefined,
     expiresAt: typeof v.expiresAt === 'string' ? v.expiresAt : undefined,
   }
@@ -112,15 +114,126 @@ export async function scheduledMapVisit(request: APIRequestContext) {
   return scheduled.visitId
 }
 export function advance(id: number, mode: 'work' | 'expire' | 'expire_claim') {
-  execFileSync(python, [resolve('../backend/test_support/clock.py'), String(id), mode], {
-    cwd: resolve('..'),
-  })
+  if (mode !== 'expire') {
+    execFileSync(python, [resolve('../backend/test_support/clock.py'), String(id), mode], {
+      cwd: resolve('..'),
+    })
+    return
+  }
+  // Adelanta toda la cronología de un caso aislado; respeta fin físico <= apertura.
+  // El helper antiguo solo desplazaba apertura e incumple la constraint V2.
+  execFileSync(
+    python,
+    [
+      '-c',
+      `
+import os, sys
+from pathlib import Path
+sys.path.insert(0, str(Path('backend').resolve()))
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.test_settings')
+import django
+django.setup()
+from django.db import connection, transaction
+from django.utils import timezone
+from datetime import timedelta
+from core.models import Visita
+if os.environ['DJANGO_SETTINGS_MODULE'] != 'config.test_settings' or connection.settings_dict['NAME'] != 'nf_integration':
+    raise RuntimeError('Reloj permitido solo en base E2E aislada.')
+with transaction.atomic():
+    v = Visita.objects.select_for_update().get(pk=int(sys.argv[1]), tienda__cliente__ruc='E2E-ONLY')
+    if not all((v.iniciado_en, v.terminado_en, v.formulario_abierto_en)) or v.enviado_en or v.completado_en:
+        raise RuntimeError('Se requiere un formulario V2 abierto y todavía no enviado.')
+    delta = v.formulario_abierto_en - (timezone.now() - timedelta(minutes=6))
+    for field in ('iniciado_en', 'terminado_en', 'formulario_abierto_en'):
+        setattr(v, field, getattr(v, field) - delta)
+    v.save(update_fields=['iniciado_en', 'terminado_en', 'formulario_abierto_en'])
+`,
+      String(id),
+    ],
+    { cwd: resolve('..') },
+  )
 }
 export async function upload(page: Page) {
   await page.getByRole('button', { name: 'Seleccionar de galería', exact: true }).first().click()
   await page
     .locator('input[type="file"]')
     .setInputFiles({ name: 'evidence.jpg', mimeType: 'image/jpeg', buffer: jpeg })
-  await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+  await expect(page.locator('.nf-evidence img').first()).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: /^(Finalizar|Enviar registro|Enviar a revisión)$/ }),
+  ).toBeEnabled()
   await expect(page.locator('fieldset .nf-evidence img')).toHaveCount(1)
+}
+
+export async function arrive(page: Page, id: number, origin: 'checklist' | 'ticket' = 'checklist') {
+  await page.goto((origin === 'checklist' ? '/checklists/' : '/routes/') + id)
+  const arrival = page.getByRole('button', { name: 'Registrar llegada', exact: true })
+  await expect(arrival).toBeVisible()
+  await arrival.click()
+  await expect(
+    page.getByRole('heading', {
+      name: origin === 'checklist' ? 'Recorrido de inspección' : 'Atención en curso',
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
+    0,
+  )
+}
+export async function openResults(page: Page, origin: 'checklist' | 'ticket' = 'checklist') {
+  await page.getByRole('button', { name: 'Registrar resultado del trabajo', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: /^(Finalizar|Enviar registro|Enviar a revisión)$/ }),
+  ).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Tiempo de registro del formulario' })).toHaveCount(
+    0,
+  )
+  await expect(
+    page.getByLabel(
+      origin === 'checklist'
+        ? 'Reporte general del checklist'
+        : 'Descripción del trabajo realizado',
+    ),
+  ).toBeVisible()
+}
+export async function waitUntilScheduled(request: APIRequestContext, id: number, token: string) {
+  await expect
+    .poll(async () => {
+      const raw = object(await call(request, `/visitas/${id}/`, token))
+      return Date.parse(string(raw.serverNow)) >= Date.parse(string(raw.scheduledAt))
+    })
+    .toBe(true)
+}
+
+export async function cameraPhoto(page: Page, button = 'Tomar foto') {
+  await page.getByRole('button', { name: button, exact: true }).click()
+  const camera = page.getByRole('dialog', { name: 'Tomar fotografía', exact: true })
+  await camera.getByRole('button', { name: 'Capturar', exact: true }).click()
+  await camera.getByRole('button', { name: 'Confirmar foto', exact: true }).click()
+  await expect(camera).toHaveCount(0)
+}
+export async function arrivalException(
+  page: Page,
+  id: number,
+  origin: 'checklist' | 'ticket' = 'checklist',
+) {
+  await page.goto((origin === 'checklist' ? '/checklists/' : '/routes/') + id)
+  const arrival = page.getByRole('button', { name: 'Registrar llegada', exact: true })
+  await expect(arrival).toBeVisible()
+  await arrival.click()
+  await page.getByRole('button', { name: 'Solicitar excepción GPS', exact: true }).click()
+  await page
+    .getByLabel('Motivo de la excepción')
+    .fill('El permiso de ubicación no estuvo disponible al llegar.')
+  await expect(
+    page.getByRole('button', { name: 'Guardar excepción GPS', exact: true }),
+  ).toBeDisabled()
+  await cameraPhoto(page, 'Tomar foto del establecimiento')
+  await page.getByRole('button', { name: 'Guardar excepción GPS', exact: true }).click()
+  await expect(
+    page.getByRole('heading', {
+      name: origin === 'checklist' ? 'Recorrido de inspección' : 'Atención en curso',
+      exact: true,
+    }),
+  ).toBeVisible()
 }

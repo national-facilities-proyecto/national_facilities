@@ -1,33 +1,79 @@
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, F
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework import serializers
-from .models import (Cliente, Tienda, Contrato, PlantillaChecklist, ItemPlantilla, Usuario,
-                     CategoriaProblema, NivelUrgencia, Rol, Evento, Ticket)
-from .permissions import tiendas_visibles_para, EsTecnico, EsAdministrador, EsSupervisorCuenta, rol_de
-from .serializers import (TiendaSerializer, ClienteSerializer, ContratoSerializer,
-                          PlantillaChecklistSerializer, ItemPlantillaSerializer, UsuarioSerializer,
-                          visit_data)
-from .auth_views import identity, PasswordView as CambiarPasswordView
-from .evidence_views import EvidenceUploadView as EvidenciaListCreateView, EvidenceDetailView, visible_evidence
-from .ticket_views import TicketListCreateView, TicketDetailView, ScheduleView as TicketScheduleView
-from .report_views import DashboardView, ExportView as ReporteVisitasExportView, ReportListView as ReporteVisitasListView
-from .services import (idempotent, visible_visits, claim_visit, start_visit,
-                       open_form, save_draft, complete_visit, locked_visit, Conflict, event, validate_content, record_end_gps, finalize_reviewed_visit, asegurar_bolsa_mes_actual)
+from .models import (
+    Cliente,
+    Tienda,
+    Contrato,
+    PlantillaChecklist,
+    ItemPlantilla,
+    Usuario,
+    CategoriaProblema,
+    NivelUrgencia,
+    Rol,
+    Evento,
+    Zona,
+    ClienteEspecialidad,
+)
+from .permissions import (
+    tiendas_visibles_para,
+    tecnicos_elegibles_para,
+    visitas_continuables_para,
+    EsTecnico,
+    EsAdministrador,
+    EsSupervisorCuenta,
+    rol_de,
+)
+from .serializers import (
+    TiendaSerializer,
+    ClienteSerializer,
+    ContratoSerializer,
+    PlantillaChecklistSerializer,
+    ItemPlantillaSerializer,
+    UsuarioSerializer,
+    visit_data,
+    visit_list_data,
+    prepare_visit_audit,
+    ZonaSerializer,
+    CategoriaProblemaSerializer,
+    ClienteEspecialidadSerializer,
+)
+from .auth_views import identity
+from .evidence_views import (
+    EvidenceDetailView,
+    visible_evidence,
+)
+from .services import (
+    idempotent,
+    visible_visits,
+    claim_visit,
+    start_visit,
+    open_form,
+    save_draft,
+    complete_visit,
+    Conflict,
+    validate_content,
+    finish_physical_work,
+    asegurar_bolsa_mes_actual,
+    request_exception,
+    review_exception,
+    not_performed,
+)
 from .generation import generate_month
 from .claims import release_expired_claims
-from .input_serializers import ExceptionInputSerializer, ReviewInputSerializer
 
 
 class TiendaListView(ListAPIView):
     serializer_class = TiendaSerializer
+
     def get_queryset(self):
         return tiendas_visibles_para(self.request.user)
 
@@ -38,6 +84,7 @@ class HealthView(APIView):
 
     def get(self, request):
         from django.db import connection, DatabaseError
+
         try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
@@ -48,8 +95,12 @@ class HealthView(APIView):
 
 class TiendaDetailView(RetrieveAPIView):
     serializer_class = TiendaSerializer
+
     def get_queryset(self):
-        return tiendas_visibles_para(self.request.user)
+        return Tienda.objects.filter(
+            Q(pk__in=tiendas_visibles_para(self.request.user).values("pk"))
+            | Q(pk__in=visitas_continuables_para(self.request.user).values("tienda_id"))
+        )
 
 
 class UsersView(APIView):
@@ -59,30 +110,59 @@ class UsersView(APIView):
             users = Usuario.objects.all()
         else:
             stores = tiendas_visibles_para(request.user)
-            users = Usuario.objects.filter(Q(pk=request.user.pk) | Q(tiendas_asignadas__tienda__in=stores, tiendas_asignadas__activo=True)).distinct()
-        allowed = set(tiendas_visibles_para(request.user).values_list("pk", flat=True))
-        return Response([{**identity(u), "storeIds": [pk for pk in identity(u)["storeIds"] if pk in allowed]}
-                         for u in users if rol_de(u)])
+            users = Usuario.objects.filter(
+                Q(pk=request.user.pk)
+                | Q(
+                    coberturas__zona_id__in=stores.exclude(zona_id=None).values(
+                        "zona_id"
+                    ),
+                    coberturas__activo=True,
+                    coberturas__cliente_id=F("coberturas__zona__cliente_id"),
+                )
+                | Q(
+                    tiendas_asignadas__tienda__in=stores, tiendas_asignadas__activo=True
+                )
+            ).distinct()
+        scope = None if role == "administrator" else tiendas_visibles_para(request.user)
+        return Response([identity(u, scope=scope) for u in users if rol_de(u)])
 
 
 class CatalogsView(APIView):
     def get(self, request):
-        return Response({
-            "categories": [{"id": c.pk, "name": c.nombre} for c in CategoriaProblema.objects.filter(activo=True)],
-            "priorities": [{"id": c.pk, "name": c.nombre, "firstResponseHours": c.sla_primera_respuesta_horas,
-                            "resolutionHours": c.sla_resolucion_horas} for c in NivelUrgencia.objects.all()],
-            "roles": [{"id": r.pk, "name": r.nombre} for r in Rol.objects.all()],
-        })
+        categories = CategoriaProblema.objects.filter(activo=True)
+        if rol_de(request.user) == "store_supervisor":
+            categories = categories.filter(
+                clientes_habilitados__activo=True,
+                clientes_habilitados__cliente_id__in=tiendas_visibles_para(
+                    request.user
+                ).values("cliente_id"),
+            ).distinct()
+        return Response(
+            {
+                "categories": [{"id": c.pk, "name": c.nombre} for c in categories],
+                "priorities": [
+                    {
+                        "id": c.pk,
+                        "name": c.nombre,
+                        "firstResponseHours": c.sla_primera_respuesta_horas,
+                        "resolutionHours": c.sla_resolucion_horas,
+                    }
+                    for c in NivelUrgencia.objects.all()
+                ],
+                "roles": [{"id": r.pk, "name": r.nombre} for r in Rol.objects.all()],
+            }
+        )
 
 
 class VisitListView(APIView):
     origin = None
+
     def get(self, request):
         visits = visible_visits(request.user).order_by("-fecha_programada", "pk")
         release_expired_claims(tiendas_visibles_para(request.user))
         if self.origin:
             visits = visits.filter(origen=self.origin)
-        return Response([visit_data(v) for v in visits])
+        return Response(visit_list_data(visits, user=request.user))
 
 
 class ChecklistListView(VisitListView):
@@ -95,9 +175,17 @@ class ScheduledVisitListView(VisitListView):
 
 class VisitPoolListView(VisitListView):
     permission_classes = [EsTecnico]
+
     def get(self, request):
         asegurar_bolsa_mes_actual(request.user)
-        return Response([visit_data(v) for v in visible_visits(request.user).filter(origen="checklist", tecnico__isnull=True, estado="programada")])
+        return Response(
+            visit_list_data(
+                visible_visits(request.user).filter(
+                    origen="checklist", tecnico__isnull=True, estado="programada"
+                ),
+                user=request.user,
+            )
+        )
 
 
 class GenerateMonthInput(serializers.Serializer):
@@ -105,34 +193,50 @@ class GenerateMonthInput(serializers.Serializer):
 
     def validate_period(self, value):
         from django.utils import timezone
+
         if value != timezone.localdate().replace(day=1):
-            raise ValidationError("La bolsa operativa se genera para el primer día del mes actual.")
+            raise ValidationError(
+                "La bolsa operativa se genera para el primer día del mes actual."
+            )
         return value
 
 
 class GenerateMonthView(APIView):
     permission_classes = [EsTecnico]
+
     def post(self, request):
         def work():
             serializer = GenerateMonthInput(data=request.data)
             serializer.is_valid(raise_exception=True)
-            return {"visitIds": generate_month(request.user, serializer.validated_data.get("period"))}
+            return {
+                "visitIds": generate_month(
+                    request.user, serializer.validated_data.get("period")
+                )
+            }
+
         return Response(idempotent(request, work))
 
 
 class VisitDetailView(APIView):
     def get(self, request, pk):
         release_expired_claims(tiendas_visibles_para(request.user))
-        return Response(visit_data(get_object_or_404(visible_visits(request.user), pk=pk)))
+        return Response(
+            visit_data(
+                get_object_or_404(visible_visits(request.user), pk=pk),
+                user=request.user,
+            )
+        )
 
 
 class VisitActionView(APIView):
     permission_classes = [EsTecnico]
     action = ""
+
     def post(self, request, pk):
         # Fuera de la transacción idempotente: un inicio rechazado no revierte la liberación.
         if self.action in ("claim", "start"):
             release_expired_claims(tiendas_visibles_para(request.user))
+
         def work():
             if self.action == "claim":
                 visit = claim_visit(request.user, pk)
@@ -144,93 +248,118 @@ class VisitActionView(APIView):
                 visit = save_draft(request.user, pk, request.data)
             elif self.action == "complete":
                 visit = complete_visit(request.user, pk, request.data)
-            elif self.action == "end_gps":
-                visit = record_end_gps(request.user, pk, request.data)
+            elif self.action == "physical_end":
+                visit = finish_physical_work(request.user, pk, request.data)
             elif self.action == "submit_review":
                 from .services import submit_review
+
                 visit = submit_review(request.user, pk, request.data)
             else:
                 raise ValidationError("Acción inválida.")
-            return visit_data(visit)
+            return visit_data(visit, user=request.user)
+
         return Response(idempotent(request, work))
 
 
 class ExceptionRequestView(APIView):
     permission_classes = [EsTecnico]
     exception_type = None
+
     def post(self, request, pk):
         def work():
-            from django.utils import timezone
-            visit = locked_visit(request.user, pk)
-            if not visit.iniciado_en or not visit.formulario_abierto_en or visit.estado not in ("en_curso", "pendiente_validacion"):
-                raise Conflict("No hay un formulario en ejecución o pendiente.")
             payload = request.data.copy()
-            exception_type = self.exception_type
-            if exception_type is None:
-                # Los alias de urls.py conservan el tipo indicado por su URL.
-                endpoint = request.path.rstrip("/").rsplit("/", 1)[-1]
-                exception_type = {"excepcion-ubicacion": "location", "excepcion-tiempo": "time_limit"}.get(endpoint)
+            endpoint = request.path.rstrip("/").rsplit("/", 1)[-1]
+            exception_type = self.exception_type or {
+                "excepcion-ubicacion": "location",
+                "excepcion-tiempo": "time_limit",
+            }.get(endpoint)
             if exception_type:
                 if payload.get("type") not in (None, exception_type):
-                    raise ValidationError({"type": "El tipo de excepción no corresponde a esta ruta."})
+                    raise ValidationError(
+                        {"type": "El tipo de excepción no corresponde a esta ruta."}
+                    )
                 payload["type"] = exception_type
-            serializer = ExceptionInputSerializer(data=payload)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
-            if data["type"] == "location":
-                validate_content(visit)
-            from .services import request_or_correct_exception
-            request_or_correct_exception(request.user, visit, data)
-            visit.estado = "pendiente_validacion"
-            newly_submitted = False
-            if not visit.enviado_en:
-                try:
-                    validate_content(visit)
-                    visit.enviado_en = timezone.now()
-                    newly_submitted = True
-                except ValidationError:
-                    pass  # Un borrador incompleto sigue pendiente; no inventa un envío aceptado.
-            visit.save(update_fields=["estado", "enviado_en"])
-            if newly_submitted:
-                event(request.user, visit, "review_submission", "Registro completo enviado para revisión",
-                      {"draftRevision": visit.borrador_revision, "submittedAt": visit.enviado_en.isoformat()})
-            if visit.ticket_origen_id:
-                Ticket.objects.filter(pk=visit.ticket_origen_id).update(estado="pendiente_validacion")
-            return visit_data(visit)
+            visit = request_exception(request.user, pk, payload)
+            return visit_data(visit, user=request.user)
+
         return Response(idempotent(request, work))
 
 
 class ExceptionReviewView(APIView):
     permission_classes = [EsSupervisorCuenta]
+
     def post(self, request, pk):
         def work():
-            from django.utils import timezone
-            visit = locked_visit(request.user, pk, owner=False)
-            serializer = ReviewInputSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
-            exception = get_object_or_404(visit.excepciones.select_for_update(), pk=data["exceptionId"])
-            if data["revision"] != visit.borrador_revision or data["exceptionRevision"] != exception.revision:
-                raise Conflict("El contenido o la justificación cambió. Recarga antes de tomar una decisión.")
-            decision = "approved" if data["approved"] else "rejected"
-            if exception.decision != "pending":
-                if exception.decision != decision or exception.motivo_decision != data["reason"]:
-                    raise Conflict("La excepción ya tiene una decisión registrada.")
-                return visit_data(visit)
-            if data["approved"]:
-                validate_content(visit)
-                if not visit.enviado_en:
-                    raise ValidationError({"content": "El técnico todavía debe enviar el registro completo para revisión."})
-            exception.decision = decision
-            exception.revisor = request.user
-            exception.motivo_decision = data["reason"]
-            exception.revisada_en = timezone.now()
-            exception.save()
-            from .services import audit_exception
-            audit_exception(request.user, visit, exception, "review", "Justificación "+exception.tipo+": "+decision)
-            finalize_reviewed_visit(request.user, visit)
-            return visit_data(visit)
+            visit = review_exception(request.user, pk, request.data)
+            return visit_data(visit, user=request.user)
+
         return Response(idempotent(request, work))
+
+
+class PendingReviewsView(APIView):
+    permission_classes = [EsSupervisorCuenta]
+
+    def get(self, request):
+        # La integridad del contenido se comprueba además para registros legacy.
+        visits = (
+            visible_visits(request.user)
+            .filter(
+                estado__in=("pendiente_validacion", "correccion_requerida"),
+                enviado_en__isnull=False,
+                terminado_en__isnull=False,
+                excepciones__decision="pending",
+            )
+            .distinct()
+            .order_by("enviado_en", "pk")
+        )
+        result = []
+        for visit in prepare_visit_audit(visits):
+            try:
+                validate_content(visit)
+                from .services import validate_physical_end
+
+                validate_physical_end(visit)
+            except (ValidationError, Conflict):
+                continue
+            result.append(visit_data(visit, user=request.user, audit_prepared=True))
+        return Response(result)
+
+
+class WorkRecoveryView(APIView):
+    permission_classes = [EsTecnico]
+
+    def get(self, request):
+        release_expired_claims(tiendas_visibles_para(request.user))
+        visits = visible_visits(request.user).filter(tecnico=request.user, vigente=True)
+        active = visits.filter(
+            iniciado_en__isnull=False,
+            enviado_en__isnull=True,
+            estado__in=("en_curso", "pendiente_validacion"),
+        ).first()
+        return Response(
+            {
+                "activeExecution": (
+                    visit_data(active, user=request.user) if active else None
+                ),
+                "reservations": visit_list_data(
+                    visits.filter(
+                        origen="checklist",
+                        estado="programada",
+                        iniciado_en__isnull=True,
+                    ),
+                    user=request.user,
+                ),
+                "corrections": visit_list_data(
+                    visits.filter(estado="correccion_requerida"), user=request.user
+                ),
+                "inReview": visit_list_data(
+                    visits.filter(
+                        estado="pendiente_validacion", enviado_en__isnull=False
+                    ),
+                    user=request.user,
+                ),
+            }
+        )
 
 
 class AdminViewSet(ModelViewSet):
@@ -243,48 +372,99 @@ class AdminViewSet(ModelViewSet):
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save()
-            self.audit(request.user, "admin_create", serializer.instance.pk, None, serializer.data)
+            self.audit(
+                request.user,
+                "admin_create",
+                serializer.instance.pk,
+                None,
+                serializer.data,
+            )
             return serializer.data
+
         return Response(idempotent(request, work), status=201)
 
     def update(self, request, *args, **kwargs):
         def work():
-            instance = get_object_or_404(self.get_queryset().select_for_update(), pk=kwargs["pk"])
+            instance = get_object_or_404(
+                self.get_queryset().select_for_update(), pk=kwargs["pk"]
+            )
             previous = self.get_serializer(instance).data
-            self.lock_parent(request.data)
-            serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get("partial", False))
+            parent_data = dict(request.data)
+            if isinstance(instance, (Zona, ClienteEspecialidad)):
+                parent_data.setdefault("clientId", instance.cliente_id)
+            if isinstance(instance, Tienda):
+                parent_data.setdefault("zoneId", instance.zona_id)
+            self.lock_parent(parent_data)
+            serializer = self.get_serializer(
+                instance, data=request.data, partial=kwargs.get("partial", False)
+            )
             serializer.is_valid(raise_exception=True)
             serializer.save()
-            self.audit(request.user, "admin_update", instance.pk, previous, serializer.data)
+            self.audit(
+                request.user, "admin_update", instance.pk, previous, serializer.data
+            )
             return serializer.data
+
         return Response(idempotent(request, work))
 
     def lock_parent(self, data):
-        if self.queryset.model == Contrato and data.get("clientId"):
-            get_object_or_404(Cliente.objects.select_for_update(), pk=data["clientId"])
+        if self.queryset.model in (Contrato, Zona, ClienteEspecialidad) and data.get(
+            "clientId"
+        ):
+            try:
+                client_id = serializers.IntegerField(min_value=1).run_validation(
+                    data["clientId"]
+                )
+            except serializers.ValidationError as exc:
+                raise ValidationError({"clientId": exc.detail})
+            get_object_or_404(Cliente.objects.select_for_update(), pk=client_id)
+        if self.queryset.model == Tienda and data.get("zoneId"):
+            try:
+                zone_id = serializers.IntegerField(min_value=1).run_validation(
+                    data["zoneId"]
+                )
+            except serializers.ValidationError as exc:
+                raise ValidationError({"zoneId": exc.detail})
+            get_object_or_404(Zona.objects.select_for_update(), pk=zone_id)
 
     def audit(self, actor, kind, pk, previous, current):
         from rest_framework.renderers import JSONRenderer
         import json
-        data = {"entity": self.queryset.model.__name__, "id": pk, "previous": previous, "next": current}
-        Evento.objects.create(actor=actor, tipo=kind, texto="Administración: "+self.queryset.model.__name__,
-                              datos=json.loads(JSONRenderer().render(data)))
+
+        data = {
+            "entity": self.queryset.model.__name__,
+            "id": pk,
+            "previous": previous,
+            "next": current,
+        }
+        Evento.objects.create(
+            actor=actor,
+            tipo=kind,
+            texto="Administración: " + self.queryset.model.__name__,
+            datos=json.loads(JSONRenderer().render(data)),
+        )
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        instance = get_object_or_404(self.get_queryset().select_for_update(), pk=kwargs["pk"])
+        instance = get_object_or_404(
+            self.get_queryset().select_for_update(), pk=kwargs["pk"]
+        )
         previous = self.get_serializer(instance).data
         pk = instance.pk
         if isinstance(instance, Usuario) and instance.pk == request.user.pk:
             raise Conflict("No puedes eliminar tu propia cuenta.")
-        if isinstance(instance, ItemPlantilla):
+        if isinstance(
+            instance, (ItemPlantilla, Zona, CategoriaProblema, ClienteEspecialidad)
+        ):
             instance.activo = False
             instance.save(update_fields=["activo"])
         else:
             try:
                 instance.delete()
             except ProtectedError:
-                raise Conflict("El registro tiene historial protegido; desactívalo para conservar la trazabilidad.")
+                raise Conflict(
+                    "El registro tiene historial protegido; desactívalo para conservar la trazabilidad."
+                )
         self.audit(request.user, "admin_delete", pk, previous, None)
         return Response(status=204)
 
@@ -297,6 +477,21 @@ class ClienteViewSet(AdminViewSet):
 class TiendaAdminViewSet(AdminViewSet):
     queryset = Tienda.objects.all()
     serializer_class = TiendaSerializer
+
+
+class ZonaViewSet(AdminViewSet):
+    queryset = Zona.objects.all()
+    serializer_class = ZonaSerializer
+
+
+class CategoriaProblemaViewSet(AdminViewSet):
+    queryset = CategoriaProblema.objects.all()
+    serializer_class = CategoriaProblemaSerializer
+
+
+class ClienteEspecialidadViewSet(AdminViewSet):
+    queryset = ClienteEspecialidad.objects.all()
+    serializer_class = ClienteEspecialidadSerializer
 
 
 class ContratoViewSet(AdminViewSet):
@@ -320,19 +515,52 @@ class UsuarioViewSet(AdminViewSet):
     serializer_class = UsuarioSerializer
 
 
-class TecnicoListView(ListAPIView):
-    serializer_class = UsuarioSerializer
+class TecnicoListView(APIView):
     permission_classes = [EsSupervisorCuenta]
 
-    def get_queryset(self):
+    def get(self, request):
         stores = tiendas_visibles_para(self.request.user)
-        candidates = Usuario.objects.filter(is_active=True, tiendas_asignadas__activo=True,
-                                            tiendas_asignadas__tienda__in=stores).select_related("rol").distinct()
-        return [user for user in candidates if rol_de(user) == "technician"]
+        store_id = request.query_params.get("storeId")
+        if store_id is not None:
+            try:
+                legacy = Tienda.objects.filter(
+                    zona_id=None,
+                    activo=True,
+                    cliente_id__in=request.user.coberturas.filter(
+                        activo=True, zona__activo=True
+                    ).values("cliente_id"),
+                )
+                store = get_object_or_404(
+                    Tienda.objects.filter(
+                        Q(pk__in=stores.values("pk")) | Q(pk__in=legacy.values("pk"))
+                    ),
+                    pk=int(store_id),
+                )
+            except ValueError:
+                raise ValidationError({"storeId": "Selecciona una tienda válida."})
+            candidates = tecnicos_elegibles_para(store)
+            scope = stores.filter(pk=store.pk)
+        else:
+            candidates = Usuario.objects.filter(
+                is_active=True,
+                coberturas__activo=True,
+                coberturas__zona__activo=True,
+                coberturas__zona_id__in=stores.exclude(zona_id=None).values("zona_id"),
+                coberturas__cliente_id=F("coberturas__zona__cliente_id"),
+            ).distinct()
+            scope = stores
+        return Response(
+            [
+                identity(user, scope=scope)
+                for user in candidates
+                if rol_de(user) == "technician"
+            ]
+        )
 
 
 class EvidenciaDetailView(EvidenceDetailView):
     """El ID numérico de main usa la misma lectura y eliminación protegida del PR."""
+
     def client_id(self, request, pk):
         return get_object_or_404(visible_evidence(request.user), pk=pk).client_id
 
@@ -343,26 +571,12 @@ class EvidenciaDetailView(EvidenceDetailView):
         return super().delete(request, self.client_id(request, pk))
 
 
-class VisitaNoRealizadaInput(serializers.Serializer):
-    reason = serializers.CharField(min_length=10, max_length=500)
-
-
 class VisitaNoRealizadaView(APIView):
-    permission_classes = [EsTecnico]
-
     def post(self, request, pk):
-        release_expired_claims(tiendas_visibles_para(request.user))
         def work():
-            visit = locked_visit(request.user, pk)
-            if visit.estado != "programada" or visit.iniciado_en or visit.formulario_abierto_en or visit.enviado_en or visit.completado_en:
-                raise Conflict("Solo una visita pendiente sin iniciar puede marcarse como no realizada.")
-            serializer = VisitaNoRealizadaInput(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            visit.estado = "no_realizada"
-            visit.justificacion = serializer.validated_data["reason"]
-            visit.save(update_fields=["estado", "justificacion"])
-            event(request.user, visit, "not_performed", "Visita no realizada", {"reason": visit.justificacion})
-            return visit_data(visit)
+            visit = not_performed(request.user, pk, request.data)
+            return visit_data(visit, user=request.user)
+
         return Response(idempotent(request, work))
 
 

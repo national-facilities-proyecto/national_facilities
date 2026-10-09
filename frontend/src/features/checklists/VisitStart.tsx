@@ -1,12 +1,10 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { Coordinates, Store, Visit } from '../../types/models'
+import type { Store, Visit } from '../../types/models'
 import { useRepositories } from '../../app/RepositoriesProvider'
-import { useLocationRequest } from '../geolocation/useLocation'
-import { distanceMeters } from '../geolocation/location'
-import { Alert, Button, Card } from '../../components/ui'
-import { errorMessage } from '../../services/errors'
-import { displayDate } from '../../utils/dates'
+import { Button, Card } from '../../components/ui'
+import { operationDate, scheduleDate } from '../../utils/dates'
+import { GpsAction } from './GpsAction'
 
 export function VisitStart({
   visit,
@@ -19,113 +17,56 @@ export function VisitStart({
   claimBeforeStart?: boolean
   onStarted?: () => void
 }) {
-  const { checklists, visits } = useRepositories()
-  const location = useLocationRequest()
+  const { checklists } = useRepositories()
   const navigate = useNavigate()
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [current, setCurrent] = useState(visit)
   const [claimed, setClaimed] = useState(!claimBeforeStart)
-  const [coordinates, setCoordinates] = useState<Coordinates>()
-  const distance = coordinates ? Math.round(distanceMeters(coordinates, store)) : null
-  const reserve = () => {
-    if (busy || claimed) return
-    setBusy(true)
-    setError('')
-    void checklists
-      .claim(visit.id)
-      .then(() => window.location.reload())
-      .catch((cause) => setError(errorMessage(cause)))
-      .finally(() => setBusy(false))
-  }
-  const request = () => {
-    setBusy(true)
-    setError('')
-    void location
-      .request()
-      .then(setCoordinates)
-      .catch((cause) => setError(errorMessage(cause)))
-      .finally(() => setBusy(false))
-  }
-  const confirm = () => {
-    if (!coordinates || busy) return
-    setBusy(true)
-    setError('')
-    void (claimed ? Promise.resolve() : checklists.claim(visit.id).then(() => setClaimed(true)))
-      .then(() => visits.start(visit.id, coordinates))
-      .then(() =>
-        onStarted
-          ? onStarted()
-          : navigate(
-              visit.origin === 'checklist'
-                ? `/checklists/${visit.id}/start`
-                : `/routes/${visit.id}`,
-            ),
-      )
-      .catch((cause) => setError(errorMessage(cause)))
-      .finally(() => setBusy(false))
+  const [initialClock] = useState(() => new Date())
+  const future =
+    visit.origin === 'ticket' &&
+    operationDate(new Date(visit.scheduledAt)) >
+      operationDate(visit.serverNow ? new Date(visit.serverNow) : initialClock)
+  const prepare = async () => {
+    if (claimed) return current
+    const next = await checklists.claim(visit.id)
+    setCurrent(next)
+    setClaimed(true)
+    return next
   }
   return (
-    <Card title={visit.origin === 'checklist' ? 'Iniciar checklist' : 'Iniciar atención'}>
-      <p>
-        {claimed
-          ? 'Solicita una ubicación GPS nueva antes de iniciar.'
-          : 'Al iniciar, la visita quedará asignada a ti.'}
-      </p>
-      <p>
-        Radio permitido:{' '}
-        {visit.radiusMeters === undefined ? 'No registrado' : `${visit.radiusMeters} m`}.
-      </p>
-      {visit.legacy && (
-        <Alert>
-          Esta ejecución histórica requiere revisión de contrato y timestamps; no se reiniciará
-          automáticamente.
-        </Alert>
-      )}
-      <p>
-        El inicio registra la ejecución. El formulario y sus cinco minutos se abrirán cuando pulses
-        {visit.origin === 'checklist' ? 'Finalizar checklist.' : 'Registrar resolución.'}
-      </p>
-      {visit.origin === 'checklist' && (
-        <p>
-          {visit.claimExpiresAt
-            ? `Reserva hasta ${displayDate(visit.claimExpiresAt)}. Si no inicias antes, vuelve automáticamente a la bolsa.`
-            : 'La reserva dura dos horas desde el reclamo y deja de vencer al iniciar el trabajo.'}
-        </p>
-      )}
-      {coordinates && (
-        <Alert success>
-          Distancia: {distance} m · Precisión: ±{Math.round(coordinates.accuracy)} m · Captura:{' '}
-          {new Date(coordinates.capturedAt).toLocaleString('es-PE')}.
-        </Alert>
-      )}
-      {error && <Alert>{error}</Alert>}
-      <div className="nf-actions">
-        {!claimed && visit.origin === 'checklist' && (
-          <Button variant="secondary" disabled={busy || visit.legacy} onClick={reserve}>
-            Reservar checklist
+    <Card title="Iniciar trabajo">
+      {future ? (
+        <>
+          <p>
+            La atención está programada para el {scheduleDate(visit.scheduledAt)}. Puedes registrar
+            llegada desde ese día.
+          </p>
+          <p>Si necesitas atender antes, solicita la reprogramación al supervisor.</p>
+          <Button variant="secondary" onClick={() => window.location.reload()}>
+            Actualizar programación
           </Button>
-        )}
-        {error && (
-          <Button variant="secondary" disabled={busy} onClick={() => window.location.reload()}>
-            Actualizar visita
-          </Button>
-        )}
-        <Button variant="secondary" disabled={busy} onClick={request}>
-          {busy ? 'Solicitando ubicación…' : 'Obtener ubicación'}
-        </Button>
-        <Button
-          disabled={
-            busy ||
-            !coordinates ||
-            visit.legacy ||
-            visit.radiusMeters === undefined ||
-            (distance !== null && distance > visit.radiusMeters)
-          }
-          onClick={confirm}
-        >
-          {visit.origin === 'checklist' ? 'Iniciar checklist' : 'Confirmar inicio'}
-        </Button>
-      </div>
+        </>
+      ) : (
+        <>
+          <p className="nf-muted">
+            Confirma tu llegada a {store.name} con la ubicación del dispositivo.
+          </p>
+          <GpsAction
+            visit={current}
+            scope="arrival"
+            beforeStart={prepare}
+            onConfirmed={() => {
+              if (onStarted) onStarted()
+              else
+                void navigate(
+                  visit.origin === 'checklist'
+                    ? `/checklists/${visit.id}/start`
+                    : `/routes/${visit.id}`,
+                )
+            }}
+          />
+        </>
+      )}
     </Card>
   )
 }

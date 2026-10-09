@@ -33,13 +33,15 @@ for (const width of [320, 1440]) {
     await login(page)
     await expect(page.getByRole('heading', { name: 'Mis Checklist', exact: true })).toBeVisible()
     const navigation = page.getByRole('navigation', {
-      name: width < 1024 ? 'Accesos del técnico' : 'Navegación principal',
+      name: width < 1024 ? 'Navegación móvil' : 'Navegación principal',
     })
     try {
-      await navigation.getByRole('link', { name: 'Mis Rutas', exact: true }).click()
+      if (width < 1024) await page.getByRole('button', { name: 'Abrir menú' }).click()
+      await navigation.getByRole('link', { name: 'Atenciones', exact: true }).click()
       await expect(page.locator('#main-content .nf-loading--list')).toBeVisible()
       await expect(page.getByRole('button', { name: /Perfil de/ })).toBeVisible()
-      await expect(navigation).toBeVisible()
+      if (width >= 1024) await expect(navigation).toBeVisible()
+      else await expect(page.getByRole('button', { name: 'Abrir menú' })).toBeVisible()
       await expect(page.getByRole('status')).toContainText('Preparando tu vista')
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
       expect(
@@ -60,9 +62,9 @@ for (const width of [320, 1440]) {
       await expect(page.locator('.nf-loading--map')).toBeVisible()
       await expect(page.locator('.nf-map-container')).toHaveCount(0)
       await expect(page.getByText('Preparando tus ubicaciones asignadas.')).toBeVisible()
-      await page.getByRole('button', { name: 'Futuras', exact: true }).click()
+      await page.getByRole('button', { name: 'Pendientes', exact: true }).click()
       await expect(page.locator(`a[href="/routes/${visitId}"]`)).toBeVisible()
-      await expect(page.getByRole('button', { name: 'Hoy', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Finalizadas', exact: true })).toBeVisible()
       const placeholder = await page.locator('.nf-loading--map').boundingBox()
       const placeholderCard = await page
         .getByRole('region', { name: 'Mapa de tiendas', exact: true })

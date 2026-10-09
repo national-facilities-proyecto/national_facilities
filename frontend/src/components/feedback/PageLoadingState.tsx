@@ -19,7 +19,7 @@ function pagePresentation(path: string): { title: string; variant: LoadingVarian
   if (path === '/supervisor/tickets/new')
     return { title: 'Registrar nueva incidencia', variant: 'form' }
   if (path === '/checklists') return { title: 'Mis Checklist', variant: 'list' }
-  if (path === '/routes') return { title: 'Mis rutas pendientes', variant: 'list' }
+  if (path === '/routes') return { title: 'Atenciones', variant: 'list' }
   if (path === '/supervisor/tickets') return { title: 'Mis incidencias', variant: 'list' }
   if (path === '/technical-supervisor/visits')
     return { title: 'Programación de visitas', variant: 'list' }

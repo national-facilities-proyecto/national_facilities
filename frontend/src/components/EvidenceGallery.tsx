@@ -3,12 +3,24 @@ import { useRepositories } from '../app/RepositoriesProvider'
 import { useObjectUrl } from '../hooks/useObjectUrl'
 import type { Evidence } from '../types/models'
 import { Button } from './ui'
+import { Modal } from './ui/Modal'
 import { Image, ImageOff } from 'lucide-react'
-function EvidenceImage({ id, onRemove }: { id: string; onRemove?: (id: string) => void }) {
+function EvidenceImage({
+  id,
+  onRemove,
+  onReplace,
+  disabled,
+}: {
+  id: string
+  onRemove?: (id: string) => void
+  onReplace?: (id: string) => void
+  disabled?: boolean
+}) {
   const { evidence } = useRepositories()
   const [item, setItem] = useState<Evidence>()
   const [failed, setFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
+  const [expanded, setExpanded] = useState(false)
   useEffect(() => {
     let active = true
     void evidence.get(id).then(
@@ -30,7 +42,14 @@ function EvidenceImage({ id, onRemove }: { id: string; onRemove?: (id: string) =
   return (
     <figure className="nf-evidence">
       {url ? (
-        <img src={url} alt={item?.name ?? 'Evidencia'} width="240" height="180" loading="lazy" />
+        <Button
+          variant="secondary"
+          className="nf-image-button"
+          aria-label={`Ampliar fotografía ${item?.name ?? ''}`}
+          onClick={() => setExpanded(true)}
+        >
+          <img src={url} alt={item?.name ?? 'Evidencia'} width="240" height="180" loading="lazy" />
+        </Button>
       ) : (
         <div className="nf-evidence-placeholder" role="status">
           {failed ? (
@@ -48,17 +67,6 @@ function EvidenceImage({ id, onRemove }: { id: string; onRemove?: (id: string) =
           : item?.source === 'gallery'
             ? 'Galería'
             : 'Archivo adjunto'}
-        {item && (
-          <small>
-            {Math.ceil(item.size / 1024)} KB
-            {item.uploadedAt && (
-              <> · Cargada: {new Date(item.uploadedAt).toLocaleString('es-PE')}</>
-            )}
-            {item.capturedAt && (
-              <> · Captura declarada: {new Date(item.capturedAt).toLocaleString('es-PE')}</>
-            )}
-          </small>
-        )}
       </figcaption>
       {failed && (
         <Button
@@ -71,25 +79,45 @@ function EvidenceImage({ id, onRemove }: { id: string; onRemove?: (id: string) =
           Reintentar fotografía
         </Button>
       )}
-      {onRemove && (
-        <Button variant="secondary" onClick={() => onRemove(id)}>
-          Eliminar fotografía
-        </Button>
-      )}
+      <div className="nf-photo-actions">
+        {onReplace && (
+          <Button variant="secondary" disabled={disabled} onClick={() => onReplace(id)}>
+            Reemplazar fotografía
+          </Button>
+        )}
+        {onRemove && (
+          <Button variant="secondary" disabled={disabled} onClick={() => onRemove(id)}>
+            Eliminar fotografía
+          </Button>
+        )}
+      </div>
+      <Modal open={expanded} title="Fotografía ampliada" onClose={() => setExpanded(false)}>
+        <img className="nf-image-preview" src={url} alt={item?.name ?? 'Evidencia'} />
+      </Modal>
     </figure>
   )
 }
 export function EvidenceGallery({
   ids,
   onRemove,
+  onReplace,
+  disabled,
 }: {
   ids: string[]
   onRemove?: (id: string) => void
+  onReplace?: (id: string) => void
+  disabled?: boolean
 }) {
   return (
     <div className="nf-evidence-grid">
       {ids.map((id) => (
-        <EvidenceImage key={id} id={id} onRemove={onRemove} />
+        <EvidenceImage
+          key={id}
+          id={id}
+          onRemove={onRemove}
+          onReplace={onReplace}
+          disabled={disabled}
+        />
       ))}
     </div>
   )

@@ -35,7 +35,7 @@ def generate_month(user, period=None):
     # Bloqueo de tiendas ordenado + restricción de cuota protege diferentes procesos.
     stores = tiendas_visibles_para(user).filter(activo=True).order_by("pk").select_for_update(of=("self",))
     for store in stores:
-        published = list(Visita.objects.filter(tienda=store, origen="checklist", periodo=period).order_by("cuota"))
+        published = list(Visita.objects.filter(tienda=store, origen="checklist", periodo=period, vigente=True).order_by("cuota"))
         if published:
             if [visit.cuota for visit in published] != list(range(1, len(published)+1)):
                 raise Conflict("Las visitas mensuales publicadas tienen cuotas inconsistentes; conserva el historial y solicita revisión.")
@@ -61,7 +61,7 @@ def generate_month(user, period=None):
         if not template.activa or not tasks:
             raise Conflict("El contrato necesita una plantilla activa con tareas.")
         for quota in range(1, contract.frecuencia_visitas_mensual + 1):
-            visit, created = Visita.objects.get_or_create(tienda=store, origen="checklist", periodo=period, cuota=quota,
+            visit, created = Visita.objects.get_or_create(tienda=store, origen="checklist", periodo=period, cuota=quota, vigente=True,
                 defaults={"fecha_programada": timezone.make_aware(datetime.combine(max(period, contract.fecha_inicio), time(0))), "estado": "programada"})
             if created:
                 snapshot(visit, contract)

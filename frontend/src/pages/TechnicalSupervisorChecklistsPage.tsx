@@ -18,9 +18,8 @@ export default function TechnicalSupervisorChecklistsPage() {
   const query = useQuery(
     useCallback(
       async (signal) => {
-        const [checklists, visits, stores, users, tickets, catalogs] = await Promise.all([
+        const [checklists, stores, users, tickets, catalogs] = await Promise.all([
           repos.checklists.list({ signal }),
-          repos.visits.list({ signal }),
           repos.stores.list({ signal }),
           repos.users.list({ signal }),
           repos.tickets.list({ signal }),
@@ -29,12 +28,7 @@ export default function TechnicalSupervisorChecklistsPage() {
             : Promise.reject(new Error('Catálogos no disponibles.')),
         ])
         return {
-          visits: [
-            ...checklists,
-            ...visits.filter(
-              (visit) => visit.status === 'pending_approval' || (visit.exceptions?.length ?? 0) > 0,
-            ),
-          ],
+          visits: checklists,
           stores,
           users,
           tickets,
@@ -55,13 +49,13 @@ export default function TechnicalSupervisorChecklistsPage() {
       (!status || visitWorkStatus(visit.status) === status) &&
       (!storeId || visit.storeId === Number(storeId)) &&
       (!priority || visitPriority(visit.ticketId) === priority) &&
-      inDateRange(visit.completedAt ?? visit.scheduledAt, from, to),
+      inDateRange(visit.startedAt ?? visit.scheduledAt, from, to),
   )
   return (
     <>
       <PageHeader
-        title="Checklists y excepciones"
-        description="Supervisa el mantenimiento mensual y revisa excepciones de checklists y tickets."
+        title="Checklists"
+        description="Supervisa el mantenimiento mensual. Las decisiones están en Revisiones pendientes."
       />
       <QueryFeedback query={query} />
       <Card>
@@ -97,13 +91,13 @@ export default function TechnicalSupervisorChecklistsPage() {
             ))}
           </Select>
           <Input
-            label="Fecha inicio"
+            label="Fecha de ejecución o programación desde"
             type="date"
             value={from}
             onChange={(event) => setFrom(event.target.value)}
           />
           <Input
-            label="Fecha fin"
+            label="Fecha de ejecución o programación hasta"
             type="date"
             min={from}
             value={to}
@@ -146,7 +140,10 @@ export default function TechnicalSupervisorChecklistsPage() {
             render: (visit) => (
               <>
                 {technician(visit.technicianId)}
-                <p>{displayDate(visit.completedAt ?? visit.scheduledAt)}</p>
+                <p>
+                  {visit.startedAt ? 'Ejecutada: ' : 'Programada: '}
+                  {displayDate(visit.startedAt ?? visit.scheduledAt)}
+                </p>
               </>
             ),
           },

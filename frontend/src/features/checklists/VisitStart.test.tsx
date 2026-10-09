@@ -1,0 +1,253 @@
+import 'fake-indexeddb/auto'
+import { beforeEach, expect, it, vi } from 'vitest'
+import { fireEvent, screen } from '@testing-library/react'
+import { renderPage } from '../../test/render'
+import { createMockRepositories } from '../../test/doubles/repositories'
+import { VisitStart } from './VisitStart'
+import { AppError } from '../../services/errors'
+beforeEach(() => {
+  localStorage.clear()
+  sessionStorage.clear()
+})
+async function setup() {
+  const repos = createMockRepositories()
+  await repos.auth.login({ kind: 'demo', userId: 1 })
+  const visit = await repos.checklists.claim(1)
+  const photo = {
+    id: 'arrival-photo',
+    visitId: 1,
+    purpose: 'arrival' as const,
+    source: 'camera' as const,
+    name: 'front.webp',
+    mimeType: 'image/webp',
+    size: 4,
+    blob: new Blob(['webp'], { type: 'image/webp' }),
+  }
+  // La lectura de archivos es externa a esta unidad; jsdom no clona Blob en IndexedDB.
+  vi.spyOn(repos.evidence, 'get').mockResolvedValue(photo)
+  visit.arrivalEvidenceIds = ['arrival-photo']
+  const store = await repos.stores.get(1)
+  return { repos, visit, store }
+}
+for (const [code, failure] of [
+  [1, 'denied'],
+  [2, 'unavailable'],
+  [3, 'timeout'],
+] as const)
+  it(`llegada ${failure}: ofrece excepción sin coordenadas ficticias`, async () => {
+    const { repos, visit, store } = await setup()
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: (_ok: PositionCallback, error: PositionErrorCallback) =>
+          error({ code } as GeolocationPositionError),
+      },
+    })
+    const request = vi.spyOn(repos.visits, 'requestException')
+    const confirmed = vi.fn()
+    renderPage(<VisitStart visit={visit} store={store} onStarted={confirmed} />, repos)
+    fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+    await screen.findByRole('button', { name: 'Reintentar ubicación' })
+    fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
+    fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
+      target: { value: 'No se pudo obtener GPS al llegar.' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar excepción GPS' }))
+    await vi.waitFor(() => expect(confirmed).toHaveBeenCalledOnce())
+    expect(request.mock.calls[0]?.[1]).toEqual({
+      type: 'location',
+      scope: 'arrival',
+      reason: 'No se pudo obtener GPS al llegar.',
+      failure,
+      evidenceId: 'arrival-photo',
+    })
+    const started = await repos.visits.get(1)
+    expect(started.phase).toBe('physical_work')
+    expect(started.occupiesTechnician).toBe(true)
+    expect(started.formOpenedAt).toBeUndefined()
+    expect(started.submittedAt).toBeUndefined()
+  })
+it('rechazo conserva lectura real fuera de radio', async () => {
+  const { repos, visit, store } = await setup()
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: (ok: PositionCallback) =>
+        ok({
+          coords: { latitude: 0, longitude: 0, accuracy: 8 },
+          timestamp: Date.now(),
+        } as GeolocationPosition),
+    },
+  })
+  vi.spyOn(repos.visits, 'start').mockRejectedValue(
+    new AppError('validation', 'Fuera de radio.', { failure: ['out_of_radius'] }),
+  )
+  const request = vi.spyOn(repos.visits, 'requestException')
+  renderPage(<VisitStart visit={visit} store={store} onStarted={() => undefined} />, repos)
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  await screen.findByRole('button', { name: 'Solicitar excepción GPS' })
+  fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
+  fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
+    target: { value: 'Lectura GPS fuera de radio al llegar.' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar excepción GPS' }))
+  await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+  expect(request.mock.calls[0]?.[1]).toMatchObject({
+    scope: 'arrival',
+    failure: 'out_of_radius',
+    location: { latitude: 0, longitude: 0, accuracy: 8 },
+  })
+})
+it('stale obtiene otra lectura fresca automáticamente', async () => {
+  const { repos, visit, store } = await setup()
+  const gps = vi.fn((ok: PositionCallback) =>
+    ok({
+      coords: { latitude: store.latitude, longitude: store.longitude, accuracy: 8 },
+      timestamp: Date.now(),
+    } as GeolocationPosition),
+  )
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: { getCurrentPosition: gps },
+  })
+  const start = vi
+    .spyOn(repos.visits, 'start')
+    .mockRejectedValueOnce(new AppError('validation', 'Lectura caducada.', { failure: ['stale'] }))
+  const confirmed = vi.fn()
+  renderPage(<VisitStart visit={visit} store={store} onStarted={confirmed} />, repos)
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  await vi.waitFor(() => expect(confirmed).toHaveBeenCalledOnce())
+  expect(gps).toHaveBeenCalledTimes(2)
+  expect(start).toHaveBeenCalledTimes(2)
+})
+it('si la nueva lectura falla, no reutiliza la lectura stale para la excepción', async () => {
+  const { repos, visit, store } = await setup()
+  const gps = vi
+    .fn<(ok: PositionCallback, error: PositionErrorCallback) => void>()
+    .mockImplementationOnce((ok) =>
+      ok({
+        coords: { latitude: store.latitude, longitude: store.longitude, accuracy: 8 },
+        timestamp: Date.now(),
+      } as GeolocationPosition),
+    )
+    .mockImplementationOnce((_ok, error) => error({ code: 1 } as GeolocationPositionError))
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: { getCurrentPosition: gps },
+  })
+  vi.spyOn(repos.visits, 'start').mockRejectedValueOnce(
+    new AppError('validation', 'Lectura caducada.', { failure: ['stale'] }),
+  )
+  const request = vi.spyOn(repos.visits, 'requestException')
+  const confirmed = vi.fn()
+  renderPage(<VisitStart visit={visit} store={store} onStarted={confirmed} />, repos)
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  await screen.findByRole('button', { name: 'Solicitar excepción GPS' })
+  fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
+  fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
+    target: { value: 'Permiso denegado al renovar la lectura.' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar excepción GPS' }))
+  await vi.waitFor(() => expect(confirmed).toHaveBeenCalledOnce())
+  expect(request.mock.calls[0]?.[1]).toMatchObject({ scope: 'arrival', failure: 'denied' })
+  expect(request.mock.calls[0]?.[1]).not.toHaveProperty('location')
+})
+
+it('exige una fotografía del establecimiento antes de solicitar la excepción', async () => {
+  const { repos, visit, store } = await setup()
+  visit.arrivalEvidenceIds = []
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: (_ok: PositionCallback, error: PositionErrorCallback) =>
+        error({ code: 1 } as GeolocationPositionError),
+    },
+  })
+  renderPage(<VisitStart visit={visit} store={store} onStarted={() => undefined} />, repos)
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  await screen.findByRole('button', { name: 'Solicitar excepción GPS' })
+  fireEvent.click(screen.getByRole('button', { name: 'Solicitar excepción GPS' }))
+  fireEvent.change(screen.getByLabelText('Motivo de la excepción'), {
+    target: { value: 'GPS sin permiso en el navegador.' },
+  })
+  expect(screen.getByRole('button', { name: 'Guardar excepción GPS' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Tomar foto del establecimiento' })).toBeVisible()
+  expect(screen.queryByText(/Lectura real|out_of_radius/)).not.toBeInTheDocument()
+})
+
+it('una acción reclama antes de obtener GPS y registrar llegada', async () => {
+  const { repos, store } = await setup()
+  const initial = { ...(await repos.visits.get(1)), status: 'available' as const }
+  const order: string[] = []
+  const claim = vi.spyOn(repos.checklists, 'claim').mockImplementation(async () => {
+    order.push('claim')
+    return { ...initial, status: 'claimed' }
+  })
+  const start = vi.spyOn(repos.visits, 'start').mockImplementation(async () => {
+    order.push('start')
+    return { ...initial, status: 'in_progress', phase: 'physical_work' }
+  })
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: (ok: PositionCallback) => {
+        order.push('gps')
+        ok({
+          coords: { latitude: store.latitude, longitude: store.longitude, accuracy: 8 },
+          timestamp: Date.now(),
+        } as GeolocationPosition)
+      },
+    },
+  })
+  const confirmed = vi.fn()
+  renderPage(
+    <VisitStart visit={initial} store={store} claimBeforeStart onStarted={confirmed} />,
+    repos,
+  )
+  expect(screen.queryByRole('button', { name: 'Tomar checklist' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  await vi.waitFor(() => expect(confirmed).toHaveBeenCalledOnce())
+  expect(order).toEqual(['claim', 'gps', 'start'])
+  expect(claim).toHaveBeenCalledOnce()
+  expect(start).toHaveBeenCalledOnce()
+})
+it('si otro técnico ganó el reclamo, no solicita GPS ni registra llegada', async () => {
+  const { repos, store, visit } = await setup()
+  vi.spyOn(repos.checklists, 'claim').mockRejectedValue(
+    new AppError('conflict', 'Otro técnico tomó este checklist.'),
+  )
+  const gps = vi.fn()
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: { getCurrentPosition: gps },
+  })
+  const start = vi.spyOn(repos.visits, 'start')
+  renderPage(
+    <VisitStart visit={{ ...visit, status: 'available' }} store={store} claimBeforeStart />,
+    repos,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Otro técnico tomó')
+  expect(gps).not.toHaveBeenCalled()
+  expect(start).not.toHaveBeenCalled()
+})
+it('GPS denegado conserva el reclamo y reintentar no lo duplica', async () => {
+  const { repos, store, visit } = await setup()
+  const claim = vi.spyOn(repos.checklists, 'claim').mockResolvedValue(visit)
+  const gps = vi.fn((_ok: PositionCallback, fail: PositionErrorCallback) =>
+    fail({ code: 1 } as GeolocationPositionError),
+  )
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: { getCurrentPosition: gps },
+  })
+  renderPage(
+    <VisitStart visit={{ ...visit, status: 'available' }} store={store} claimBeforeStart />,
+    repos,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar llegada' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Reintentar ubicación' }))
+  await vi.waitFor(() => expect(gps).toHaveBeenCalledTimes(2))
+  expect(claim).toHaveBeenCalledOnce()
+  expect(screen.getByRole('button', { name: 'Solicitar excepción GPS' })).toBeVisible()
+})

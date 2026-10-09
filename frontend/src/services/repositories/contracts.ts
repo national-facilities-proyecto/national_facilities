@@ -12,6 +12,9 @@ import type {
   User,
   Visit,
   Catalogs,
+  ExceptionInput,
+  ReviewSubmission,
+  WorkRecovery,
 } from '../../types/models'
 export type LoginInput =
   { kind: 'credentials'; username: string; password: string } | { kind: 'demo'; userId: number }
@@ -51,12 +54,15 @@ export interface VisitRepository {
   list(options?: RequestOptions): Promise<Visit[]>
   get(id: number, options?: RequestOptions): Promise<Visit>
   start(id: number, location: Coordinates): Promise<Visit>
-  openForm?(id: number, location?: Coordinates, failure?: string): Promise<Visit>
-  recordEndGps?(id: number, location: Coordinates): Promise<Visit>
-  submitReview?(id: number, input: import('../../types/models').ReviewSubmission): Promise<Visit>
-  complete(id: number, location: Coordinates): Promise<Visit>
-  requestException(id: number, reason: string, failure: string): Promise<Visit>
-  requestTimeException(id: number, reason: string): Promise<Visit>
+  openForm(id: number): Promise<Visit>
+  finishPhysicalWork(id: number): Promise<Visit>
+  submitReview(id: number, input: ReviewSubmission): Promise<Visit>
+  complete(id: number, input: ReviewSubmission): Promise<Visit>
+  markNotPerformed(id: number, reason: string): Promise<Visit>
+  requestException(id: number, input: ExceptionInput): Promise<Visit>
+  requestTimeException(id: number, reason: string, revision?: number): Promise<Visit>
+  recovery(options?: RequestOptions): Promise<WorkRecovery>
+  pendingReviews(options?: RequestOptions): Promise<Visit[]>
   reviewException(
     id: number,
     approved: boolean,
@@ -86,6 +92,7 @@ export interface StoreRepository {
 }
 export interface UserRepository {
   list(options?: RequestOptions): Promise<User[]>
+  eligible?(storeId: number, options?: RequestOptions): Promise<User[]>
 }
 export interface DashboardRepository {
   get(options?: RequestOptions & { period?: string; clientId?: number }): Promise<Dashboard>

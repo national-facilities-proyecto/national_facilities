@@ -1,17 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AttributionControl, MapContainer, Marker, Popup, Tooltip, useMap } from 'react-leaflet'
+import {
+  AttributionControl,
+  MapContainer,
+  Marker,
+  Popup,
+  Tooltip,
+  ZoomControl,
+  useMap,
+} from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './map.css'
-import type { Store } from '../../types/models'
+import type { MapLocation } from './mapLocation'
 import { Button, LoadingState } from '../../components/ui'
 import { requestLocation } from '../geolocation/location'
 import { createOpenFreeMapLayer } from './openFreeMap'
 const icon = L.divIcon({
   className: 'nf-marker',
-  html: '<span>NF</span>',
+  html: '<span aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10V21H21V10M2 10L4 3H20L22 10ZM9 21V14H15V21"/></svg></span>',
   iconSize: [34, 34],
   iconAnchor: [17, 34],
+})
+const positionIcon = L.divIcon({
+  className: 'nf-marker',
+  html: '<span aria-hidden="true">●</span>',
+  iconSize: [34, 34],
+  iconAnchor: [17, 17],
 })
 
 function districtFromAddress(address: string) {
@@ -21,7 +35,36 @@ function districtFromAddress(address: string) {
     .filter(Boolean)
   return sections.length > 1 ? sections.at(-2) : sections[0]
 }
-function Bounds({ stores }: { stores: Store[] }) {
+function StoreLabel({ store }: { store: MapLocation }) {
+  const district = districtFromAddress(store.address) ?? ''
+  const name = store.name.trim()
+  if (!district && !name) return null
+  return (
+    <Tooltip
+      key={JSON.stringify([district, name])}
+      permanent
+      direction="top"
+      offset={[0, -24]}
+      className="nf-map-label"
+      // Leaflet recibe texto desde la apertura, sin esperar al portal de React.
+      content={() => {
+        const label = document.createElement('div')
+        if (district) {
+          const title = document.createElement('strong')
+          title.textContent = district
+          label.append(title)
+        }
+        if (name) {
+          const title = document.createElement('span')
+          title.textContent = name
+          label.append(title)
+        }
+        return label
+      }}
+    />
+  )
+}
+function Bounds({ stores }: { stores: MapLocation[] }) {
   const map = useMap()
   useEffect(() => {
     if (stores.length)
@@ -81,13 +124,7 @@ export function OpenFreeMapLayer({
   }, [map, onError, onReady, timeoutMs])
   return null
 }
-export function AssignedLocationsMap({
-  stores,
-  onSelect,
-}: {
-  stores: Store[]
-  onSelect?: (store: Store) => void
-}) {
+export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [attempt, setAttempt] = useState(0)
   const [position, setPosition] = useState<[number, number]>()
@@ -122,25 +159,51 @@ export function AssignedLocationsMap({
           className="nf-map-container"
           attributionControl={false}
           scrollWheelZoom={false}
+          zoomControl={false}
         >
           <OpenFreeMapLayer key={attempt} onReady={ready} onError={error} />
           <AttributionControl prefix="OpenFreeMap | © OpenStreetMap contributors" />
+          <ZoomControl position="bottomright" />
           <Bounds stores={stores} />
           {stores.map((store) => (
-            <Marker key={store.id} position={[store.latitude, store.longitude]} icon={icon}>
-              <Tooltip permanent direction="top" offset={[0, -24]} className="nf-map-label">
-                <strong>{districtFromAddress(store.address)}</strong>
-                <span>{store.name}</span>
-              </Tooltip>
-              <Popup>
+            <Marker
+              key={store.id}
+              position={[store.latitude, store.longitude]}
+              icon={icon}
+              title={store.name}
+              eventHandlers={{
+                keydown: (event) => {
+                  if (
+                    ['Enter', ' '].includes(event.originalEvent.key) &&
+                    event.target instanceof L.Marker
+                  ) {
+                    L.DomEvent.stop(event.originalEvent)
+                    event.target.openPopup()
+                  }
+                },
+              }}
+            >
+              <StoreLabel store={store} />
+              <Popup
+                maxWidth={240}
+                autoPanPaddingTopLeft={[20, 20]}
+                autoPanPaddingBottomRight={[60, 110]}
+              >
                 <strong>{store.name}</strong>
                 <p>{store.address}</p>
-                {onSelect && <Button onClick={() => onSelect(store)}>Ver tienda</Button>}
+                <a
+                  className="nf-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}
+                >
+                  Cómo llegar
+                </a>
               </Popup>
             </Marker>
           ))}
           {position && (
-            <Marker position={position} icon={icon}>
+            <Marker position={position} icon={positionIcon} title="Tu ubicación">
               <Popup>Tu ubicación</Popup>
             </Marker>
           )}

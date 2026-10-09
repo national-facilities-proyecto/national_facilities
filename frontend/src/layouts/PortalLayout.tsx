@@ -23,7 +23,6 @@ export default function PortalLayout() {
     return () => media.removeEventListener('change', resize)
   }, [])
   if (!session) return null
-  const isTechnician = session.user.role === 'technician'
   const hasCollapsibleSidebar = ['technician', 'store_supervisor', 'administrator'].includes(
     session.user.role,
   )
@@ -94,11 +93,6 @@ export default function PortalLayout() {
           {links}
         </nav>
       </Modal>
-      {isTechnician && (
-        <nav className="nf-bottom-nav" aria-label="Accesos del técnico">
-          {links}
-        </nav>
-      )}
     </div>
   )
 }

@@ -36,7 +36,7 @@ export default function TicketDetailPage() {
   return (
     <>
       <Link className="nf-link" to="/routes">
-        ← Mis rutas
+        ← Atenciones
       </Link>
       <PageHeader title={store.name} description={store.address} />
       {visit.ticketId && <TicketReport ticketId={visit.ticketId} />}

@@ -1,25 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBlocker, useNavigate } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
-import type { Answer, Coordinates, Evidence, Visit } from '../../types/models'
+import type { Answer, Evidence, Visit } from '../../types/models'
 import { registrationEditable } from '../../types/models'
 import { AppError, errorMessage } from '../../services/errors'
-import { LocationError } from '../geolocation/location'
-import { useLocationRequest } from '../geolocation/useLocation'
 import { pendingItems } from './validation'
-import { formExpired } from './clock'
 import { useAuth } from '../auth/AuthProvider'
 
 type Step =
   | { kind: 'editing' }
-  | { kind: 'observation'; taskId: number }
+  | { kind: 'observation'; taskId: number; result?: 'no_conforme' | 'no_aplica' }
   | { kind: 'camera'; taskId?: number }
   | { kind: 'validating' }
-  | { kind: 'confirm_finish'; location: Coordinates }
-  | { kind: 'location_error'; message: string; failure: string }
-  | { kind: 'exception'; failure: string }
-  | { kind: 'time_exception' }
-  | { kind: 'success'; pending: boolean }
+  | { kind: 'confirm_finish' }
+  | { kind: 'success'; status: Visit['status'] }
 export function useVisitEditor(initial: Visit) {
   const repos = useRepositories()
   const auth = useAuth()
@@ -30,20 +24,22 @@ export function useVisitEditor(initial: Visit) {
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [reason, setReason] = useState('')
-  const [corrections, setCorrections] = useState<
-    Partial<Record<'time_limit' | 'location', string>>
-  >({})
-  const [exceptionBusy, setExceptionBusy] = useState(false)
+  const [validationIssues, setValidationIssues] = useState<string[]>([])
+  const [corrections, setCorrections] = useState<Record<string, string>>({})
   const [conflict, setConflict] = useState(false)
   const [remote, setRemote] = useState<Visit>()
-  const [pendingPhoto, setPendingPhoto] = useState<{ photo: Evidence; taskId?: number }>()
-  const [openingFailure, setOpeningFailure] = useState<string>()
+  const [pendingPhoto, setPendingPhoto] = useState<{
+    photo: Evidence
+    taskId?: number
+    confirmed?: boolean
+  }>()
   const version = useRef(0)
   const latest = useRef(visit)
   const saveQueue = useRef<Promise<void>>(Promise.resolve())
+  const queuedWrites = useRef(0)
+  const evidenceRevisionConflict = useRef(false)
   const mounted = useRef(true)
-  const location = useLocationRequest()
+  const physicalTransition = useRef(false)
   const back = visit.origin === 'checklist' ? '/checklists' : '/routes'
   const mustComplete = false
   const confirmedRevision = useRef(initial.revision ?? 0)
@@ -103,33 +99,39 @@ export function useVisitEditor(initial: Visit) {
     setVisit(next)
     setDirty(true)
     setError('')
+    setValidationIssues([])
   }
-  const save = useCallback(async () => {
+  const persistDraft = useCallback(async () => {
+    if (latest.current.phase === 'not_performed') return
+    if (evidenceRevisionConflict.current)
+      throw new AppError(
+        'conflict',
+        'Consulta y concilia la versión del servidor antes de guardar.',
+      )
     const capturedVersion = version.current
     const snapshot = latest.current
+    const confirmed = await repos.checklists.saveDraft(snapshot.id, {
+      answers: snapshot.answers,
+      workDescription: snapshot.workDescription,
+      evidenceIds: snapshot.evidenceIds,
+      revision: confirmedRevision.current,
+    })
+    confirmedRevision.current = confirmed.revision ?? confirmedRevision.current
+    if (mounted.current && capturedVersion === version.current) {
+      latest.current = confirmed
+      setVisit(confirmed)
+      setDirty(false)
+      setError('')
+      setPendingPhoto((current) => (current?.confirmed ? undefined : current))
+    }
+  }, [repos])
+  const enqueueWrite = useCallback(async (work: () => Promise<void>) => {
+    queuedWrites.current++
     setSaving(true)
-    const request = saveQueue.current
-      .catch(() => undefined)
-      .then(async () => {
-        const confirmed = await repos.checklists.saveDraft(snapshot.id, {
-          answers: snapshot.answers,
-          workDescription: snapshot.workDescription,
-          evidenceIds: snapshot.evidenceIds,
-          revision: confirmedRevision.current,
-        })
-        confirmedRevision.current = confirmed.revision ?? confirmedRevision.current
-        if (mounted.current && capturedVersion === version.current) {
-          latest.current = confirmed
-          setVisit(confirmed)
-        }
-      })
+    const request = saveQueue.current.catch(() => undefined).then(work)
     saveQueue.current = request
     try {
       await request
-      if (mounted.current && capturedVersion === version.current) {
-        setDirty(false)
-        setError('')
-      }
     } catch (cause) {
       if (mounted.current) {
         setError(errorMessage(cause))
@@ -138,9 +140,11 @@ export function useVisitEditor(initial: Visit) {
       if (cause instanceof AppError && cause.code === 'conflict') setConflict(true)
       throw cause
     } finally {
-      if (mounted.current) setSaving(false)
+      queuedWrites.current--
+      if (mounted.current) setSaving(queuedWrites.current > 0)
     }
-  }, [repos])
+  }, [])
+  const save = useCallback(() => enqueueWrite(persistDraft), [enqueueWrite, persistDraft])
   const consultRemote = async () => {
     try {
       setRemote(await repos.visits.get(visit.id))
@@ -151,6 +155,7 @@ export function useVisitEditor(initial: Visit) {
   const acceptRemote = () => {
     if (!remote) return
     confirmedRevision.current = remote.revision ?? 0
+    evidenceRevisionConflict.current = false
     latest.current = remote
     version.current++
     setVisit(remote)
@@ -172,6 +177,7 @@ export function useVisitEditor(initial: Visit) {
       }
     })
     confirmedRevision.current = remote.revision ?? 0
+    evidenceRevisionConflict.current = false
     setConflict(false)
     setRemote(undefined)
     update({ ...remote, answers, workDescription: local.workDescription })
@@ -198,91 +204,153 @@ export function useVisitEditor(initial: Visit) {
   }
   const capture = async (photo: Evidence, taskIdOverride?: number) => {
     const taskId = taskIdOverride ?? (step.kind === 'camera' ? step.taskId : undefined)
-    setPendingPhoto({ photo, taskId })
-    const oldIds = taskId
-      ? (latest.current.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
-      : latest.current.evidenceIds
-    await repos.evidence.put({ ...photo, taskId, visitId: latest.current.id })
-    if (taskId) patchAnswer(taskId, { evidenceIds: [...new Set([...oldIds, photo.id])] })
-    else update({ evidenceIds: [...new Set([...oldIds, photo.id])] })
-    await save()
+    setPendingPhoto({ photo, taskId, confirmed: false })
+    await enqueueWrite(async () => {
+      await syncEvidenceRevision(
+        () => repos.evidence.put({ ...photo, taskId, visitId: latest.current.id }),
+        photo.id,
+        true,
+        taskId,
+      )
+      setPendingPhoto({ photo, taskId, confirmed: true })
+      const oldIds = taskId
+        ? (latest.current.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
+        : latest.current.evidenceIds
+      if (taskId) patchAnswer(taskId, { evidenceIds: [...new Set([...oldIds, photo.id])] })
+      else update({ evidenceIds: [...new Set([...oldIds, photo.id])] })
+      // La captura terminó: un fallo posterior del borrador se reintenta en el editor.
+      if (step.kind === 'camera') setStep({ kind: 'editing' })
+      await persistDraft()
+    })
     setPendingPhoto(undefined)
   }
-  const remove = (id: string, taskId?: number) => {
-    void repos.evidence
-      .remove(id)
-      .then(() => {
-        if (taskId) {
-          const answer = latest.current.answers.find((item) => item.taskId === taskId)
-          patchAnswer(taskId, {
-            evidenceIds: answer?.evidenceIds.filter((item) => item !== id) ?? [],
-          })
-        } else update({ evidenceIds: latest.current.evidenceIds.filter((item) => item !== id) })
-        void save().catch(() => undefined)
-      })
-      .catch((cause) => setError(errorMessage(cause)))
-  }
-  const finish = async () => {
-    if (step.kind !== 'editing' || saving) return
-    if (formExpired(latest.current) && latest.current.status !== 'pending_approval') {
-      setStep({ kind: 'time_exception' })
+  const syncEvidenceRevision = async (
+    mutation: () => Promise<void>,
+    id: string,
+    associated: boolean,
+    taskId?: number,
+  ) => {
+    if (evidenceRevisionConflict.current)
+      throw new AppError(
+        'conflict',
+        'Consulta y concilia la versión del servidor antes de cambiar fotografías.',
+      )
+    const previousRevision = confirmedRevision.current
+    await mutation()
+    const refreshed = await repos.visits.get(latest.current.id)
+    // El mock representa un borrador sin guardados como revisión 0; la API debe dar su versión.
+    const refreshedRevision = refreshed.revision ?? (repos.source === 'mock' ? 0 : undefined)
+    const ids = taskId
+      ? (refreshed.answers.find((answer) => answer.taskId === taskId)?.evidenceIds ?? [])
+      : refreshed.evidenceIds
+    // POST idempotente no incrementa la revisión. GET debe confirmar la asociación.
+    // Las evidencias del repositorio mock son locales y tampoco mutan el borrador.
+    const unchanged =
+      refreshedRevision === previousRevision &&
+      (repos.source === 'mock' || ids.includes(id) === associated)
+    const associationConfirmed = repos.source === 'mock' || ids.includes(id) === associated
+    if (
+      associationConfirmed &&
+      registrationEditable(refreshed) &&
+      typeof refreshedRevision === 'number' &&
+      (refreshedRevision === previousRevision + 1 || unchanged)
+    ) {
+      confirmedRevision.current = refreshedRevision
       return
     }
+    evidenceRevisionConflict.current = true
+    setRemote(refreshed)
+    setConflict(true)
+    throw new AppError(
+      'conflict',
+      associationConfirmed
+        ? 'La revisión cambió durante la mutación de evidencia. Tu editor se conserva; consulta y concilia la versión del servidor antes de guardar.'
+        : 'No se confirmó la asociación de la fotografía a este ítem. Consulta la versión del servidor antes de guardar.',
+    )
+  }
+  const remove = (id: string, taskId?: number) => {
+    void enqueueWrite(async () => {
+      await syncEvidenceRevision(() => repos.evidence.remove(id), id, false, taskId)
+      if (taskId) {
+        const answer = latest.current.answers.find((item) => item.taskId === taskId)
+        patchAnswer(taskId, {
+          evidenceIds: answer?.evidenceIds.filter((item) => item !== id) ?? [],
+        })
+      } else update({ evidenceIds: latest.current.evidenceIds.filter((item) => item !== id) })
+      await persistDraft()
+    }).catch((cause) => setError(errorMessage(cause)))
+  }
+  const retryPendingPhoto = async () => {
+    if (!pendingPhoto || saving || conflict) return
+    if (pendingPhoto.confirmed) {
+      await save()
+      setPendingPhoto(undefined)
+    } else await capture(pendingPhoto.photo, pendingPhoto.taskId)
+  }
+  const applyConfirmed = (next: Visit) => {
+    latest.current = next
+    confirmedRevision.current = next.revision ?? 0
+    setVisit(next)
+  }
+  const markNotPerformed = async (reason: string) => {
+    let confirmed!: Visit
+    await enqueueWrite(async () => {
+      confirmed = await repos.visits.markNotPerformed(latest.current.id, reason)
+      applyConfirmed(confirmed)
+      setDirty(false)
+      setError('')
+      setStep({ kind: 'editing' })
+    })
+    return confirmed
+  }
+  const needsReview = Boolean(visit.exceptions?.length)
+  const finish = async () => {
+    if (step.kind !== 'editing' || saving || conflict) return
     const pending = pendingItems(latest.current)
     if (pending.length) {
-      setError(pending.join(' '))
-      return
-    }
-    if (formExpired(visit) && visit.status !== 'pending_approval') {
-      setStep({ kind: 'time_exception' })
+      setValidationIssues(pending)
       return
     }
     setStep({ kind: 'validating' })
+    setValidationIssues([])
     setError('')
     try {
       await save()
-      const coordinates = await location.request()
-      setStep({ kind: 'confirm_finish', location: coordinates })
-    } catch (cause) {
-      if (cause instanceof AppError && cause.code === 'unauthorized') {
-        setStep({ kind: 'editing' })
-        return
-      }
-      setStep({
-        kind: 'location_error',
-        message: errorMessage(cause),
-        failure: cause instanceof LocationError ? cause.reason : 'service',
-      })
+      setStep({ kind: 'confirm_finish' })
+    } catch {
+      setStep({ kind: 'editing' })
     }
   }
-  const confirmFinish = async (coordinates: Coordinates) => {
+  const reviewInput = () => ({
+    revision: confirmedRevision.current,
+    exceptions: (latest.current.exceptions ?? []).map((item) => ({
+      type: item.type,
+      scope: item.scope,
+      reason: corrections[`${item.type}:${item.scope}`] ?? item.reason,
+      failure: item.failure,
+      revision: item.revision ?? 0,
+    })),
+  })
+  const confirmFinish = async () => {
     if (saving) return
     setStep({ kind: 'validating' })
+    setValidationIssues([])
+    setError('')
     try {
-      let next: Visit
-      if (latest.current.status === 'pending_approval') {
-        if (!repos.visits.submitReview) throw new Error('Falta envío del registro para revisión.')
-        next = await repos.visits.submitReview(visit.id, reviewInput(coordinates))
-      } else next = await repos.visits.complete(visit.id, coordinates)
-      setVisit(next)
-      latest.current = next
+      const current = latest.current
+      const next = current.exceptions?.length
+        ? await repos.visits.submitReview(current.id, reviewInput())
+        : await repos.visits.complete(current.id, {
+            revision: confirmedRevision.current,
+            exceptions: [],
+          })
+      applyConfirmed(next)
       setDirty(false)
-      setStep({ kind: 'success', pending: next.status === 'pending_approval' })
+      setStep({ kind: 'success', status: next.status })
     } catch (cause) {
-      if (cause instanceof AppError && cause.code === 'unauthorized') {
-        setError(errorMessage(cause))
-        setStep({ kind: 'editing' })
-        return
-      }
-      if (formExpired(visit) && visit.status !== 'pending_approval') {
-        setStep({ kind: 'time_exception' })
-        return
-      }
-      setStep({
-        kind: 'location_error',
-        message: errorMessage(cause),
-        failure: cause instanceof LocationError ? cause.reason : 'service',
-      })
+      setError(errorMessage(cause))
+      if (cause instanceof AppError && cause.code === 'conflict') setConflict(true)
+      setStep({ kind: 'editing' })
     }
   }
   const issues = pendingItems(visit)
@@ -290,52 +358,41 @@ export function useVisitEditor(initial: Visit) {
     (task) => !pendingItems({ ...visit, tasks: [task] }).length,
   ).length
   const editable = registrationEditable(visit)
-  const reviewInput = (coordinates?: Coordinates, gpsFailure?: string, gpsReason?: string) => {
-    const current = latest.current
-    const exceptions = (current.exceptions ?? []).map((item) => ({
-      type: item.type,
-      reason: corrections[item.type] ?? item.reason,
-      failure: item.failure,
-      revision: item.revision ?? 0,
-    }))
-    if (formExpired(current) && !exceptions.some((item) => item.type === 'time_limit'))
-      exceptions.push({
-        type: 'time_limit',
-        reason: corrections.time_limit ?? '',
-        failure: '',
-        revision: 0,
-      })
-    if (gpsFailure) {
-      const previous = exceptions.find((item) => item.type === 'location')
-      if (previous) {
-        previous.reason = gpsReason ?? ''
-        previous.failure = gpsFailure
-      } else
-        exceptions.push({
-          type: 'location',
-          reason: gpsReason ?? '',
-          failure: gpsFailure,
-          revision: 0,
-        })
-    }
-    return { revision: confirmedRevision.current, location: coordinates, exceptions }
-  }
-  const openForm = async (failure?: string) => {
+  const finishPhysicalWork = async () => {
+    if (saving || physicalTransition.current) return
+    physicalTransition.current = true
     setError('')
     setSaving(true)
     try {
-      if (!repos.visits.openForm) throw new Error('Falta apertura de formulario.')
-      const coordinates =
-        visit.origin === 'checklist' && !failure ? await location.request() : undefined
-      const next = await repos.visits.openForm(visit.id, coordinates, failure)
-      latest.current = next
-      confirmedRevision.current = next.revision ?? 0
-      setVisit(next)
+      const finished = await repos.visits.finishPhysicalWork(visit.id)
+      applyConfirmed(finished)
+      if (finished.phase === 'physical_finished') {
+        applyConfirmed(await repos.visits.openForm(visit.id))
+      } else if (finished.phase !== 'results') {
+        throw new AppError(
+          'conflict',
+          'No se confirmó el fin del trabajo. Actualiza el estado antes de registrar el resultado.',
+        )
+      }
     } catch (cause) {
-      setOpeningFailure(cause instanceof LocationError ? cause.reason : undefined)
       setError(errorMessage(cause))
     } finally {
       setSaving(false)
+      physicalTransition.current = false
+    }
+  }
+  const openForm = async () => {
+    if (saving || physicalTransition.current) return
+    physicalTransition.current = true
+    setError('')
+    setSaving(true)
+    try {
+      applyConfirmed(await repos.visits.openForm(visit.id))
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
+      physicalTransition.current = false
     }
   }
 
@@ -350,10 +407,6 @@ export function useVisitEditor(initial: Visit) {
     saving,
     error,
     setError,
-    reason,
-    setReason,
-    exceptionBusy,
-    setExceptionBusy,
     latest,
     mustComplete,
     back,
@@ -369,13 +422,18 @@ export function useVisitEditor(initial: Visit) {
     doneTasks,
     editable,
     openForm,
-    openingFailure,
+    finishPhysicalWork,
+    applyConfirmed,
+    markNotPerformed,
+    needsReview,
     conflict,
     remote,
     consultRemote,
     acceptRemote,
     reconcile,
     pendingPhoto,
+    retryPendingPhoto,
+    validationIssues,
     corrections,
     setCorrections,
     reviewInput,

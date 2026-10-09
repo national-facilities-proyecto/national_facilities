@@ -14,6 +14,9 @@ import {
   mapEvidence,
   mapCatalogs,
   mapDashboard,
+  mapZone,
+  mapSpecialty,
+  mapClientSpecialty,
   object,
   rows,
   number,
@@ -27,6 +30,9 @@ const paths: Record<AdminKind, string> = {
   clients: 'clientes',
   contracts: 'contratos',
   templates: 'plantillas',
+  zones: 'zonas',
+  specialties: 'especialidades',
+  clientSpecialties: 'cliente-especialidades',
 }
 const mappers: { [K in AdminKind]: (v: unknown) => AdminEntities[K] } = {
   users: mapUser,
@@ -34,6 +40,9 @@ const mappers: { [K in AdminKind]: (v: unknown) => AdminEntities[K] } = {
   clients: mapClient,
   contracts: mapContract,
   templates: mapTemplate,
+  zones: mapZone,
+  specialties: mapSpecialty,
+  clientSpecialties: mapClientSpecialty,
 }
 function mapSession(raw: unknown): Session {
   const v = object(raw)
@@ -76,7 +85,7 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       })
       if (path.startsWith('/visitas/')) mapVisit(raw)
       if (path.startsWith('/tickets/')) mapTicket(raw)
-      for (const kind of ['users', 'stores', 'clients', 'contracts', 'templates'] as const) {
+      for (const kind of Object.keys(paths) as AdminKind[]) {
         if (path.startsWith('/admin/' + paths[kind] + '/')) mappers[kind](raw)
       }
       pendingKeys.delete(signature)
@@ -175,6 +184,23 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       },
     },
     visits: {
+      async markNotPerformed(id, reason) {
+        return mapVisit(await mutate('/visitas/' + id + '/no-realizada/', { reason }))
+      },
+      async recovery(options) {
+        const raw = object(await request('/visitas/recuperacion/', { signal: options?.signal }))
+        return {
+          activeExecution: raw.activeExecution == null ? undefined : mapVisit(raw.activeExecution),
+          reservations: rows(raw.reservations).map(mapVisit),
+          corrections: rows(raw.corrections).map(mapVisit),
+          inReview: rows(raw.inReview).map(mapVisit),
+        }
+      },
+      async pendingReviews(options) {
+        return rows(await request('/revisiones/pendientes/', { signal: options?.signal })).map(
+          mapVisit,
+        )
+      },
       async list(options) {
         return rows(await request('/visitas/programadas/', { signal: options?.signal })).map(
           mapVisit,
@@ -186,28 +212,39 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async start(id, location) {
         return mapVisit(await mutate('/visitas/' + id + '/iniciar/', { location }))
       },
-      async openForm(id, location, failure) {
-        return mapVisit(
-          await mutate('/visitas/' + id + '/formulario/', location ? { location } : { failure }),
-        )
+      async openForm(id) {
+        return mapVisit(await mutate('/visitas/' + id + '/formulario/', {}))
       },
-      async recordEndGps(id, location) {
-        return mapVisit(await mutate('/visitas/' + id + '/ubicacion-cierre/', { location }))
+      async finishPhysicalWork(id) {
+        return mapVisit(await mutate('/visitas/' + id + '/terminar/', {}))
       },
       async submitReview(id, input) {
-        return mapVisit(await mutate('/visitas/' + id + '/enviar-revision/', input))
-      },
-      async complete(id, location) {
-        return mapVisit(await mutate('/visitas/' + id + '/finalizar/', { location }))
-      },
-      async requestException(id, reason, failure) {
         return mapVisit(
-          await mutate('/visitas/' + id + '/excepciones/', { type: 'location', reason, failure }),
+          await mutate('/visitas/' + id + '/enviar-revision/', {
+            revision: input.revision,
+            exceptions: input.exceptions,
+          }),
         )
       },
-      async requestTimeException(id, reason) {
+      async complete(id, input) {
         return mapVisit(
-          await mutate('/visitas/' + id + '/excepciones/', { type: 'time_limit', reason }),
+          await mutate('/visitas/' + id + '/finalizar/', {
+            revision: input.revision,
+            exceptions: input.exceptions,
+          }),
+        )
+      },
+      async requestException(id, input) {
+        return mapVisit(await mutate('/visitas/' + id + '/excepciones/', input))
+      },
+      async requestTimeException(id, reason, revision) {
+        return mapVisit(
+          await mutate('/visitas/' + id + '/excepciones/', {
+            type: 'time_limit',
+            scope: 'form',
+            reason,
+            revision,
+          }),
         )
       },
       async reviewException(id, approved, reason, exceptionId, versions) {
@@ -250,7 +287,7 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async schedule(id, technicianId, scheduledAt, priority, reason, revision) {
         const raw = await mutate('/tickets/' + id + '/programar/', {
           technicianId,
-          scheduledAt: new Date(scheduledAt).toISOString(),
+          scheduledAt,
           priorityId: await priorityId(priority),
           reason,
           revision: revision ?? 0,
@@ -262,6 +299,11 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       },
     },
     users: {
+      async eligible(storeId, options) {
+        return rows(
+          await request('/tecnicos/?storeId=' + storeId, { signal: options?.signal }),
+        ).map(mapUser)
+      },
       async list(options) {
         return rows(await request('/usuarios/', { signal: options?.signal })).map(mapUser)
       },
@@ -335,8 +377,10 @@ export function createHttpRepositories(apiUrl: string): Repositories {
       async put(evidence) {
         const data = new FormData()
         data.set('id', evidence.id)
+        if (evidence.replaceId) data.set('replaceId', evidence.replaceId)
         data.set('foto', evidence.blob, evidence.name)
         data.set('source', evidence.source)
+        if (evidence.purpose) data.set('purpose', evidence.purpose)
         if (evidence.capturedAt) data.set('capturedAt', evidence.capturedAt)
         if (evidence.taskId !== undefined) data.set('taskId', String(evidence.taskId))
         if (evidence.visitId !== undefined) data.set('visitId', String(evidence.visitId))

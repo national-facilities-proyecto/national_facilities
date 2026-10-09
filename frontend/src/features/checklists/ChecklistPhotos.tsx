@@ -1,32 +1,44 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import type { Evidence, Visit } from '../../types/models'
+import { useEffect, useRef, useState } from 'react'
+import type { Evidence } from '../../types/models'
 import { checklistPhotos } from '../../services/checklistPhotos'
 import { errorMessage } from '../../services/errors'
 import { useObjectUrl } from '../../hooks/useObjectUrl'
 import { CameraModal } from '../technician/CameraModal'
 import { Alert, Button, Card } from '../../components/ui'
+import { Modal } from '../../components/ui/Modal'
 
 function Photo({ photo }: { photo: Evidence }) {
   const url = useObjectUrl(photo.blob)
-  return <img src={url} alt="Fotografía pendiente de asociación" width="240" height="180" />
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <>
+      <Button
+        variant="secondary"
+        className="nf-image-button"
+        aria-label="Ampliar fotografía del trabajo"
+        onClick={() => setExpanded(true)}
+      >
+        <img src={url} alt="Fotografía del trabajo" width="240" height="180" />
+      </Button>
+      <Modal open={expanded} title="Fotografía ampliada" onClose={() => setExpanded(false)}>
+        <img className="nf-image-preview" src={url} alt="Fotografía del trabajo ampliada" />
+      </Modal>
+    </>
+  )
 }
 
 export function ChecklistPhotos({
   scope,
-  tasks,
   onAssociate,
 }: {
   scope: string
-  tasks: Visit['tasks']
-  onAssociate?: (photo: Evidence, taskId: number) => Promise<void>
+  onAssociate?: (photo: Evidence) => Promise<void>
 }) {
   const [photos, setPhotos] = useState<Evidence[]>([])
-  const formId = useId()
   const [camera, setCamera] = useState(false)
   const associating = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [targets, setTargets] = useState<Record<string, string>>({})
   useEffect(() => {
     let active = true
     void checklistPhotos.list(scope).then(
@@ -46,12 +58,12 @@ export function ChecklistPhotos({
     setPhotos((current) => current.filter((photo) => photo.id !== id))
   }
   const associate = async (photo: Evidence) => {
-    if (!onAssociate || !targets[photo.id] || associating.current) return
+    if (!onAssociate || associating.current) return
     associating.current = true
     setBusy(true)
     setError('')
     try {
-      await onAssociate(photo, Number(targets[photo.id]))
+      await onAssociate(photo)
       await discard(photo.id)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -61,55 +73,41 @@ export function ChecklistPhotos({
     }
   }
   return (
-    <Card title="Fotografías del recorrido">
-      <p>
-        Estas fotos se conservan en este navegador para asociarlas a los ítems del formulario final.
-      </p>
-      {!onAssociate && (
-        <Button variant="secondary" onClick={() => setCamera(true)}>
-          Tomar fotografía del recorrido
-        </Button>
-      )}
-      {error && <Alert>{error}</Alert>}
-      <div className="nf-evidence-grid">
-        {photos.map((photo, index) => (
-          <figure key={photo.id} className="nf-evidence">
-            <Photo photo={photo} />
-            <figcaption>Fotografía {index + 1} · pendiente de asociación</figcaption>
-            {onAssociate && (
-              <>
-                <label htmlFor={`${formId}-${photo.id}`}>Ítem para fotografía {index + 1}</label>
-                <select
-                  id={`${formId}-${photo.id}`}
-                  value={targets[photo.id] ?? ''}
+    <>
+      {(!onAssociate || photos.length > 0 || error) && (
+        <Card title={onAssociate ? 'Fotografías por guardar' : 'Fotografías del trabajo'}>
+          {!onAssociate && (
+            <Button variant="secondary" onClick={() => setCamera(true)}>
+              Tomar fotografía de la atención
+            </Button>
+          )}
+          {error && <Alert>{error}</Alert>}
+          <div className="nf-evidence-grid">
+            {photos.map((photo, index) => (
+              <figure key={photo.id} className="nf-evidence">
+                <Photo photo={photo} />
+                <figcaption>Fotografía {index + 1}</figcaption>
+                {onAssociate && (
+                  <>
+                    <Button disabled={busy} onClick={() => void associate(photo)}>
+                      Guardar fotografía
+                    </Button>
+                  </>
+                )}
+                <Button
+                  variant="secondary"
                   disabled={busy}
-                  onChange={(event) =>
-                    setTargets((current) => ({ ...current, [photo.id]: event.target.value }))
+                  onClick={() =>
+                    void discard(photo.id).catch((cause) => setError(errorMessage(cause)))
                   }
                 >
-                  <option value="">Selecciona un ítem</option>
-                  {tasks.map((task) => (
-                    <option key={task.id} value={task.id}>
-                      {task.title}
-                    </option>
-                  ))}
-                </select>
-                <Button disabled={busy || !targets[photo.id]} onClick={() => void associate(photo)}>
-                  Asociar fotografía
+                  Eliminar fotografía
                 </Button>
-              </>
-            )}
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => void discard(photo.id).catch((cause) => setError(errorMessage(cause)))}
-            >
-              Eliminar fotografía pendiente
-            </Button>
-          </figure>
-        ))}
-      </div>
-      {photos.length === 0 && <p>No hay fotografías pendientes de asociación.</p>}
+              </figure>
+            ))}
+          </div>
+        </Card>
+      )}
       <CameraModal
         open={camera}
         onClose={() => setCamera(false)}
@@ -119,6 +117,6 @@ export function ChecklistPhotos({
           setCamera(false)
         }}
       />
-    </Card>
+    </>
   )
 }

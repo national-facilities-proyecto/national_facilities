@@ -13,12 +13,34 @@ import {
   upload,
   scheduledMapVisit,
   mapVisit,
+  arrive,
+  openResults,
+  arrivalException,
+  waitUntilScheduled,
 } from './helpers.js'
 import type { APIRequestContext, Page } from '@playwright/test'
 
+// Un fallo conserva su intento y libera exclusivamente el caso ficticio creado aquí.
+let currentCaseId: number | undefined
+test.beforeEach(() => {
+  currentCaseId = undefined
+})
+test.afterEach(async ({ request }, info) => {
+  if (info.status === info.expectedStatus || currentCaseId === undefined) return
+  const token = await access(request, 'tech')
+  const current = object(await call(request, `/visitas/${currentCaseId}/`, token))
+  if (['claimed', 'in_progress', 'correction_required'].includes(String(current.status)))
+    await call(request, `/visitas/${currentCaseId}/no-realizada/`, token, {
+      reason: 'Intento ficticio interrumpido por un fallo E2E; se conserva su historial.',
+    })
+})
+
 async function setup(request: APIRequestContext, origin: 'checklist' | 'ticket') {
   const token = await access(request, 'tech')
-  if (origin === 'checklist') return { id: checklistCase(), token, path: '/checklists/' }
+  if (origin === 'checklist') {
+    currentCaseId = checklistCase()
+    return { id: currentCaseId, token, path: '/checklists/' }
+  }
   const storeToken = await access(request, 'store')
   const stores: unknown = await call(request, '/tiendas/', storeToken)
   if (!Array.isArray(stores) || !stores.length) throw new Error('Sin tienda aislada.')
@@ -42,35 +64,24 @@ async function setup(request: APIRequestContext, origin: 'checklist' | 'ticket')
   const scheduled = object(
     await call(request, '/tickets/' + String(ticket.id) + '/programar/', accountToken, {
       technicianId: tech?.id,
-      scheduledAt: new Date(Date.now() + 3600000).toISOString(),
+      scheduledAt: new Date(Date.now() + 1000).toISOString(),
       priorityId: object(catalogs.priorities[0]).id,
       reason: '',
       revision: 0,
     }),
   )
   if (typeof scheduled.visitId !== 'number') throw new Error('Sin visita.')
-  return { id: scheduled.visitId, token, path: '/routes/' }
+  await waitUntilScheduled(request, scheduled.visitId, token)
+  currentCaseId = scheduled.visitId
+  return { id: currentCaseId, token, path: '/routes/' }
 }
 async function start(page: Page, id: number, path: string) {
-  await page.goto(path + id)
-  await page.getByRole('button', { name: 'Obtener ubicación', exact: true }).click()
-  await page
-    .getByRole('button', {
-      name: path === '/checklists/' ? 'Iniciar checklist' : 'Confirmar inicio',
-      exact: true,
-    })
-    .click()
-  await expect(page.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
+  await arrive(page, id, path === '/checklists/' ? 'checklist' : 'ticket')
 }
 async function form(page: Page, origin: 'checklist' | 'ticket') {
-  await page
-    .getByRole('button', {
-      name: origin === 'checklist' ? 'Finalizar checklist' : 'Registrar resolución',
-      exact: true,
-    })
-    .click()
+  await openResults(page, origin)
   if (origin === 'checklist')
-    await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+    await page.getByRole('button', { name: 'Conforme', exact: true }).click()
   else
     await page
       .getByLabel('Descripción del trabajo realizado')
@@ -80,7 +91,7 @@ async function form(page: Page, origin: 'checklist' | 'ticket') {
 
 for (const origin of ['checklist', 'ticket'] as const) {
   test(
-    origin + ': cierre de pestaña, conexión perdida, sesión expirada y justificación tras vencer',
+    origin + ': cierre de pestaña, conexión perdida, sesión expirada y formulario sin plazo',
     async ({ page, context, request, browser }) => {
       const data = await setup(request, origin)
       await login(page)
@@ -92,7 +103,11 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await editor.goto(
         origin === 'checklist' ? data.path + data.id + '/start' : data.path + data.id,
       )
-      await expect(editor.getByRole('heading', { name: 'Trabajo en ejecución' })).toBeVisible()
+      await expect(
+        editor.getByRole('heading', {
+          name: origin === 'checklist' ? 'Recorrido de inspección' : 'Atención en curso',
+        }),
+      ).toBeVisible()
       await form(editor, origin)
       const original = (await visit(request, data.id, data.token)).expiresAt
       await editor.close()
@@ -109,7 +124,7 @@ for (const origin of ['checklist', 'ticket'] as const) {
           .getByLabel('Descripción del trabajo realizado')
           .fill('Local edits remain during network loss.')
       else {
-        await editor.getByRole('button', { name: '! No conforme', exact: true }).click()
+        await editor.getByRole('button', { name: 'No conforme', exact: true }).click()
         await editor
           .getByLabel('Descripción obligatoria')
           .fill('Local edits remain during network loss.')
@@ -122,20 +137,80 @@ for (const origin of ['checklist', 'ticket'] as const) {
         editor.getByText('No se confirmó el guardado. Conserva el editor y reintenta.'),
       ).toBeVisible()
       await context.setOffline(false)
-      await editor.getByRole('button', { name: 'Guardar borrador', exact: true }).click()
-      await expect(editor.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      await editor
+        .getByRole('button', {
+          name: origin === 'ticket' ? 'Reintentar guardado' : 'Guardar borrador',
+          exact: true,
+        })
+        .click()
+      if (origin === 'checklist')
+        await expect(editor.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      else
+        await expect
+          .poll(async () => (await visit(request, data.id, data.token)).workDescription)
+          .toBe('Local edits remain during network loss.')
       const revoked = await request.post(api + '/auth/logout/', {
         headers: { Authorization: 'Bearer ' + data.token },
       })
       expect(revoked.status()).toBe(204)
-      await editor.getByRole('button', { name: 'Finalizar ' + origin, exact: true }).click()
+      await editor
+        .getByRole('button', {
+          name: origin === 'ticket' ? 'Enviar registro' : 'Finalizar',
+          exact: true,
+        })
+        .click()
       await expect(editor.getByRole('dialog', { name: 'Recuperar sesión' })).toBeVisible()
       await editor.getByLabel('Contraseña para recuperar sesión').fill(password)
+      const recoveredVisit = editor.waitForResponse(
+        (response) =>
+          response.request().method() === 'GET' &&
+          response.url() === `${api}/visitas/${data.id}/` &&
+          response.ok(),
+      )
       await editor.getByRole('button', { name: 'Autenticar y continuar' }).click()
+      await recoveredVisit
       await expect(editor.getByRole('dialog', { name: 'Recuperar sesión' })).not.toBeVisible()
-      await editor.getByRole('button', { name: 'Guardar borrador', exact: true }).click()
-      await expect(editor.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      const conflict = editor.getByRole('heading', { name: 'Borrador modificado en otra sesión' })
+      const saved = editor.getByText('Borrador guardado.', { exact: true })
+      const saveButton = editor.getByRole('button', { name: 'Guardar borrador', exact: true })
       const renewed = await access(request, 'tech')
+      if (origin === 'ticket') {
+        await expect
+          .poll(
+            async () =>
+              (await conflict.isVisible()) ||
+              (await visit(request, data.id, renewed)).workDescription ===
+                'Local edits remain during network loss.',
+          )
+          .toBe(true)
+      } else {
+        await expect
+          .poll(async () => (await conflict.isVisible()) || (await saveButton.isEnabled()))
+          .toBe(true)
+        if (!(await conflict.isVisible())) await saveButton.click()
+        await expect(saved.or(conflict)).toBeVisible()
+      }
+      if (await conflict.isVisible()) {
+        // La reautenticación puede coincidir con el autosave. Verifica el contenido antes de conciliar.
+        const current = object(
+          await call(request, `/visitas/${data.id}/`, await access(request, 'tech')),
+        )
+        if (origin === 'ticket')
+          expect(current.workDescription).toBe('Local edits remain during network loss.')
+        else {
+          const answers = Array.isArray(current.answers) ? current.answers.map(object) : []
+          expect(answers[0]?.observation).toBe('Local edits remain during network loss.')
+        }
+        await editor.getByRole('button', { name: 'Usar versión del servidor', exact: true }).click()
+        if (origin === 'checklist') {
+          await saveButton.click()
+          await expect(saved).toBeVisible()
+        } else {
+          await expect(
+            editor.getByRole('button', { name: 'Enviar registro', exact: true }),
+          ).toBeEnabled()
+        }
+      }
       expect((await visit(request, data.id, renewed)).expiresAt).toBe(original)
       const otherContext = await browser.newContext({
         permissions: ['geolocation'],
@@ -151,35 +226,26 @@ for (const origin of ['checklist', 'ticket'] as const) {
       await otherContext.close()
       advance(data.id, 'expire')
       await editor.reload()
-      await expect(editor.getByRole('dialog', { name: 'Justificación por demora' })).toBeVisible()
-      const expired = (await visit(request, data.id, renewed)).expiresAt
-      await editor
-        .getByLabel('Justificación obligatoria')
-        .fill('Recovered after device power loss and session expiration.')
-      await editor.getByRole('button', { name: 'Enviar para revisión', exact: true }).click()
-      await expect(editor.getByRole('heading', { name: 'En revisión' })).toBeVisible()
-      if (origin === 'ticket') {
-        await editor.getByRole('button', { name: 'Registrar GPS de cierre', exact: true }).click()
-      } else {
-        const recorded = object(await call(request, `/visitas/${data.id}/`, renewed))
-        expect(object(recorded.endLocation).validated).toBe(true)
-      }
+      await expect(editor.getByRole('dialog', { name: 'Justificación por demora' })).toHaveCount(0)
       await expect(
-        editor.getByRole('button', { name: 'Registrar GPS de cierre', exact: true }),
-      ).not.toBeVisible()
-      expect((await visit(request, data.id, renewed)).status).toBe('pending_approval')
+        editor.getByRole('region', { name: 'Tiempo de registro del formulario' }),
+      ).toHaveCount(0)
+      await editor
+        .getByRole('button', {
+          name: origin === 'ticket' ? 'Enviar registro' : 'Finalizar',
+          exact: true,
+        })
+        .click()
+      await editor.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
+      await expect(editor.getByRole('dialog', { name: 'Trabajo finalizado' })).toBeVisible()
+      const recorded = object(await call(request, `/visitas/${data.id}/`, renewed))
+      expect(recorded.endLocation).toBeNull()
+      expect(recorded.status).toBe('completed')
+      expect(recorded.expiresAt).toBeNull()
+      expect(recorded.registrationSeconds).toBeGreaterThan(300)
       await editor.close()
       const reviewer = await context.newPage()
       await login(reviewer, 'account')
-      await reviewer.goto('/technical-supervisor/checklists/' + data.id)
-      await reviewer.getByRole('button', { name: 'Aprobar excepción', exact: true }).click()
-      await reviewer
-        .getByLabel('Motivo de aprobación')
-        .fill('Verified complete content, evidence and timing justification.')
-      await reviewer.getByRole('button', { name: 'Confirmar decisión', exact: true }).click()
-      await expect(reviewer.getByRole('dialog')).toHaveCount(0)
-      expect((await visit(request, data.id, renewed)).status).toBe('completed')
-      expect((await visit(request, data.id, renewed)).expiresAt).toBe(expired)
       await reviewer.goto('/technical-supervisor/reports')
       await expect(reviewer.getByRole('heading', { name: 'Indicadores y reportes' })).toBeVisible()
       const downloading = reviewer.waitForEvent('download')
@@ -191,41 +257,39 @@ for (const origin of ['checklist', 'ticket'] as const) {
 
 for (const origin of ['checklist', 'ticket'] as const) {
   test(
-    origin +
-      ': completar tras vencer, rechazo, corrección y aprobación conservan ejecución y plazo',
+    origin + ': excepción de llegada con foto, rechazo y corrección conservan eventos originales',
     async ({ page, context, request }) => {
       const data = await setup(request, origin)
       await login(page)
-      await start(page, data.id, data.path)
-      await page
-        .getByRole('button', {
-          name: origin === 'checklist' ? 'Finalizar checklist' : 'Registrar resolución',
-          exact: true,
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'geolocation', {
+          configurable: true,
+          value: {
+            getCurrentPosition(_ok: PositionCallback, error: PositionErrorCallback) {
+              error({ code: 1 } as GeolocationPositionError)
+            },
+          },
         })
-        .click()
+      })
+      await arrivalException(page, data.id, origin)
+      await openResults(page, origin)
       advance(data.id, 'expire')
       await page.reload()
-      await expect(page.getByRole('dialog', { name: 'Justificación por demora' })).toBeVisible()
-      const deadline = (await visit(request, data.id, data.token)).expiresAt
-      await page
-        .getByLabel('Justificación obligatoria')
-        .fill('Connection failed while uploading the evidence photographs.')
-      await page
-        .getByRole('button', { name: 'Guardar justificación y continuar', exact: true })
-        .click()
-      await expect(page.getByRole('dialog')).toHaveCount(0)
-      await expect(page.getByRole('heading', { name: 'En revisión', exact: true })).toBeVisible()
+      await expect(page.getByRole('dialog', { name: 'Justificación por demora' })).toHaveCount(0)
+      const original = object(await call(request, `/visitas/${data.id}/`, data.token))
+      const deadline = original.expiresAt
+      expect((await visit(request, data.id, data.token)).status).toBe('in_progress')
       if (origin === 'checklist')
-        await page.getByRole('button', { name: '✓ Conforme', exact: true }).click()
+        await page.getByRole('button', { name: 'Conforme', exact: true }).click()
       else
         await page
           .getByLabel('Descripción del trabajo realizado')
           .fill('Repaired the installation and checked normal operation.')
       await upload(page)
-      await page.getByRole('button', { name: 'Enviar para revisión', exact: true }).click()
-      await page.getByRole('button', { name: 'Confirmar finalización', exact: true }).click()
+      await page.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
+      await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
       await expect(
-        page.getByRole('button', { name: 'Enviar para revisión', exact: true }),
+        page.getByRole('button', { name: 'Enviar a revisión', exact: true }),
       ).toHaveCount(0)
       const submitted = object(await call(request, '/visitas/' + data.id + '/', data.token))
       expect(submitted.workStatus).toBe('in_review')
@@ -233,17 +297,23 @@ for (const origin of ['checklist', 'ticket'] as const) {
       const reviewer = await context.newPage()
       await login(reviewer, 'account')
       await reviewer.goto('/technical-supervisor/checklists/' + data.id)
-      await reviewer.getByRole('button', { name: 'Rechazar excepción', exact: true }).click()
+      await reviewer.getByRole('button', { name: 'Rechazar', exact: true }).click()
       await reviewer
         .getByLabel('Motivo de rechazo')
         .fill('Please explain the connection interruption in more detail.')
       await reviewer.getByRole('button', { name: 'Confirmar decisión', exact: true }).click()
       await expect(reviewer.getByRole('dialog')).toHaveCount(0)
       await page.reload()
+      await expect(
+        page.getByRole('heading', { name: 'Corrección requerida', exact: true }),
+      ).toBeVisible()
+      expect(object(await call(request, `/visitas/${data.id}/`, data.token)).phase).toBe(
+        'correction_required',
+      )
       await expect(page.getByText('Justificación rechazada:', { exact: false })).toBeVisible()
-      await expect(page.locator('.nf-evidence img')).toHaveCount(1)
+      await expect(page.locator('.nf-evidence img')).toHaveCount(2)
       await page
-        .getByLabel('Justificación de la demora')
+        .getByLabel('Justificación GPS de llegada')
         .fill(
           'A mobile network interruption prevented sending the previously gathered photographs.',
         )
@@ -252,21 +322,29 @@ for (const origin of ['checklist', 'ticket'] as const) {
           .getByLabel('Descripción del trabajo realizado')
           .fill('Repaired the installation, tested safety and confirmed stable operation.')
       else {
-        await page.getByRole('button', { name: '! No conforme', exact: true }).click()
+        await page.getByRole('button', { name: 'No conforme', exact: true }).click()
         await page
           .getByLabel('Descripción obligatoria')
           .fill('A damaged protective cover requires replacement.')
         await page.getByRole('button', { name: 'Guardar observación', exact: true }).click()
       }
-      await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
-      await page.getByRole('button', { name: 'Enviar para revisión', exact: true }).click()
-      await page.getByRole('button', { name: 'Confirmar finalización', exact: true }).click()
+      if (origin === 'checklist')
+        await expect(page.getByText('Borrador guardado.', { exact: true })).toBeVisible()
+      else
+        await expect
+          .poll(
+            async () =>
+              object(await call(request, `/visitas/${data.id}/`, data.token)).workDescription,
+          )
+          .toBe('Repaired the installation, tested safety and confirmed stable operation.')
+      await page.getByRole('button', { name: 'Enviar a revisión', exact: true }).click()
+      await page.getByRole('button', { name: 'Confirmar envío', exact: true }).click()
       await expect(
-        page.getByRole('button', { name: 'Enviar para revisión', exact: true }),
+        page.getByRole('button', { name: 'Enviar a revisión', exact: true }),
       ).toHaveCount(0)
-      expect((await visit(request, data.id, data.token)).expiresAt).toBe(deadline)
+      expect((await visit(request, data.id, data.token)).expiresAt).toBe(deadline ?? undefined)
       await reviewer.reload()
-      await reviewer.getByRole('button', { name: 'Aprobar excepción', exact: true }).click()
+      await reviewer.getByRole('button', { name: 'Aprobar', exact: true }).click()
       await reviewer
         .getByLabel('Motivo de aprobación')
         .fill('Verified corrected registration, GPS and the clarified network interruption.')
@@ -275,6 +353,9 @@ for (const origin of ['checklist', 'ticket'] as const) {
       const completed = object(await call(request, '/visitas/' + data.id + '/', data.token))
       expect(completed.workStatus).toBe('finished')
       expect(completed.expiresAt).toBe(deadline)
+      expect(object(completed.startLocation).validated).toBe(false)
+      for (const key of ['startedAt', 'physicalEndedAt', 'formOpenedAt', 'startLocation'])
+        expect(completed[key]).toEqual(original[key])
       if (!Array.isArray(completed.exceptionHistory))
         throw new Error('Sin historial de decisiones.')
       const history = completed.exceptionHistory
@@ -283,10 +364,20 @@ for (const origin of ['checklist', 'ticket'] as const) {
       expect(history.map((entry) => object(entry.exception).approved)).toEqual([false, true])
       await page.reload()
       await expect(page.getByText('Esta visita ya fue finalizada.', { exact: true })).toBeVisible()
+      await expect(page.getByText('Historial de excepciones', { exact: true })).toHaveCount(0)
+      await expect(page.getByText('Detalles técnicos', { exact: true })).toHaveCount(0)
       await expect(
-        page.getByRole('heading', { name: 'Historial de justificaciones y decisiones' }),
+        page.getByText(
+          'A mobile network interruption prevented sending the previously gathered photographs.',
+          { exact: true },
+        ),
+      ).toHaveCount(1)
+      await reviewer.reload()
+      await reviewer.getByText('Historial de excepciones', { exact: true }).click()
+      await expect(
+        reviewer.getByRole('heading', { name: 'Historial de justificaciones y decisiones' }),
       ).toBeVisible()
-      await expect(page.locator('.nf-evidence img')).toHaveCount(1)
+      await expect(page.locator('.nf-evidence img')).toHaveCount(2)
       await reviewer.close()
     },
   )
@@ -360,10 +451,11 @@ test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({
   })
   await page.route('https://tiles.openfreemap.org/**', (route) => route.abort())
   await login(page)
-  expect(requests).toEqual([])
+  // Mis Checklist también carga el mapa general, incluidas las visitas finalizadas.
+  await expect(page.getByRole('region', { name: 'Mapa de tiendas' })).toBeVisible()
   await page.goto('/routes')
   const detail = page.locator(`a[href="/routes/${visitId}"]`)
-  await page.getByRole('button', { name: 'Futuras', exact: true }).click()
+  await page.getByRole('button', { name: 'Pendientes', exact: true }).click()
   await expect(detail).toBeVisible()
   await expect.poll(() => requests.some((url) => url.includes('tiles.openfreemap.org'))).toBe(true)
   await expect(page.getByRole('button', { name: 'Reintentar mapa' })).toBeVisible({
@@ -381,11 +473,13 @@ test('mapa bajo demanda y fallo del proveedor conserva la lista real', async ({
   await expect(detail).toBeVisible()
   const visits = await call(request, '/visitas/programadas/', await access(request, 'tech'))
   if (!Array.isArray(visits)) throw new Error('Visitas incompatibles.')
-  const completed = visits.map(mapVisit).filter((visit) => visit.status === 'completed')
-  await page.getByRole('button', { name: 'Finalizados', exact: true }).click()
+  const completed = visits
+    .map(mapVisit)
+    .filter((visit) => visit.origin === 'ticket' && visit.status === 'completed')
+  await page.getByRole('button', { name: 'Finalizadas', exact: true }).click()
   await expect(detail).toHaveCount(0)
   await expect(page.locator('#main-content .nf-list a')).toHaveCount(completed.length)
   if (completed.length)
     await expect(page.getByRole('link', { name: 'Ver detalle' }).first()).toBeVisible()
-  else await expect(page.getByText('No hay atenciones en este filtro.')).toBeVisible()
+  else await expect(page.getByText('No tienes atenciones finalizadas por ahora.')).toBeVisible()
 })

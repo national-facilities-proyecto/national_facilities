@@ -36,6 +36,11 @@ const visit = {
   origin: 'checklist',
   scheduledAt: started,
   status: 'in_progress',
+  phase: 'results',
+  occupiesTechnician: true,
+  readOnly: false,
+  gpsExceptionPending: false,
+  physicalEndedAt: opened,
   workStatus: 'in_progress',
   tasks: [task],
   answers: [{ taskId: 1, result: 'no_aplica', observation: '', evidenceIds: ['file'] }],
@@ -87,6 +92,7 @@ it('valida el indicador por tienda, sin aceptar mínimos o conteos incoherentes'
       scheduled: 1,
       in_progress: 0,
       pending_approval: 1,
+      correction_required: 0,
       resolved: 1,
       closed: 0,
     },
@@ -265,8 +271,9 @@ it('recupera correcciones tras rechazo y rechaza estados operativos incompatible
   }
   const record = mapVisit({
     ...visit,
-    status: 'pending_approval',
-    workStatus: 'in_review',
+    status: 'correction_required',
+    phase: 'correction_required',
+    workStatus: 'correction_required',
     submittedAt: deadline,
     exceptions: [rejected],
     exception: rejected,
@@ -277,10 +284,20 @@ it('recupera correcciones tras rechazo y rechaza estados operativos incompatible
   expect(
     registrationEditable({
       ...record,
+      status: 'pending_approval',
+      readOnly: true,
+      phase: 'in_review',
       exceptions: [{ ...record.exceptions![0], approved: undefined }],
     }),
   ).toBe(false)
-  expect(registrationEditable({ ...record, submittedAt: undefined })).toBe(true)
+  expect(
+    registrationEditable({
+      ...record,
+      status: 'pending_approval',
+      readOnly: true,
+      submittedAt: undefined,
+    }),
+  ).toBe(false)
   expect(() => mapVisit({ ...visit, workStatus: 'finished' })).toThrow()
   expect(() => mapVisit({ ...visit, status: 'form_expired', workStatus: 'in_review' })).toThrow()
 })
@@ -333,4 +350,122 @@ it('mapea administración y catálogos por sus IDs reales', () => {
     }).categories[0].id,
   ).toBe(20)
   for (const invalid of [null, [], 'text']) expect(() => mapUser(invalid)).toThrow()
+})
+
+it('mapea fases V2 y telemetría ausente sin fabricar coordenadas', () => {
+  for (const phase of [
+    'available',
+    'reserved',
+    'scheduled',
+    'physical_work',
+    'physical_finished',
+    'results',
+    'in_review',
+    'correction_required',
+    'finished',
+    'not_performed',
+  ])
+    expect(mapVisit({ ...visit, phase }).phase).toBe(phase)
+  const telemetry = {
+    latitude: null,
+    longitude: null,
+    accuracy: null,
+    capturedAt: null,
+    distanceMeters: null,
+    radiusMeters: 100,
+    failure: 'denied',
+    validated: false,
+  }
+  const arrival = {
+    id: 11,
+    revision: 1,
+    type: 'location',
+    scope: 'arrival',
+    reason: 'Permiso denegado.',
+    failure: 'denied',
+    telemetry,
+    requestedAt: started,
+    approved: true,
+  }
+  const closure = { ...arrival, id: 12, scope: 'closure', failure: 'timeout', approved: null }
+  const result = mapVisit({
+    ...visit,
+    phase: 'physical_work',
+    formOpenedAt: null,
+    physicalEndedAt: null,
+    expiresAt: null,
+    gpsExceptionPending: true,
+    startLocation: telemetry,
+    exceptions: [arrival, closure],
+    exceptionHistory: [
+      { id: '3', at: opened, actorId: 1, kind: 'exception_previous', exception: arrival },
+    ],
+  })
+  expect(result.exceptions?.map((e) => e.scope)).toEqual(['arrival', 'closure'])
+  expect(result.exceptions?.map((e) => e.decision)).toEqual(['approved', 'pending'])
+  expect(result.exceptions?.[0].telemetry?.latitude).toBeNull()
+  expect(result.startLocation?.latitude).toBeUndefined()
+  expect(result.formOpenedAt).toBeUndefined()
+  expect(result.physicalEndedAt).toBeUndefined()
+  expect(
+    mapVisit({ ...visit, previousAttemptId: 2, notPerformedAt: deadline }).previousAttemptId,
+  ).toBe(2)
+  expect(() => mapVisit({ ...visit, phase: 'invented' })).toThrow()
+})
+it('GPS legacy conserva etapa desconocida y precisión no registrada', () => {
+  const raw = {
+    type: 'location',
+    scope: 'legacy',
+    reason: 'Registro antiguo',
+    failure: '',
+    requestedAt: null,
+    approved: null,
+    reviewReason: null,
+  }
+  const result = mapVisit({
+    ...visit,
+    exception: raw,
+    startLocation: {
+      latitude: -12,
+      longitude: -77,
+      accuracy: null,
+      capturedAt: null,
+      validated: null,
+      legacy: true,
+    },
+  })
+  expect(result.exception?.scope).toBe('legacy')
+  expect(result.exception?.requestedAt).toBeUndefined()
+  expect(result.startLocation?.accuracy).toBeUndefined()
+})
+
+it('conserva nombres opcionales e identidades distintas en la auditoría de visitas', () => {
+  const exception = {
+    type: 'location',
+    scope: 'arrival',
+    authorId: 1,
+    authorName: 'Ana Técnica',
+    reviewerId: 4,
+    reviewerName: 'Luis Supervisor',
+    approved: false,
+    reason: 'GPS no disponible',
+    failure: 'denied',
+  }
+  const mapped = mapVisit({
+    ...visit,
+    technicianName: 'Ana Técnica',
+    exceptions: [exception],
+    exceptionHistory: [
+      { id: '1', at: started, actorId: 4, actorName: 'Luis Supervisor', kind: 'review', exception },
+    ],
+  })
+  expect(mapped.technicianName).toBe('Ana Técnica')
+  expect(mapped.exceptions?.[0]).toMatchObject({
+    authorId: 1,
+    authorName: 'Ana Técnica',
+    reviewerId: 4,
+    reviewerName: 'Luis Supervisor',
+  })
+  expect(mapped.exceptionHistory?.[0]).toMatchObject({ actorId: 4, actorName: 'Luis Supervisor' })
+  expect(mapVisit(visit).technicianName).toBeUndefined()
 })

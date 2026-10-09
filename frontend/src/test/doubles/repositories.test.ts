@@ -1,18 +1,21 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createMockRepositories } from './repositories'
 import { readDatabase, writeDatabase, validateDatabase } from './storage'
 import { createFixtures } from './fixtures'
 import { localEvidenceRepository } from './evidence'
 import { validateFiles } from '../../services/evidence'
-import { dateBucket, dayOffset, inDateRange, localDate } from '../../utils/dates'
+import { dateBucket, dayOffset, inDateRange, localDate, operationDate } from '../../utils/dates'
 import { readConfig } from '../../app/config'
 const repos = createMockRepositories()
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-09T02:54:01.233Z'))
   localStorage.clear()
   sessionStorage.clear()
   repos.demo!.setScenario('normal')
 })
+afterEach(() => vi.useRealTimers())
 async function login(id = 1) {
   return repos.auth.login({ kind: 'demo', userId: id })
 }
@@ -27,16 +30,30 @@ async function start(id = 1, gpsAvailable = true) {
     capturedAt: Date.now(),
   }
   await repos.visits.start(id, coordinates)
-  await repos.visits.openForm?.(
-    id,
-    gpsAvailable ? coordinates : undefined,
-    gpsAvailable ? undefined : 'unavailable',
-  )
+  if (gpsAvailable) await repos.visits.finishPhysicalWork(id)
+  else {
+    await repos.visits.finishPhysicalWork(id)
+    const db = readDatabase()
+    db.visits.find((v) => v.id === id)!.exceptions = [
+      {
+        id: 1,
+        revision: 0,
+        type: 'location',
+        scope: 'closure',
+        reason: 'Sin señal al terminar el trabajo (histórico).',
+        failure: 'unavailable',
+        requestedAt: new Date().toISOString(),
+      },
+    ]
+    writeDatabase(db)
+  }
+  await repos.visits.openForm(id)
   return { visit, coordinates }
 }
 async function completeDraft(id = 1, gpsAvailable = true) {
   const { visit, coordinates } = await start(id, gpsAvailable)
   await repos.checklists.saveDraft(id, {
+    revision: (await repos.visits.get(id)).revision ?? 0,
     answers: visit.tasks.map((task) => ({
       taskId: task.id,
       result: 'conforme',
@@ -64,15 +81,31 @@ it('simula conflicto antes de tomar y retira la visita del pool', async () => {
 })
 it('completa la segunda tienda con sus coordenadas y guarda el cierre', async () => {
   const coordinates = await completeDraft(2)
-  const result = await repos.visits.complete(2, coordinates)
+  const result = await repos.visits.complete(2, {
+    revision: (await repos.visits.get(2)).revision ?? 0,
+    exceptions: [],
+  })
   expect(result.status).toBe('completed')
-  expect(result.endLocation?.longitude).toBe(coordinates.longitude)
-  await expect(repos.visits.complete(2, coordinates)).rejects.toMatchObject({ code: 'validation' })
+  expect(result.startLocation?.longitude).toBe(coordinates.longitude)
+  expect(result.endLocation).toBeUndefined()
+  const repeated = await repos.visits.complete(2, {
+    revision: (await repos.visits.get(2)).revision ?? 0,
+    exceptions: [],
+  })
+  expect(repeated.completedAt).toBe(result.completedAt)
+  expect(repeated.submittedAt).toBe(result.submittedAt)
+  expect(repeated.endLocation).toEqual(result.endLocation)
 })
 it('bloquea tareas, observación y fotos pendientes', async () => {
-  const { visit, coordinates } = await start()
-  await expect(repos.visits.complete(1, coordinates)).rejects.toMatchObject({ code: 'validation' })
+  const { visit } = await start()
+  await expect(
+    repos.visits.complete(1, {
+      revision: (await repos.visits.get(1)).revision ?? 0,
+      exceptions: [],
+    }),
+  ).rejects.toMatchObject({ code: 'validation' })
   await repos.checklists.saveDraft(1, {
+    revision: (await repos.visits.get(1)).revision ?? 0,
     answers: visit.tasks.map((task) => ({
       taskId: task.id,
       result: 'no_conforme',
@@ -82,7 +115,12 @@ it('bloquea tareas, observación y fotos pendientes', async () => {
     workDescription: '',
     evidenceIds: [],
   })
-  await expect(repos.visits.complete(1, coordinates)).rejects.toThrow(/Observación|Fotografía/)
+  await expect(
+    repos.visits.complete(1, {
+      revision: (await repos.visits.get(1)).revision ?? 0,
+      exceptions: [],
+    }),
+  ).rejects.toThrow(/Observación|Fotografía/)
 })
 it('bloquea inicio con ubicación fuera de radio e ID inexistente', async () => {
   await login()
@@ -93,30 +131,53 @@ it('bloquea inicio con ubicación fuera de radio e ID inexistente', async () => 
   await expect(repos.checklists.get(999)).rejects.toMatchObject({ code: 'not_found' })
   await expect(repos.visits.get(999)).rejects.toMatchObject({ code: 'not_found' })
 })
-it('excepción solo por GPS no disponible, con rechazo y aprobación auditados', async () => {
+it('GPS pendiente solo entra revisión con envío completo; rechazo abre corrección', async () => {
   await completeDraft(1, false)
+  let current = await repos.visits.get(1)
+  expect(current.status).toBe('in_progress')
+  expect(current.submittedAt).toBeUndefined()
+  await repos.visits.submitReview(1, { revision: current.revision ?? 0, exceptions: [] })
+  await login(3)
+  current = await repos.visits.get(1)
+  const exception = current.exceptions![0]
+  const versions = { revision: current.revision ?? 0, exceptionRevision: exception.revision ?? 0 }
   await expect(
-    repos.visits.requestException(1, 'GPS falla al cerrar.', 'outside'),
+    repos.visits.reviewException(1, false, '', exception.id, versions),
   ).rejects.toMatchObject({ code: 'validation' })
-  await repos.visits.requestException(1, 'No hay señal GPS dentro de la tienda.', 'unavailable')
-  await login(3)
-  await expect(repos.visits.reviewException(1, false, '')).rejects.toMatchObject({
-    code: 'validation',
-  })
-  await repos.visits.reviewException(1, false, 'Reintenta desde el acceso a la tienda.')
-  expect((await repos.checklists.get(1)).status).toBe('pending_approval')
+  await repos.visits.reviewException(
+    1,
+    false,
+    'Reintenta desde el acceso a la tienda.',
+    exception.id,
+    versions,
+  )
+  expect((await repos.visits.get(1)).status).toBe('correction_required')
   await login()
-  await repos.visits.requestException(1, 'El permiso del GPS continúa denegado.', 'denied')
+  await repos.visits.requestException(1, {
+    type: 'location',
+    scope: 'closure',
+    reason: 'El permiso del GPS continúa denegado.',
+    failure: 'denied',
+    revision: exception.revision,
+  })
+  current = await repos.visits.get(1)
+  await repos.visits.submitReview(1, { revision: current.revision ?? 0, exceptions: [] })
   await login(3)
-  const visit = await repos.visits.reviewException(1, true, 'Evidencias revisadas.')
-  expect(visit.status).toBe('completed')
-  expect(visit.exception?.reviewerId).toBe(3)
+  const result = await repos.visits.reviewException(
+    1,
+    true,
+    'Evidencias revisadas.',
+    exception.id,
+    { revision: current.revision ?? 0, exceptionRevision: current.exceptions![0].revision ?? 0 },
+  )
+  expect(result.status).toBe('completed')
+  expect(result.exception?.reviewerId).toBe(3)
   expect(
-    visit.exceptionHistory
+    result.exceptionHistory
       ?.filter((entry) => entry.kind === 'review')
       .map((entry) => entry.exception.approved),
   ).toEqual([false, true])
-  expect(visit.endLocation).toBeUndefined()
+  expect(result.endLocation).toBeUndefined()
 })
 it('creación, programación, reasignación y resolución se ven entre roles', async () => {
   await login(2)
@@ -133,7 +194,7 @@ it('creación, programación, reasignación y resolución se ven entre roles', a
   await repos.tickets.schedule(
     ticket.id,
     1,
-    dayOffset(1),
+    operationDate(),
     'Media',
     'Cambio de disponibilidad del técnico.',
   )
@@ -143,13 +204,18 @@ it('creación, programación, reasignación y resolución se ven entre roles', a
   const store = await repos.stores.get(1)
   const coordinates = { ...store, accuracy: 8, capturedAt: Date.now() }
   await repos.visits.start(visit.id, coordinates)
-  await repos.visits.openForm?.(visit.id, coordinates)
+  await repos.visits.finishPhysicalWork(visit.id)
+  await repos.visits.openForm(visit.id)
   await repos.checklists.saveDraft(visit.id, {
+    revision: (await repos.visits.get(visit.id)).revision ?? 0,
     answers: [],
     workDescription: 'Se reparó la válvula y verificó la presión.',
     evidenceIds: ['photo'],
   })
-  await repos.visits.complete(visit.id, coordinates)
+  await repos.visits.complete(visit.id, {
+    revision: (await repos.visits.get(visit.id)).revision ?? 0,
+    exceptions: [],
+  })
   await login(2)
   expect((await repos.tickets.get(ticket.id)).status).toBe('resolved')
   expect((await repos.tickets.get(ticket.id)).technicalEvidenceIds).toEqual(['photo'])
@@ -167,6 +233,32 @@ it('visibilidad por tienda y rol, programación valida fecha y técnico', async 
   await expect(repos.tickets.schedule(104, 999, dayOffset(0), 'Alta', '')).rejects.toMatchObject({
     code: 'validation',
   })
+})
+it.each([
+  ['2026-10-09T02:54:01.233Z', '2026-10-07', '2026-10-08'],
+  ['2026-10-09T05:00:00Z', '2026-10-08', '2026-10-09'],
+  ['2027-01-01T02:00:00Z', '2026-12-30', '2026-12-31'],
+])('rechaza ayer y permite programar/iniciar hoy en Lima a %s', async (at, yesterday, today) => {
+  vi.setSystemTime(new Date(at))
+  await login(3)
+  expect(createFixtures().contracts[0].startDate).toBe(`${today.slice(0, 7)}-01`)
+  await expect(repos.tickets.schedule(104, 1, yesterday, 'Alta', '')).rejects.toMatchObject({
+    code: 'validation',
+  })
+  await expect(repos.tickets.schedule(104, 1, dayOffset(-1), 'Alta', '')).rejects.toMatchObject({
+    code: 'validation',
+  })
+  const scheduled = await repos.tickets.schedule(104, 1, today, 'Alta', '')
+  expect(operationDate(new Date(scheduled.scheduledAt!))).toBe(today)
+  await login()
+  const store = await repos.stores.get(scheduled.storeId)
+  const started = await repos.visits.start(scheduled.visitId!, {
+    ...store,
+    accuracy: 8,
+    capturedAt: Date.now(),
+  })
+  expect(started.startedAt).toBe(new Date(at).toISOString())
+  expect(started.status).toBe('in_progress')
 })
 it('latencia cancelable, error recuperable, vacío y datos inválidos', async () => {
   await login()
@@ -288,23 +380,13 @@ it('tienda puede consultar el técnico asignado sin ver usuarios de otras tienda
   expect(users.some((user) => user.id === 1)).toBe(true)
   expect(users.some((user) => user.id === 6 || user.role === 'administrator')).toBe(false)
 })
-it('persiste el límite de cinco minutos y envía la excepción por tiempo vencido', async () => {
+it('no establece vencimiento ni permite nuevas excepciones de tiempo', async () => {
   await start(1)
   const started = await repos.checklists.get(1)
-  expect(started.timeLimitSeconds).toBe(300)
-  expect(Date.parse(started.expiresAt!) - Date.parse(started.formOpenedAt!)).toBe(300000)
-  const db = readDatabase()
-  const visit = db.visits.find((item) => item.id === 1)!
-  visit.expiresAt = new Date(Date.now() - 1000).toISOString()
-  writeDatabase(db)
-  await expect(repos.visits.requestTimeException(1, '   ')).rejects.toMatchObject({
-    code: 'validation',
-  })
-  const pending = await repos.visits.requestTimeException(
-    1,
-    'La inspección requirió detener el equipo de forma segura.',
-  )
-  expect(pending.status).toBe('pending_approval')
-  expect(pending.exception?.type).toBe('time_limit')
-  expect(pending.timeExceptionStatus).toBe('pending')
+  expect(started.expiresAt).toBeUndefined()
+  expect(started.timeLimitSeconds).toBeUndefined()
+  await expect(
+    repos.visits.requestTimeException(1, 'La conexión falló durante el registro.'),
+  ).rejects.toMatchObject({ code: 'validation' })
+  expect((await repos.visits.get(1)).exceptions).toBeUndefined()
 })

@@ -1,3 +1,4 @@
+import { operationalVisit } from './visitsRepository'
 import type { Repositories } from '../../services/repositories/contracts'
 import { AppError, required } from '../../services/errors'
 import { readDatabase, writeDatabase } from './storage'
@@ -5,7 +6,7 @@ import { delay, currentUser, allow, getVisit, mutate, listVisits, scenarioState 
 
 export function createChecklistsRepository(): NonNullable<Repositories['checklists']> {
   return {
-    list: (options) => listVisits('checklist', options),
+    list: async (options) => (await listVisits('checklist', options)).map(operationalVisit),
     async get(id, options) {
       await delay(options)
       const db = readDatabase()
@@ -14,7 +15,7 @@ export function createChecklistsRepository(): NonNullable<Repositories['checklis
       allow(user, ['technician', 'account_supervisor', 'administrator'])
       if (user.role === 'technician' && visit.technicianId && visit.technicianId !== user.id)
         throw new AppError('not_found', 'Checklist no encontrado.')
-      return visit
+      return operationalVisit(visit)
     },
     async claim(id) {
       return mutate((db) => {
@@ -37,17 +38,23 @@ export function createChecklistsRepository(): NonNullable<Repositories['checklis
           throw new AppError('conflict', 'Esta visita ya fue tomada.')
         visit.technicianId = user.id
         visit.status = 'claimed'
-        return visit
+        return operationalVisit(visit)
       })
     },
     async saveDraft(id, input) {
       return mutate((db) => {
         const visit = getVisit(db, id, true)
-        required(visit.status === 'in_progress', 'Inicia la visita antes de registrar respuestas.')
+        required(
+          ['in_progress', 'correction_required'].includes(visit.status) && visit.formOpenedAt,
+          'Inicia la visita antes de registrar respuestas.',
+        )
+        if ((input.revision ?? 0) !== (visit.revision ?? 0))
+          throw new AppError('conflict', 'Borrador modificado en otra sesión.')
+        visit.revision = (visit.revision ?? 0) + 1
         visit.answers = input.answers
         visit.workDescription = input.workDescription
         visit.evidenceIds = input.evidenceIds
-        return visit
+        return operationalVisit(visit)
       })
     },
   }

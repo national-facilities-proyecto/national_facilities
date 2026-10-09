@@ -23,6 +23,7 @@ export function createDashboardRepository(): NonNullable<Repositories['dashboard
         scheduled: 0,
         in_progress: 0,
         pending_approval: 0,
+        correction_required: 0,
         resolved: 0,
         closed: 0,
       }

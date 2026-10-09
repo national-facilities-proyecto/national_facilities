@@ -7,6 +7,9 @@ export const titles: Record<AdminKind, string> = {
   clients: 'Clientes',
   contracts: 'Contratos',
   templates: 'Plantillas e ítems',
+  zones: 'Zonas',
+  specialties: 'Especialidades',
+  clientSpecialties: 'Especialidades habilitadas por cliente',
 }
 export type Entity = AdminEntities[AdminKind]
 type Field = {
@@ -21,6 +24,9 @@ type Field = {
 export function getAdminFields(
   clients: AdminEntities['clients'][],
   templates: AdminEntities['templates'][],
+  zones: AdminEntities['zones'][] = [],
+  specialties: AdminEntities['specialties'][] = [],
+  clientId?: number,
 ) {
   const fields: Record<AdminKind, Field[]> = {
     users: [
@@ -32,7 +38,7 @@ export function getAdminFields(
         optional: true,
       },
       { name: 'name', label: 'Nombre completo' },
-      { name: 'email', label: 'Correo', type: 'email' },
+      { name: 'email', label: 'Correo', type: 'email', optional: true },
       {
         name: 'role',
         label: 'Rol',
@@ -42,13 +48,21 @@ export function getAdminFields(
     stores: [
       { name: 'name', label: 'Nombre de tienda' },
       { name: 'address', label: 'Dirección' },
-      { name: 'contact', label: 'Contacto' },
+      { name: 'contact', label: 'Contacto', optional: true },
       { name: 'latitude', label: 'Latitud', inputMode: 'decimal', placeholder: '-12.127876' },
       { name: 'longitude', label: 'Longitud', inputMode: 'decimal', placeholder: '-76.988939' },
       {
         name: 'clientId',
         label: 'Cliente',
         options: clients.map((client) => ({ value: String(client.id), label: client.name })),
+      },
+      {
+        name: 'zoneId',
+        label: 'Zona',
+        optional: true,
+        options: zones
+          .filter((zone) => zone.clientId === clientId)
+          .map((zone) => ({ value: String(zone.id), label: zone.name })),
       },
     ],
     clients: [
@@ -83,6 +97,30 @@ export function getAdminFields(
     templates: [
       { name: 'name', label: 'Nombre de plantilla' },
       { name: 'version', label: 'Versión', type: 'number' },
+    ],
+    zones: [
+      {
+        name: 'clientId',
+        label: 'Cliente',
+        options: clients.map((client) => ({ value: String(client.id), label: client.name })),
+      },
+      { name: 'name', label: 'Nombre de zona' },
+    ],
+    specialties: [{ name: 'name', label: 'Nombre de especialidad' }],
+    clientSpecialties: [
+      {
+        name: 'clientId',
+        label: 'Cliente',
+        options: clients.map((client) => ({ value: String(client.id), label: client.name })),
+      },
+      {
+        name: 'categoryId',
+        label: 'Especialidad',
+        options: specialties.map((specialty) => ({
+          value: String(specialty.id),
+          label: specialty.name,
+        })),
+      },
     ],
   }
   return fields

@@ -9,8 +9,10 @@ import type {
   EvidenceMeta,
   Catalogs,
   LocationException,
-  Coordinates,
   Dashboard,
+  Zone,
+  Specialty,
+  ClientSpecialty,
 } from '../../types/models'
 import { AppError } from '../errors'
 import { ticketWorkStatus, visitWorkStatus } from '../../types/models'
@@ -69,17 +71,25 @@ function task(value: unknown) {
     order: integer(v.order),
   }
 }
-function coordinates(value: unknown): Coordinates {
+function recordedCoordinates(value: unknown) {
   const v = object(value)
-  const result = {
-    latitude: number(v.latitude),
-    longitude: number(v.longitude),
-    accuracy: number(v.accuracy),
-    capturedAt: number(v.capturedAt),
-  }
-  if (Math.abs(result.latitude) > 90 || Math.abs(result.longitude) > 180 || result.accuracy < 0)
+  const latitude = optional(v.latitude, number)
+  const longitude = optional(v.longitude, number)
+  const accuracy = optional(v.accuracy, number)
+  if (
+    (latitude !== undefined && Math.abs(latitude) > 90) ||
+    (longitude !== undefined && Math.abs(longitude) > 180) ||
+    (accuracy !== undefined && accuracy < 0)
+  )
     incompatible()
-  return result
+  return {
+    latitude,
+    longitude,
+    accuracy,
+    capturedAt: optional(v.capturedAt, number),
+    validated: optional(v.validated, boolean),
+    legacy: optional(v.legacy, boolean),
+  }
 }
 export function mapUser(value: unknown): User {
   const v = object(value)
@@ -90,6 +100,13 @@ export function mapUser(value: unknown): User {
     email: string(v.email),
     role: choice(v.role, ['technician', 'store_supervisor', 'account_supervisor', 'administrator']),
     storeIds: rows(v.storeIds).map(id),
+    coverages:
+      v.coverages === undefined
+        ? []
+        : rows(v.coverages).map((raw) => {
+            const row = object(raw)
+            return { clientId: id(row.clientId), zoneId: id(row.zoneId) }
+          }),
     active: boolean(v.active),
     passwordInitialized: boolean(v.passwordInitialized),
   }
@@ -112,24 +129,61 @@ export function mapStore(value: unknown): Store {
     latitude,
     longitude,
     clientId: id(v.clientId),
+    zoneId: optional(v.zoneId, id) ?? null,
     contact: string(v.contact),
+    active: boolean(v.active),
+  }
+}
+export function mapZone(value: unknown): Zone {
+  const v = object(value)
+  return { id: id(v.id), clientId: id(v.clientId), name: string(v.name), active: boolean(v.active) }
+}
+export function mapSpecialty(value: unknown): Specialty {
+  const v = object(value)
+  return { id: id(v.id), name: string(v.name), active: boolean(v.active) }
+}
+export function mapClientSpecialty(value: unknown): ClientSpecialty {
+  const v = object(value)
+  return {
+    id: id(v.id),
+    clientId: id(v.clientId),
+    categoryId: id(v.categoryId),
     active: boolean(v.active),
   }
 }
 function exception(value: unknown): LocationException {
   const v = object(value)
   return {
-    id: id(v.id),
+    evidenceIds: v.evidenceIds === undefined ? [] : ids(v.evidenceIds),
+    id: optional(v.id, id),
+    scope:
+      v.scope === undefined ? 'legacy' : choice(v.scope, ['arrival', 'closure', 'form', 'legacy']),
+    telemetry: optional(v.telemetry, (raw) => {
+      const t = object(raw)
+      return {
+        latitude: optional(t.latitude, number) ?? null,
+        longitude: optional(t.longitude, number) ?? null,
+        accuracy: optional(t.accuracy, number) ?? null,
+        capturedAt: optional(t.capturedAt, number) ?? null,
+        distanceMeters: optional(t.distanceMeters, number) ?? null,
+        radiusMeters: optional(t.radiusMeters, number) ?? null,
+        failure: string(t.failure),
+        validated: optional(t.validated, boolean) ?? null,
+      }
+    }),
+    decision: v.approved == null ? 'pending' : boolean(v.approved) ? 'approved' : 'rejected',
     type: choice(v.type, ['time_limit', 'location']),
-    revision: integer(v.revision),
+    revision: optional(v.revision, integer),
     authorId: optional(v.authorId, id),
+    authorName: optional(v.authorName, string),
     reason: string(v.reason),
     failure: string(v.failure),
-    requestedAt: date(v.requestedAt),
+    requestedAt: optional(v.requestedAt, date),
     reviewedAt: optional(v.reviewedAt, date),
     reviewerId: optional(v.reviewerId, id),
+    reviewerName: optional(v.reviewerName, string),
     approved: optional(v.approved, boolean),
-    reviewReason: string(v.reviewReason),
+    reviewReason: optional(v.reviewReason, string),
   }
 }
 export function mapVisit(value: unknown): Visit {
@@ -153,6 +207,7 @@ export function mapVisit(value: unknown): Visit {
     'claimed',
     'in_progress',
     'pending_approval',
+    'correction_required',
     'completed',
     'cancelled',
   ])
@@ -174,6 +229,7 @@ export function mapVisit(value: unknown): Visit {
     storeId: id(v.storeId),
     storeSnapshot,
     technicianId: optional(v.technicianId, id),
+    technicianName: optional(v.technicianName, string),
     ticketId: optional(v.ticketId, id),
     origin: choice(v.origin, ['checklist', 'ticket']),
     scheduledAt: date(v.scheduledAt),
@@ -191,6 +247,8 @@ export function mapVisit(value: unknown): Visit {
         id: string(entry.id),
         at: date(entry.at),
         actorId,
+        actorName: optional(entry.actorName, string),
+        technicianName: optional(entry.technicianName, string),
         kind,
         technicianId: id(entry.technicianId),
         claimedAt: date(entry.claimedAt),
@@ -199,6 +257,25 @@ export function mapVisit(value: unknown): Visit {
       }
     }),
     status,
+    workStatus: visitWorkStatus(status),
+    phase: choice(v.phase, [
+      'available',
+      'reserved',
+      'scheduled',
+      'physical_work',
+      'physical_finished',
+      'results',
+      'in_review',
+      'correction_required',
+      'finished',
+      'not_performed',
+    ]),
+    occupiesTechnician: boolean(v.occupiesTechnician),
+    readOnly: boolean(v.readOnly),
+    gpsExceptionPending: boolean(v.gpsExceptionPending),
+    physicalEndedAt: optional(v.physicalEndedAt, date),
+    notPerformedAt: optional(v.notPerformedAt, date),
+    previousAttemptId: optional(v.previousAttemptId, id),
     tasks: rows(v.tasks).map(task),
     answers: rows(v.answers).map((raw) => {
       const a = object(raw)
@@ -211,8 +288,9 @@ export function mapVisit(value: unknown): Visit {
     }),
     workDescription: string(v.workDescription),
     evidenceIds: ids(v.evidenceIds),
-    startLocation: optional(v.startLocation, coordinates),
-    endLocation: optional(v.endLocation, coordinates),
+    arrivalEvidenceIds: v.arrivalEvidenceIds === undefined ? [] : ids(v.arrivalEvidenceIds),
+    startLocation: optional(v.startLocation, recordedCoordinates),
+    endLocation: optional(v.endLocation, recordedCoordinates),
     startedAt: optional(v.startedAt, date),
     formOpenedAt: optional(v.formOpenedAt, date),
     expiresAt: optional(v.expiresAt, date),
@@ -230,16 +308,22 @@ export function mapVisit(value: unknown): Visit {
         id: string(entry.id),
         at: date(entry.at),
         actorId: id(entry.actorId),
+        actorName: optional(entry.actorName, string),
         kind: choice(entry.kind, [
           'exception',
           'review',
           'exception_corrected',
           'exception_reopened',
+          'exception_previous',
         ]),
         exception: exception(entry.exception),
       }
     }),
     exception: optional(v.exception, exception),
+    timeExceptionReason: optional(v.timeExceptionReason, string),
+    timeExceptionStatus: optional(v.timeExceptionStatus, (x) =>
+      choice(x, ['pending', 'approved', 'rejected']),
+    ),
     radiusMeters: radius,
     legacy,
     totalSeconds: optional(v.totalSeconds, number),
@@ -254,6 +338,7 @@ export function mapTicket(value: unknown): Ticket {
     'scheduled',
     'in_progress',
     'pending_approval',
+    'correction_required',
     'resolved',
     'closed',
   ])
@@ -292,6 +377,8 @@ export function mapTicket(value: unknown): Ticket {
         id: string(e.id),
         at: date(e.at),
         actorId: id(e.actorId),
+        actorName: optional(e.actorName, string),
+        kind: optional(e.kind, string),
         text: string(e.text),
         reason: optional(details.reason, string),
         previous: optional(details.previous, change),
@@ -347,6 +434,7 @@ export function mapEvidence(value: unknown): EvidenceMeta {
     capturedAt: optional(v.capturedAt, date),
     uploadedAt: date(v.uploadedAt),
     source: choice(v.source, ['camera', 'gallery', 'upload']),
+    purpose: optional(v.purpose, (value) => choice(value, ['result', 'arrival'])),
   }
 }
 export function mapCatalogs(value: unknown): Catalogs {
@@ -390,6 +478,7 @@ export function mapDashboard(value: unknown): Dashboard {
       scheduled: integer(statuses.scheduled),
       in_progress: integer(statuses.in_progress),
       pending_approval: integer(statuses.pending_approval),
+      correction_required: integer(statuses.correction_required),
       resolved: integer(statuses.resolved),
       closed: integer(statuses.closed),
     },

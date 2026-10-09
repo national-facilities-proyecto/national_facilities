@@ -1,5 +1,16 @@
-import type { Contract, Client, Store, Template, Ticket, User, Visit } from '../../types/models'
-import { dayOffset, localDate } from '../../utils/dates'
+import type {
+  Contract,
+  Client,
+  Store,
+  Template,
+  Ticket,
+  User,
+  Visit,
+  Zone,
+  Specialty,
+  ClientSpecialty,
+} from '../../types/models'
+import { dayOffset, operationDate } from '../../utils/dates'
 export type MockDatabase = {
   version: 1
   users: User[]
@@ -9,6 +20,9 @@ export type MockDatabase = {
   templates: Template[]
   visits: Visit[]
   tickets: Ticket[]
+  zones: Zone[]
+  specialties: Specialty[]
+  clientSpecialties: ClientSpecialty[]
 }
 export function createFixtures(): MockDatabase {
   const users: User[] = [
@@ -75,6 +89,7 @@ export function createFixtures(): MockDatabase {
       latitude: -12.1739,
       longitude: -77.0181,
       clientId: 1,
+      zoneId: 1,
       contact: 'Roberto Sánchez',
       active: true,
     },
@@ -85,10 +100,19 @@ export function createFixtures(): MockDatabase {
       latitude: -12.1504,
       longitude: -76.9718,
       clientId: 1,
+      zoneId: 2,
       contact: 'María Torres',
       active: true,
     },
   ]
+  // Parejas explícitas del fixture; no se deducen de storeIds.
+  for (const user of users)
+    user.coverages = ['technician', 'account_supervisor'].includes(user.role)
+      ? [
+          { clientId: 1, zoneId: 1 },
+          { clientId: 1, zoneId: 2 },
+        ]
+      : []
   const templates: Template[] = [
     {
       id: 1,
@@ -138,7 +162,6 @@ export function createFixtures(): MockDatabase {
     evidenceIds: [],
     workDescription: '',
     radiusMeters: 100,
-    timeLimitSeconds: 300,
     timeLimitExceeded: false,
   }))
   const tickets: Ticket[] = [-2, 0, 2].map((offset, index) => ({
@@ -201,6 +224,21 @@ export function createFixtures(): MockDatabase {
     templates,
     visits,
     tickets,
+    zones: [
+      { id: 1, clientId: 1, name: 'Chorrillos', active: true },
+      { id: 2, clientId: 1, name: 'San Juan de Miraflores', active: true },
+    ],
+    specialties: ['Climatización', 'Eléctrico', 'Plomería', 'Refrigeración'].map((name, index) => ({
+      id: index + 1,
+      name,
+      active: true,
+    })),
+    clientSpecialties: [1, 2, 3, 4].map((categoryId) => ({
+      id: categoryId,
+      clientId: 1,
+      categoryId,
+      active: true,
+    })),
     clients: [
       {
         id: 1,
@@ -214,7 +252,7 @@ export function createFixtures(): MockDatabase {
         id: 1,
         clientId: 1,
         templateId: 1,
-        startDate: `${localDate().slice(0, 7)}-01`,
+        startDate: `${operationDate().slice(0, 7)}-01`,
         endDate: '',
         monthlyVisits: 1,
         monthlyInterventions: 2,

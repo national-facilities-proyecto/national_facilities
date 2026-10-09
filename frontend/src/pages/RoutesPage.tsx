@@ -1,93 +1,123 @@
-import { useCallback, useEffect, useState } from 'react'
+import { WorkRecovery } from '../features/checklists/WorkRecovery'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useRepositories } from '../app/RepositoriesProvider'
+import { useAuth } from '../features/auth/AuthProvider'
 import { useQuery } from '../hooks/useQuery'
 import { QueryState } from '../components/feedback/QueryState'
 import { QueryFeedback } from '../components/feedback/QueryFeedback'
 import { Badge, Button, Card, EmptyState, PageHeader } from '../components/ui'
-import { dateBucket, displayDate } from '../utils/dates'
+import { dateBucket, scheduleDate } from '../utils/dates'
 import { LazyMap } from '../features/technician/LazyMap'
-import { visitStatusLabels } from '../types/models'
+import { checklistMapLocations } from '../features/checklists/checklistMap'
+import { operationalVisitLabel } from '../types/models'
 export default function RoutesPage() {
   const repos = useRepositories()
-  const [filter, setFilter] = useState<'late' | 'today' | 'future' | 'recovery' | 'history'>(
-    'today',
-  )
+  const { session } = useAuth()
+  const [filter, setFilter] = useState<'pending' | 'history'>('pending')
   const [today, setToday] = useState(new Date())
   useEffect(() => {
     const timer = setInterval(() => setToday(new Date()), 60000)
     return () => clearInterval(timer)
   }, [])
-  const query = useQuery(
-    useCallback(
-      async (signal) => {
-        const [visits, stores] = await Promise.all([
-          repos.visits.list({ signal }),
-          repos.stores.list({ signal }),
-        ])
-        return { visits, stores }
-      },
-      [repos],
-    ),
+  const query = useQuery(useCallback((signal) => repos.visits.list({ signal }), [repos]))
+  const storeQuery = useQuery(useCallback((signal) => repos.stores.list({ signal }), [repos]))
+  const locations = useMemo(() => checklistMapLocations(storeQuery.data ?? []), [storeQuery.data])
+  const stores = storeQuery.data ?? []
+  const own = (query.data ?? []).filter(
+    (visit) => visit.origin === 'ticket' && visit.technicianId === session?.user.id,
   )
-  if (!query.data || query.status !== 'success') return <QueryState query={query} />
-  const { stores } = query.data
-  const pending = query.data.visits.filter(
-    (visit) => !['completed', 'pending_approval'].includes(visit.status),
-  )
-  const rows =
-    filter === 'history'
-      ? query.data.visits.filter((visit) => visit.status === 'completed')
-      : filter === 'recovery'
-        ? query.data.visits.filter(
-            (visit) => visit.status === 'in_progress' || visit.status === 'pending_approval',
-          )
-        : pending.filter((visit) => dateBucket(visit.scheduledAt, today) === filter)
+  const rows = own
+    .filter((visit) =>
+      filter === 'history'
+        ? visit.status === 'completed'
+        : ['claimed', 'in_progress', 'correction_required'].includes(visit.status) ||
+          (visit.status === 'pending_approval' && !visit.submittedAt),
+    )
+    .sort((a, b) => Date.parse(a.scheduledAt) - Date.parse(b.scheduledAt) || a.id - b.id)
   return (
     <>
       <PageHeader
-        title="Mis rutas pendientes"
-        description={new Intl.DateTimeFormat('es-PE', { dateStyle: 'full' }).format(today)}
+        title="Atenciones"
+        description={new Intl.DateTimeFormat('es-PE', {
+          dateStyle: 'full',
+          timeZone: 'America/Lima',
+        }).format(today)}
       />
-      <QueryFeedback query={query} />
-      <LazyMap
-        stores={stores.filter((store) => pending.some((visit) => visit.storeId === store.id))}
-      />
+      <WorkRecovery />
+      {storeQuery.status !== 'success' ? (
+        <QueryState query={storeQuery} showHeading={false} />
+      ) : locations.length ? (
+        <LazyMap stores={locations} />
+      ) : (
+        <section className="nf-card" aria-label="Mapa de tiendas">
+          <h2>Ubicaciones asignadas</h2>
+          <EmptyState>
+            {stores.some((store) => store.active)
+              ? 'Tus tiendas asignadas aún no tienen una ubicación disponible.'
+              : 'No tienes tiendas asignadas por ahora.'}
+          </EmptyState>
+        </section>
+      )}
       <div className="nf-actions" role="group" aria-label="Filtrar atenciones">
-        {(['late', 'today', 'future', 'recovery', 'history'] as const).map((value) => (
-          <Button
-            key={value}
-            variant="secondary"
-            aria-pressed={filter === value}
-            onClick={() => setFilter(value)}
-          >
-            {value === 'late'
-              ? 'Atrasadas'
-              : value === 'today'
-                ? 'Hoy'
-                : value === 'future'
-                  ? 'Futuras'
-                  : value === 'recovery'
-                    ? 'Recuperar trabajos'
-                    : 'Finalizados'}
-          </Button>
-        ))}
+        <Button
+          variant="secondary"
+          aria-pressed={filter === 'pending'}
+          onClick={() => setFilter('pending')}
+        >
+          Pendientes
+        </Button>
+        <Button
+          variant="secondary"
+          aria-pressed={filter === 'history'}
+          onClick={() => setFilter('history')}
+        >
+          Finalizadas
+        </Button>
       </div>
-      <div className="nf-list">
-        {!rows.length && <EmptyState>No hay atenciones en este filtro.</EmptyState>}
-        {rows.map((visit) => (
-          <Card key={visit.id}>
-            <Badge>Ticket #{visit.ticketId}</Badge>
-            <Badge>{visitStatusLabels[visit.status]}</Badge>
-            <h2>{stores.find((store) => store.id === visit.storeId)?.name}</h2>
-            <p>{stores.find((store) => store.id === visit.storeId)?.address}</p>
-            <p>Programada: {displayDate(visit.scheduledAt)}</p>
-            <Link className="nf-link" to={`/routes/${visit.id}`}>
-              Ver detalle
-            </Link>
-          </Card>
-        ))}
-      </div>
+      {query.status !== 'success' ? (
+        <QueryState query={query} showHeading={false} />
+      ) : (
+        <>
+          <QueryFeedback query={query} />
+          <div className="nf-list">
+            {!rows.length && (
+              <EmptyState>
+                {filter === 'pending'
+                  ? 'No tienes atenciones pendientes por ahora.'
+                  : 'No tienes atenciones finalizadas por ahora.'}
+              </EmptyState>
+            )}
+            {rows.map((visit) => {
+              const store = stores.find((item) => item.id === visit.storeId) ?? visit.storeSnapshot
+              const bucket = dateBucket(visit.scheduledAt, today)
+              return (
+                <Card key={visit.id}>
+                  <h2>{store?.name ?? 'Atención asignada'}</h2>
+                  <div className="nf-ticket-meta">
+                    <Badge>{operationalVisitLabel(visit)}</Badge>
+                    {filter === 'pending' && visit.phase === 'scheduled' && (
+                      <Badge>
+                        {bucket === 'late'
+                          ? 'Atrasada'
+                          : bucket === 'future'
+                            ? 'Próxima'
+                            : 'Programada para hoy'}
+                      </Badge>
+                    )}
+                  </div>
+                  <p>{store?.address}</p>
+                  <p>Programada: {scheduleDate(visit.scheduledAt)}</p>
+                  <small>Incidencia #{visit.ticketId}</small>
+                  <Link className="nf-link" to={`/routes/${visit.id}`}>
+                    Ver detalle
+                  </Link>
+                </Card>
+              )
+            })}
+          </div>
+        </>
+      )}
     </>
   )
 }

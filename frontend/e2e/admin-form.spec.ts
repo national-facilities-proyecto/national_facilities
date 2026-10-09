@@ -57,6 +57,13 @@ test('tienda: pega coordenadas de un mapa, valida rangos y guarda la ubicación 
       email: 'coordinates@test.invalid',
     }),
   )
+  const zone = object(
+    await call(request, '/admin/zonas/', token, {
+      clientId: client.id,
+      name: 'Zona explícita de coordenadas ' + suffix,
+      active: true,
+    }),
+  )
   await login(page, 'admin')
   await page.goto('/admin/stores')
   await page.getByRole('button', { name: 'Crear registro', exact: true }).click()
@@ -65,6 +72,7 @@ test('tienda: pega coordenadas de un mapa, valida rangos y guarda la ubicación 
   await page.getByLabel('Dirección', { exact: true }).fill('Isolated coordinate test address')
   await page.getByLabel('Contacto', { exact: true }).fill('Test contact')
   await page.getByLabel('Cliente', { exact: true }).selectOption(String(client.id))
+  await page.getByLabel('Zona', { exact: true }).selectOption(String(zone.id))
   await page.getByLabel('Latitud', { exact: true }).fill('90.0000001')
   await page.getByLabel('Longitud', { exact: true }).fill('-76.9889393558228')
   await page.getByRole('button', { name: 'Revisar cambios', exact: true }).click()

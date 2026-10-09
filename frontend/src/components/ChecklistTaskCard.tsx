@@ -1,4 +1,4 @@
-﻿import type { Answer, ChecklistTask } from '../types/models'
+import type { Answer, ChecklistTask } from '../types/models'
 import { Badge, Button } from './ui'
 import { EvidenceGallery } from './EvidenceGallery'
 
@@ -12,9 +12,11 @@ export function ChecklistTaskCard({
   onGallery,
   onRemove,
   onNotApplicable,
+  issues = [],
 }: {
   task: ChecklistTask
   order: number
+  issues?: string[]
   answer?: Answer
   onConforming(this: void): void
   onNonConforming(this: void): void
@@ -29,27 +31,36 @@ export function ChecklistTaskCard({
         <span className="nf-task__number">{order}</span>
         <div>
           <h2>{task.title}</h2>
-          <Badge>{task.photoRequired ? 'Foto obligatoria' : 'Foto opcional'}</Badge>
+          <Badge>
+            {answer?.result === 'no_aplica'
+              ? 'Sin foto requerida'
+              : task.photoRequired
+                ? 'Foto obligatoria'
+                : 'Foto opcional'}
+          </Badge>
         </div>
       </header>
-      <div className="nf-actions" role="group" aria-label={`Resultado de ${task.title}`}>
+      <div className="nf-result-options" role="group" aria-label={`Resultado de ${task.title}`}>
         <Button
           variant="secondary"
+          className="nf-result-option"
           aria-pressed={answer?.result === 'conforme'}
           onClick={onConforming}
         >
-          ✓ Conforme
+          Conforme
         </Button>
         <Button
           variant="secondary"
+          className="nf-result-option"
           aria-pressed={answer?.result === 'no_conforme'}
           onClick={onNonConforming}
         >
-          ! No conforme
+          No conforme
         </Button>
         {onNotApplicable && (
           <Button
             variant="secondary"
+            className="nf-result-option"
             aria-pressed={answer?.result === 'no_aplica'}
             onClick={onNotApplicable}
           >
@@ -57,22 +68,31 @@ export function ChecklistTaskCard({
           </Button>
         )}
       </div>
+      {issues.length > 0 && (
+        <ul className="nf-task-issues" aria-label={`Requisitos de ${task.title}`}>
+          {issues.map((issue) => (
+            <li key={issue}>{issue}</li>
+          ))}
+        </ul>
+      )}
       {answer?.observation && (
         <p>
           <strong>Observación:</strong> {answer.observation}
         </p>
       )}
       <EvidenceGallery ids={answer?.evidenceIds ?? []} onRemove={onRemove} />
-      <div className="nf-actions">
-        <Button variant="secondary" onClick={onCamera}>
-          Tomar foto
-        </Button>
-        {onGallery && (
-          <Button variant="secondary" onClick={onGallery}>
-            Seleccionar de galería
+      {answer?.result && answer.result !== 'no_aplica' && (
+        <div className="nf-actions">
+          <Button variant="secondary" onClick={onCamera}>
+            Tomar foto
           </Button>
-        )}
-      </div>
+          {onGallery && (
+            <Button variant="secondary" onClick={onGallery}>
+              Seleccionar de galería
+            </Button>
+          )}
+        </div>
+      )}
     </article>
   )
 }
