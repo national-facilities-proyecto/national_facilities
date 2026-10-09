@@ -38,7 +38,7 @@ for (const width of [320, 1440]) {
     try {
       if (width < 1024) await page.getByRole('button', { name: 'Abrir menú' }).click()
       await navigation.getByRole('link', { name: 'Atenciones', exact: true }).click()
-      await expect(page.locator('#main-content .nf-loading--list')).toBeVisible()
+      await expect(page.locator('#main-content .nf-loading--list:visible')).toBeVisible()
       await expect(page.getByRole('button', { name: /Perfil de/ })).toBeVisible()
       if (width >= 1024) await expect(navigation).toBeVisible()
       else await expect(page.getByRole('button', { name: 'Abrir menú' })).toBeVisible()
