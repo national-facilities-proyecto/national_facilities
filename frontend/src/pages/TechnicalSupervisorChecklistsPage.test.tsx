@@ -1,10 +1,10 @@
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, getDefaultNormalizer, screen } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { createMockRepositories } from '../test/doubles/repositories'
 import { createFixtures } from '../test/doubles/fixtures'
 import { renderPage } from '../test/render'
 import { displayDate } from '../utils/dates'
-import type { VisitStatus } from '../types/models'
+import { visitWorkStatus, type VisitStatus } from '../types/models'
 import TechnicalSupervisorChecklistsPage from './TechnicalSupervisorChecklistsPage'
 beforeEach(() => localStorage.clear())
 it.each<VisitStatus>(['pending_approval', 'completed', 'available'])(
@@ -22,9 +22,16 @@ it.each<VisitStatus>(['pending_approval', 'completed', 'available'])(
     await screen.findAllByRole('link', { name: 'Ver detalle' })
     expect(
       screen.getAllByText(
-        `${startedAt ? 'Ejecutada: ' : 'Programada: '}${displayDate(startedAt ?? scheduledAt)}`,
+        getDefaultNormalizer()(
+          `${startedAt ? 'Ejecutada: ' : 'Programada: '}${displayDate(startedAt ?? scheduledAt)}`,
+        ),
       ),
     ).not.toHaveLength(0)
+    const state = screen.getByLabelText('Estado')
+    fireEvent.change(state, { target: { value: status === 'completed' ? 'pending' : 'finished' } })
+    expect(screen.queryAllByRole('link', { name: 'Ver detalle' })).toHaveLength(0)
+    fireEvent.change(state, { target: { value: visitWorkStatus(status) } })
+    expect(screen.getAllByRole('link', { name: 'Ver detalle' })).not.toHaveLength(0)
     const filter = screen.getByLabelText('Fecha de ejecución o programación desde')
     fireEvent.change(filter, { target: { value: '2026-10-08' } })
     expect(screen.queryAllByRole('link', { name: 'Ver detalle' }).length > 0).toBe(

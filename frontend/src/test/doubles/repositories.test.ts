@@ -1,18 +1,21 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createMockRepositories } from './repositories'
 import { readDatabase, writeDatabase, validateDatabase } from './storage'
 import { createFixtures } from './fixtures'
 import { localEvidenceRepository } from './evidence'
 import { validateFiles } from '../../services/evidence'
-import { dateBucket, dayOffset, inDateRange, localDate } from '../../utils/dates'
+import { dateBucket, dayOffset, inDateRange, localDate, operationDate } from '../../utils/dates'
 import { readConfig } from '../../app/config'
 const repos = createMockRepositories()
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-10-09T02:54:01.233Z'))
   localStorage.clear()
   sessionStorage.clear()
   repos.demo!.setScenario('normal')
 })
+afterEach(() => vi.useRealTimers())
 async function login(id = 1) {
   return repos.auth.login({ kind: 'demo', userId: id })
 }
@@ -191,7 +194,7 @@ it('creación, programación, reasignación y resolución se ven entre roles', a
   await repos.tickets.schedule(
     ticket.id,
     1,
-    new Date(Date.now() - 60000).toISOString(),
+    operationDate(),
     'Media',
     'Cambio de disponibilidad del técnico.',
   )
@@ -230,6 +233,32 @@ it('visibilidad por tienda y rol, programación valida fecha y técnico', async 
   await expect(repos.tickets.schedule(104, 999, dayOffset(0), 'Alta', '')).rejects.toMatchObject({
     code: 'validation',
   })
+})
+it.each([
+  ['2026-10-09T02:54:01.233Z', '2026-10-07', '2026-10-08'],
+  ['2026-10-09T05:00:00Z', '2026-10-08', '2026-10-09'],
+  ['2027-01-01T02:00:00Z', '2026-12-30', '2026-12-31'],
+])('rechaza ayer y permite programar/iniciar hoy en Lima a %s', async (at, yesterday, today) => {
+  vi.setSystemTime(new Date(at))
+  await login(3)
+  expect(createFixtures().contracts[0].startDate).toBe(`${today.slice(0, 7)}-01`)
+  await expect(repos.tickets.schedule(104, 1, yesterday, 'Alta', '')).rejects.toMatchObject({
+    code: 'validation',
+  })
+  await expect(repos.tickets.schedule(104, 1, dayOffset(-1), 'Alta', '')).rejects.toMatchObject({
+    code: 'validation',
+  })
+  const scheduled = await repos.tickets.schedule(104, 1, today, 'Alta', '')
+  expect(operationDate(new Date(scheduled.scheduledAt!))).toBe(today)
+  await login()
+  const store = await repos.stores.get(scheduled.storeId)
+  const started = await repos.visits.start(scheduled.visitId!, {
+    ...store,
+    accuracy: 8,
+    capturedAt: Date.now(),
+  })
+  expect(started.startedAt).toBe(new Date(at).toISOString())
+  expect(started.status).toBe('in_progress')
 })
 it('latencia cancelable, error recuperable, vacío y datos inválidos', async () => {
   await login()

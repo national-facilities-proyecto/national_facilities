@@ -1,10 +1,11 @@
 export function localDate(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
-export function dayOffset(days: number): string {
-  const date = new Date()
-  date.setDate(date.getDate() + days)
-  return `${localDate(date)}T10:00:00`
+export function dayOffset(days: number, today = new Date()): string {
+  // Fixtures use Peru's calendar, with an explicit offset instead of the host's clock.
+  const date = new Date(`${operationDate(today)}T10:00:00-05:00`)
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString()
 }
 export function dateBucket(value: string, today = new Date()): 'late' | 'today' | 'future' {
   const day = operationDate(new Date(value))

@@ -10,7 +10,7 @@ import type {
   Specialty,
   ClientSpecialty,
 } from '../../types/models'
-import { dayOffset, localDate } from '../../utils/dates'
+import { dayOffset, operationDate } from '../../utils/dates'
 export type MockDatabase = {
   version: 1
   users: User[]
@@ -252,7 +252,7 @@ export function createFixtures(): MockDatabase {
         id: 1,
         clientId: 1,
         templateId: 1,
-        startDate: `${localDate().slice(0, 7)}-01`,
+        startDate: `${operationDate().slice(0, 7)}-01`,
         endDate: '',
         monthlyVisits: 1,
         monthlyInterventions: 2,
