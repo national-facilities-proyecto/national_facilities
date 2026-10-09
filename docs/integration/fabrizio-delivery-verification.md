@@ -44,13 +44,13 @@ usan la API real y PostgreSQL aislado; cámara/GPS y proveedor de mapa se simula
 únicamente en pruebas. Capturas e informes se generan en
 `frontend/test-results/` y `frontend/playwright-report/` (ignorados por Git).
 
-## Diferencia encontrada en el traspaso
+## Decisión confirmada sobre el plazo del formulario
 
-El traspaso menciona cinco minutos para documentar resultados. El código de
-`main`, sus contratos HTTP y sus tests ya describen un formulario sin ese plazo.
-Esta entrega conserva el comportamiento existente; se solicitó aclaración a
-Fabrizio sobre la decisión del equipo. No se reintroduce un temporizador dentro
-de estas correcciones.
+Fabrizio confirmó el 2026-10-09 que se eliminó el límite de cinco minutos para
+documentar resultados y que debe conservarse el comportamiento actual. El
+formulario de checklists y tickets continúa sin ese plazo, como ya describen el
+código de `main`, sus contratos HTTP y sus tests. La referencia del traspaso quedó
+desactualizada; esta aclaración está cerrada.
 
 ## Prueba en Android físico
 

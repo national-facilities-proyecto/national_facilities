@@ -1,10 +1,10 @@
 # Registro de decisiones de negocio
 
-Actualizado el 2026-10-02. El usuario confirmó las reglas de ejecución, reserva, contratos, mínimo por tienda, asignaciones y reasignación. Aplazó expresamente el SLA y excluyó la importación de ejecuciones anteriores al lanzamiento.
+Actualizado el 2026-10-09. Fabrizio confirmó que se eliminó el límite de cinco minutos del formulario y que debe conservarse el comportamiento actual. Las decisiones anteriores sobre ejecución, reserva, contratos, asignaciones y SLA se conservan como registro histórico, sujetas a las confirmaciones posteriores.
 
 ## Fuentes y precedencia
 
-1. El encargo actual prevalece: dos etapas, cinco minutos desde primera apertura en ambos orígenes, recuperación servidor, galería permitida y excepciones tiempo/GPS distintas.
+1. El encargo actual prevalece: dos etapas, formulario sin límite de cinco minutos en ambos orígenes, recuperación servidor y galería permitida. La confirmación de Fabrizio del 2026-10-09 sustituye las instrucciones históricas sobre ese plazo.
 2. Se revisó el código/documentos de `feature/sprint1-alex-frontend`, los ADR y contratos frontend.
 3. `docs/gestion/` no existe en este checkout. Se consultaron sin incorporar archivos los seis PDF de `f5db8b88e18a13e16e22ce3fb11682698538508f`: mapa de procesos v1.2, acta, SLA, SLO, matriz y plan de riesgos. Son orientación, no reglas automáticamente adoptadas.
 4. Fixtures/mocks describen UI previa, no autoridad contractual. Ninguna otra rama se mezcló.
@@ -22,13 +22,14 @@ Los documentos de referencia proponen cámara exclusiva, plazos y contingencias 
   cobertura National conserva sus reglas actuales.
 - Los duplicados existentes se informan mediante `audit_integrity`, sin decidir
   automáticamente qué cuenta debe perder la asignación.
+- Se eliminó el límite de cinco minutos para documentar resultados en checklists
+  y tickets; se conserva el formulario sin ese plazo, tal como funciona en `main`.
 
-El traspaso describe cinco minutos para documentar resultados, mientras que el
-código y los contratos de la versión actual de `main` ya funcionan sin ese plazo.
-Se conserva la implementación actual y se solicitó aclaración al usuario. Las
-decisiones históricas de abajo deben leerse junto con los cambios posteriores.
+La referencia a cinco minutos en el traspaso quedó desactualizada. Este punto está
+confirmado y cerrado; las decisiones históricas de abajo deben leerse junto con
+los cambios posteriores.
 
-## Decisiones confirmadas el 2026-10-02
+## Decisiones confirmadas el 2026-10-02 (registro histórico)
 
 - Estados operativos de checklist y ticket: **Pendiente → En proceso → Finalizado**. Una justificación enviada pasa a **En revisión**, a cargo del supervisor de National Facilities (rol API `account_supervisor`, dentro de su cartera).
 - Vencer el formulario abre automáticamente el cuadro de justificación; no añade un estado operativo “formulario vencido”. El plazo sigue siendo cinco minutos desde la primera apertura, separado del inicio del trabajo.
