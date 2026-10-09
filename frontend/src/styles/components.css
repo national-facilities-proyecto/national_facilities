@@ -181,6 +181,7 @@
   }
   .nf-list {
     @apply my-5 grid min-w-0 gap-3;
+    grid-template-columns: minmax(0, 1fr);
   }
   .nf-list > h2 {
     @apply mt-3 text-xl font-semibold;
@@ -285,6 +286,11 @@
   }
   .nf-body {
     @apply min-w-0;
+  }
+  .nf-map-legend {
+    margin-top: 12px;
+    color: #4d5c70;
+    font-size: 0.8125rem;
   }
   .nf-topbar {
     @apply sticky top-0 z-20 flex min-h-16 items-center justify-between gap-2 border-b border-slate-300 bg-white px-3 py-2 sm:px-6;
@@ -426,10 +432,12 @@
     @apply rounded-xl border border-dashed border-slate-400 bg-slate-50 p-5 text-center;
   }
   .nf-timeline {
-    @apply grid list-none gap-5;
+    @apply grid min-w-0 list-none gap-5;
+    grid-template-columns: minmax(0, 1fr);
   }
   .nf-timeline li {
-    @apply border-l-4 border-brand-800 pl-4;
+    @apply min-w-0 border-l-4 border-brand-800 pl-4;
+    overflow-wrap: anywhere;
   }
   .nf-metrics {
     @apply grid gap-4 sm:grid-cols-2 xl:grid-cols-4;
@@ -577,7 +585,7 @@ textarea::placeholder {
     @apply border-slate-500 bg-slate-50 text-brand-950;
   }
   .nf-exception {
-    @apply rounded-xl border border-slate-200 bg-white p-4 sm:p-5;
+    @apply min-w-0 rounded-xl border border-slate-200 bg-white p-4 sm:p-5;
   }
   .nf-exception > header {
     @apply mb-4 flex flex-wrap items-center justify-between gap-3;

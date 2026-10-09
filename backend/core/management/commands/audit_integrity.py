@@ -1,7 +1,8 @@
 import json
 from django.core.management.base import BaseCommand
 from django.db.models import Count, Q
-from core.models import Visita, RespuestaItem, Evidencia, Contrato
+from core.models import Visita, RespuestaItem, Evidencia, Contrato, AsignacionTienda
+from core.permissions import rol_de
 
 
 class Command(BaseCommand):
@@ -18,7 +19,14 @@ class Command(BaseCommand):
                     continue
                 if (not contract.fecha_fin or other.fecha_inicio <= contract.fecha_fin) and (not other.fecha_fin or contract.fecha_inicio <= other.fecha_fin):
                     overlaps.append([contract.pk, other.pk])
+        store_supervisors = {}
+        for assignment in AsignacionTienda.objects.filter(activo=True, usuario__is_active=True).select_related("usuario__rol").order_by("usuario_id"):
+            if rol_de(assignment.usuario) == "store_supervisor":
+                store_supervisors.setdefault(assignment.tienda_id, []).append(assignment.usuario_id)
+        multiple_supervisors = [{"storeId": store_id, "userIds": user_ids}
+            for store_id, user_ids in sorted(store_supervisors.items()) if len(user_ids) > 1]
         result = {"duplicateAnswers": duplicates, "multipleActiveTicketVisits": repeated_visits,
+                  "multipleActiveStoreSupervisors": multiple_supervisors,
                   "overlappingContracts": overlaps, "legacyVisits": list(Visita.objects.filter(tienda_snapshot={}).values_list("pk", flat=True)),
                   "legacyEvidence": list(Evidencia.objects.filter(Q(autor__isnull=True) | Q(mime_type="")).values_list("pk", flat=True)),
                   "unrecordedClaims": list(Visita.objects.filter(origen="checklist", vigente=True, estado="programada",

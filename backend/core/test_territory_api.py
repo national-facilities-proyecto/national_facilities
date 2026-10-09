@@ -181,7 +181,7 @@ class TerritoryAPITests(TestCase):
             with self.subTest(ids=ids):
                 response = self.mutate("admin/usuarios/", {**self.user_payload("store_supervisor"), "storeIds": ids})
                 self.assertEqual(response.status_code, 400, response.data)
-        response = self.mutate("admin/usuarios/", {**self.user_payload("store_supervisor"), "storeIds": [self.north.pk]})
+        response = self.mutate("admin/usuarios/", {**self.user_payload("store_supervisor"), "storeIds": [self.south.pk]})
         self.assertEqual(response.status_code, 201, response.data)
 
     def test_administrator_requires_no_coverage(self):

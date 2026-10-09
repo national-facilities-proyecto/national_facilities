@@ -53,6 +53,25 @@ function userFields() {
   })
 }
 
+it('rechaza espacios en el usuario con error asociado al campo antes de confirmar', async () => {
+  const { save } = await form('users')
+  userFields()
+  fireEvent.change(screen.getByLabelText('Rol'), { target: { value: 'administrator' } })
+  for (const username of ['new tech', ' new-tech', 'new-tech ', 'new\u00a0tech']) {
+    fireEvent.change(screen.getByLabelText('Usuario de acceso'), { target: { value: username } })
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar cambios' }))
+    expect(screen.getByLabelText('Usuario de acceso')).toHaveAttribute('aria-invalid', 'true')
+    expect(
+      screen.getAllByText('El nombre de usuario no puede contener espacios.'),
+    ).not.toHaveLength(0)
+    expect(screen.queryByRole('button', { name: 'Confirmar y guardar' })).not.toBeInTheDocument()
+  }
+  expect(save).not.toHaveBeenCalled()
+  fireEvent.change(screen.getByLabelText('Usuario de acceso'), { target: { value: 'new-tech' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Revisar cambios' }))
+  expect(screen.getByRole('button', { name: 'Confirmar y guardar' })).toBeInTheDocument()
+})
+
 it('filtra zonas de tienda por cliente y limpia la selección al cambiar cliente', async () => {
   const { client, zone } = await form('stores')
   const select = screen.getByLabelText('Zona')

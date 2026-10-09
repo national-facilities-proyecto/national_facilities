@@ -125,6 +125,8 @@ class PasswordView(APIView):
         password = data["password"]
         if password != data["confirmation"]:
             raise ValidationError({"confirmation": "Las contraseñas no coinciden."})
+        if user.check_password(password):
+            raise ValidationError({"password": "La nueva contraseña debe ser diferente de la contraseña actual."})
         try:
             validate_password(password, user)
         except DjangoValidationError as exc:

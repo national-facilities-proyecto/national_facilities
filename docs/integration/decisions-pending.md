@@ -11,6 +11,23 @@ Actualizado el 2026-10-02. El usuario confirmó las reglas de ejecución, reserv
 
 Los documentos de referencia proponen cámara exclusiva, plazos y contingencias con mocks ya reemplazados por instrucciones actuales. La propuesta SLA tiene puntos pendientes y mezcla soporte de plataforma con ejemplos de mantenimiento.
 
+## Correcciones confirmadas por Fabrizio el 2026-10-09
+
+- El cambio obligatorio de contraseña inicial debe rechazar la contraseña vigente.
+- Los nombres de usuario no admiten espacios; se rechazan con un mensaje explícito,
+  conservando el texto para que el administrador lo corrija.
+- Cada supervisor MASS tiene una tienda. Cada tienda admite como máximo un
+  supervisor MASS con usuario y asignación activos; se valida también al editar,
+  cambiar de rol o reactivar. Las cuentas inactivas no ocupan la tienda. La
+  cobertura National conserva sus reglas actuales.
+- Los duplicados existentes se informan mediante `audit_integrity`, sin decidir
+  automáticamente qué cuenta debe perder la asignación.
+
+El traspaso describe cinco minutos para documentar resultados, mientras que el
+código y los contratos de la versión actual de `main` ya funcionan sin ese plazo.
+Se conserva la implementación actual y se solicitó aclaración al usuario. Las
+decisiones históricas de abajo deben leerse junto con los cambios posteriores.
+
 ## Decisiones confirmadas el 2026-10-02
 
 - Estados operativos de checklist y ticket: **Pendiente → En proceso → Finalizado**. Una justificación enviada pasa a **En revisión**, a cargo del supervisor de National Facilities (rol API `account_supervisor`, dentro de su cartera).

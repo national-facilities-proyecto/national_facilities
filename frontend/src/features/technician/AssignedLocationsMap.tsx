@@ -22,8 +22,8 @@ const icon = L.divIcon({
   iconAnchor: [17, 34],
 })
 const positionIcon = L.divIcon({
-  className: 'nf-marker',
-  html: '<span aria-hidden="true">●</span>',
+  className: 'nf-marker nf-marker--position',
+  html: '<span aria-hidden="true"></span>',
   iconSize: [34, 34],
   iconAnchor: [17, 17],
 })
@@ -64,18 +64,21 @@ function StoreLabel({ store }: { store: MapLocation }) {
     />
   )
 }
-function Bounds({ stores }: { stores: MapLocation[] }) {
+function Bounds({ stores, position }: { stores: MapLocation[]; position?: [number, number] }) {
   const map = useMap()
   useEffect(() => {
     if (stores.length)
       map.fitBounds(
-        stores.map((store) => [store.latitude, store.longitude]),
-        { padding: [32, 32], maxZoom: 15 },
+        [
+          ...stores.map((store): [number, number] => [store.latitude, store.longitude]),
+          ...(position ? [position] : []),
+        ],
+        { padding: [32, 32], maxZoom: 15, animate: false },
       )
     const observer = new ResizeObserver(() => map.invalidateSize())
     observer.observe(map.getContainer())
     return () => observer.disconnect()
-  }, [map, stores])
+  }, [map, stores, position])
   return null
 }
 export function OpenFreeMapLayer({
@@ -164,7 +167,7 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           <OpenFreeMapLayer key={attempt} onReady={ready} onError={error} />
           <AttributionControl prefix="OpenFreeMap | © OpenStreetMap contributors" />
           <ZoomControl position="bottomright" />
-          <Bounds stores={stores} />
+          <Bounds stores={stores} position={position} />
           {stores.map((store) => (
             <Marker
               key={store.id}
@@ -204,6 +207,9 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           ))}
           {position && (
             <Marker position={position} icon={positionIcon} title="Tu ubicación">
+              <Tooltip permanent direction="right" offset={[16, 0]} className="nf-map-label">
+                Tu ubicación
+              </Tooltip>
               <Popup>Tu ubicación</Popup>
             </Marker>
           )}
@@ -232,6 +238,7 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           </div>
         )}
       </div>
+      <p className="nf-map-legend">Tiendas: icono de local. Tu ubicación: punto azul.</p>
       {message && <p role="status">{message}</p>}
     </section>
   )

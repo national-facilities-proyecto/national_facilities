@@ -17,6 +17,11 @@ Base `/api`, JSON camelCase y barra final. Django/DRF es la autoridad de autoriz
 
 Antes del cambio inicial solo se permiten identidad, cambio de contraseña y logout. El guard React complementa la restricción del servidor. Un rol válido no concede acceso a tiendas ajenas: se requieren asignaciones activas, propiedad y técnico vigente según el recurso. El administrador gestiona catálogos; no ejecuta como técnico.
 
+La contraseña nueva debe ser diferente de la vigente, también en el primer acceso
+obligatorio. Repetirla devuelve HTTP 400 con error en `password`; conserva la
+contraseña, el estado de inicialización y la versión de sesión. Un cambio válido
+mantiene la emisión de una nueva sesión y la revocación de las anteriores.
+
 ## Operaciones y errores
 
 Las mutaciones JSON requieren `Idempotency-Key` (1–100 caracteres). La clave pertenece al usuario y vincula ruta+huella del payload. Misma operación devuelve el recurso actual sin repetir efectos; reutilizar la clave con otro contenido/ruta devuelve 409. La transacción almacena operación y efecto juntos.
@@ -138,6 +143,19 @@ Almacenamiento duradero: volumen local o bucket GCS privado con ADC. La URL púb
 ## Administración e indicadores
 
 CRUD con permisos de administrador: `admin/usuarios,tiendas,clientes,contratos,plantillas`. `admin/items-plantilla` permite lectura; edición de ítems se hace anidada en plantilla y conserva snapshots/versiones. Usuario nuevo requiere username, password, nombre/correo, rol permitido, actividad y storeIds; contraseña pasa validadores Django. No puede desactivar ni degradar su propia cuenta administrativa. Borrados con historial protegido devuelven conflicto; se permite desactivar.
+
+`username` rechaza espacios y otros caracteres de separación, incluidos los de
+inicio y fin, con error explícito en el campo; mantiene longitud máxima, caracteres
+permitidos y unicidad. El formulario conserva el valor escrito para corregirlo.
+
+Cada supervisor MASS (`store_supervisor`) tiene exactamente una tienda. Cada
+tienda admite como máximo un supervisor MASS con usuario y asignación activos.
+La API valida altas, cambios de tienda/rol y reactivaciones dentro de una
+transacción con bloqueo de tienda; una tienda ocupada devuelve HTTP 400 en
+`storeIds` sin guardar cambios parciales. Una cuenta inactiva no reserva la tienda.
+Editar el supervisor vigente conserva su propia asignación; la cobertura National
+no está sujeta a esta exclusividad. `audit_integrity` informa duplicados existentes
+en `multipleActiveStoreSupervisors` sin modificar usuarios ni historial.
 
 GET dashboard/, reportes/ y reportes/exportar/ son de supervisor de cuenta, con period=YYYY-MM-01 y clientId opcional autorizado. El selector conserva todos los clientes de la cartera al filtrar uno. Cumplimiento preventivo usa cuotas mensuales y finales aceptados; pendientes no cuentan. `risks` devuelve una fila por tienda: `storeId,store,clientId,client,completed,required,missing`. El mínimo es dos atenciones de tickets por tienda/mes, además del checklist. Se cuentan tickets con visita vigente finalizada y fecha de resolución aceptada en el período, aunque fueran reportados antes. El mínimo de la bolsa publicada conserva su snapshot. CSV identifica contrato/período/cuota y distingue los cuatro timestamps, tres duraciones, estado y ambas excepciones. SLA está aplazado por el usuario; `sla=null` y la UI lo presenta pendiente de definición.
 

@@ -1,4 +1,5 @@
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.validators import UnicodeUsernameValidator
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q, Prefetch, prefetch_related_objects
@@ -264,7 +265,22 @@ class RoleField(serializers.Field):
         return Rol.objects.get_or_create(nombre=names[value])[0]
 
 
+class UsernameField(serializers.CharField):
+    def to_internal_value(self, data):
+        if isinstance(data, str) and any(char.isspace() for char in data):
+            raise serializers.ValidationError("El nombre de usuario no puede contener espacios.")
+        return super().to_internal_value(data)
+
+
 class UsuarioSerializer(serializers.ModelSerializer):
+    username = UsernameField(
+        max_length=150,
+        trim_whitespace=False,
+        validators=[
+            UnicodeUsernameValidator(message="Usa letras, números o los caracteres @ . + - _ en el nombre de usuario."),
+            UniqueValidator(queryset=Usuario.objects.all(), message="Ya existe un usuario con este nombre de acceso."),
+        ],
+    )
     name = serializers.CharField(source="first_name", max_length=150)
     role = RoleField(source="rol")
     active = serializers.BooleanField(source="is_active")
@@ -390,6 +406,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
         coverage = validated_data.pop("coverages", [])
         password = validated_data.pop("password")
         user = Usuario(**validated_data)
+        self.check_store_supervisor(user, stores)
         user.set_password(password)
         user.save()
         self.assign(
@@ -423,6 +440,13 @@ class UsuarioSerializer(serializers.ModelSerializer):
             stores_changed = False
         if next_role not in ("technician", "account_supervisor"):
             coverage = []
+        self.check_store_supervisor(
+            instance,
+            stores if stores is not None else list(
+                instance.tiendas_asignadas.filter(activo=True)
+                .values_list("tienda_id", flat=True)
+            ),
+        )
         old_pairs = set(
             instance.coberturas.filter(activo=True).values_list("cliente_id", "zona_id")
         )
@@ -444,6 +468,21 @@ class UsuarioSerializer(serializers.ModelSerializer):
         if coverage is not None:
             self.assign_coverages(instance, coverage)
         return instance
+
+    def check_store_supervisor(self, user, stores):
+        if not user.is_active or rol_de(user) != "store_supervisor":
+            return
+        ids = [store.pk if isinstance(store, Tienda) else store for store in stores]
+        # El bloqueo de tienda serializa altas, reasignaciones y reactivaciones.
+        # No basta con consultar antes del save: dos solicitudes pueden ver la tienda libre.
+        list(Tienda.objects.select_for_update().filter(pk__in=ids).order_by("pk"))
+        assignments = AsignacionTienda.objects.filter(
+            tienda_id__in=ids, activo=True, usuario__is_active=True
+        ).exclude(usuario_id=user.pk).select_related("usuario__rol")
+        if any(rol_de(assignment.usuario) == "store_supervisor" for assignment in assignments):
+            raise serializers.ValidationError({
+                "storeIds": "La tienda ya está asignada a un supervisor de tienda activo."
+            })
 
     def assign(self, user, stores):
         ids = [s.pk for s in stores]
