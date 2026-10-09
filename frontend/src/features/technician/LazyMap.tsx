@@ -21,6 +21,7 @@ export function LazyMap(props: { stores: MapLocation[] }) {
               title="Cargando mapa"
               description="Preparando tus ubicaciones asignadas."
             />
+            <p className="nf-map-legend">Tiendas: icono de local. Tu ubicación: punto azul.</p>
           </section>
         }
       >

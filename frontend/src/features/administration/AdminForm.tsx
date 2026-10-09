@@ -74,6 +74,10 @@ export function AdminForm({
     const id = original?.id ?? 0
     const text = (name: string) => values[name]?.trim() ?? ''
     const num = (name: string) => Number(values[name])
+    if (kind === 'users' && /\s/u.test(values.username ?? '')) {
+      const message = 'El nombre de usuario no puede contener espacios.'
+      throw new AppError('validation', message, { username: [message] })
+    }
     for (const field of fields[kind])
       required(field.optional || text(field.name), `Completa ${field.label}.`)
     if (kind === 'users') {
@@ -345,6 +349,7 @@ export function AdminForm({
               <legend>Tienda del supervisor</legend>
               <Select
                 label="Tienda asignada"
+                errors={fieldErrors.storeIds}
                 required
                 value={storeIds[0] ?? ''}
                 onChange={(event) =>
