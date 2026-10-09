@@ -1,4 +1,5 @@
-import { useId } from 'react'
+import { useId, useState } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -22,19 +23,48 @@ export function Input({
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & { label: string; errors?: string[] }) {
   const id = useId()
+  const [showPassword, setShowPassword] = useState(false)
+  const isPassword = props.type === 'password'
+  const visibilityLabel = `${showPassword ? 'Ocultar' : 'Mostrar'} contraseña: ${label}`
   const describedBy =
     [props['aria-describedby'], errors?.length ? `${id}-error` : undefined]
       .filter(Boolean)
       .join(' ') || undefined
+  const input = (
+    <input
+      id={id}
+      {...props}
+      type={isPassword && showPassword ? 'text' : props.type}
+      aria-invalid={errors?.length ? true : props['aria-invalid']}
+      aria-describedby={describedBy}
+    />
+  )
   return (
     <div className="nf-field">
       <label htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        {...props}
-        aria-invalid={errors?.length ? true : props['aria-invalid']}
-        aria-describedby={describedBy}
-      />
+      {isPassword ? (
+        <div className="nf-password-input">
+          {input}
+          <button
+            type="button"
+            className="nf-password-toggle"
+            aria-label={visibilityLabel}
+            title={visibilityLabel}
+            aria-controls={id}
+            aria-pressed={showPassword}
+            disabled={props.disabled}
+            onClick={() => setShowPassword((shown) => !shown)}
+          >
+            {showPassword ? (
+              <EyeOff size={20} aria-hidden="true" />
+            ) : (
+              <Eye size={20} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      ) : (
+        input
+      )}
       {errors?.length ? (
         <small id={`${id}-error`} role="alert">
           {errors.join(' ')}
