@@ -372,6 +372,19 @@ test('administración: ocho secciones y formularios visibles en escritorio y mó
     ]) {
       await page.setViewportSize(size)
       await page.getByRole('button', { name: 'Crear registro', exact: true }).click()
+      if (kind === 'templates') {
+        await expect(page).toHaveURL(/\/admin\/templates\/new$/)
+        await expect(
+          page.getByRole('heading', { name: 'Nueva plantilla', exact: true }),
+        ).toBeVisible()
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+        ).toBe(true)
+        await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+        await expect(page).toHaveURL(/\/admin\/templates$/)
+        continue
+      }
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
       const bounds = await dialog.boundingBox()

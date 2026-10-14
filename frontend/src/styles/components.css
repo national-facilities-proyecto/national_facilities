@@ -97,6 +97,74 @@
   .nf-filters-title {
     @apply flex items-center gap-2;
   }
+  .nf-template-editor {
+    @apply min-w-0;
+  }
+  .nf-template-back {
+    @apply mb-4 inline-flex min-h-11 items-center gap-2 font-semibold text-brand-950 underline;
+  }
+  .nf-template-form {
+    @apply grid min-w-0 gap-5;
+  }
+  .nf-template-form > .nf-card {
+    @apply m-0;
+  }
+  .nf-template-metadata {
+    @apply grid min-w-0 items-end gap-4 grid-cols-2 md:grid-cols-[minmax(0,1fr)_10rem_auto];
+  }
+  .nf-template-name {
+    @apply col-span-2 min-w-0 md:col-span-1;
+  }
+  .nf-template-metadata > .nf-check {
+    @apply my-0 justify-self-end;
+  }
+  .nf-template-items {
+    @apply grid min-w-0 gap-3;
+  }
+  .nf-template-items legend {
+    @apply text-lg font-semibold text-slate-900;
+  }
+  .nf-template-items__hint {
+    @apply mb-1 text-sm text-slate-600;
+  }
+  .nf-template-item {
+    @apply grid min-w-0 items-start gap-3 rounded-xl border border-slate-300 bg-white p-4 shadow-card sm:grid-cols-[minmax(0,1fr)_auto];
+  }
+  .nf-template-item__content {
+    @apply min-w-0;
+  }
+  .nf-template-item__options {
+    @apply mt-2 flex flex-wrap gap-x-5;
+  }
+  .nf-template-item__options .nf-check {
+    @apply my-0;
+  }
+  .nf-template-item__order {
+    @apply flex gap-2 sm:pt-7;
+  }
+  .nf-template-item__order .nf-button {
+    @apply w-11 px-0;
+  }
+  .nf-template-actions {
+    @apply sticky bottom-0 z-10 mt-4 flex flex-wrap items-center justify-end gap-3 rounded-t-xl border border-slate-300 bg-white p-3 shadow-xl sm:p-4;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+  .nf-template-actions .nf-button:first-child {
+    @apply mr-auto;
+  }
+  .nf-template-review-items {
+    @apply grid gap-3;
+  }
+  .nf-template-review-items li {
+    @apply flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-300 bg-white p-4;
+  }
+  .nf-template-review-items strong {
+    @apply min-w-0 break-words;
+    overflow-wrap: anywhere;
+  }
+  .nf-template-review-items li > div {
+    @apply flex flex-wrap gap-2;
+  }
   .nf-list-filters {
     @apply my-4 rounded-xl border border-slate-300 bg-white p-3;
   }

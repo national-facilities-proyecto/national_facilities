@@ -31,6 +31,7 @@ const ReviewList = lazy(() => import('./pages/TechnicalSupervisorChecklistsPage'
 const PendingReviews = lazy(() => import('./pages/PendingReviewsPage'))
 const Review = lazy(() => import('./pages/TechnicalSupervisorChecklistDetailPage'))
 const Admin = lazy(() => import('./features/administration/AdministrationPage'))
+const TemplateEditor = lazy(() => import('./features/administration/TemplateEditorPage'))
 const Reports = lazy(() => import('./pages/ReportsPage'))
 function Root() {
   const location = useLocation()
@@ -161,7 +162,11 @@ const router = createBrowserRouter([
               },
               {
                 element: <RoleGuard allowed={['administrator']} />,
-                children: [{ path: '/admin/:kind', element: <Admin /> }],
+                children: [
+                  { path: '/admin/templates/new', element: <TemplateEditor /> },
+                  { path: '/admin/templates/:id/edit', element: <TemplateEditor /> },
+                  { path: '/admin/:kind', element: <Admin /> },
+                ],
               },
             ],
           },

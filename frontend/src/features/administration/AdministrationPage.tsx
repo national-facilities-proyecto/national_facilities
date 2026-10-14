@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { ListFilter } from 'lucide-react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
@@ -33,6 +33,7 @@ export default function AdministrationPage() {
   )
 }
 function AdminList({ kind }: { kind: AdminKind }) {
+  const navigate = useNavigate()
   const repos = useRepositories()
   const [editing, setEditing] = useState<Entity | 'new' | null>(null)
   const [userName, setUserName] = useState('')
@@ -72,7 +73,14 @@ function AdminList({ kind }: { kind: AdminKind }) {
         description="Administración de catálogos y configuración de la operación."
       />
       <QueryFeedback query={query} />
-      <Button onClick={() => setEditing('new')}>Crear registro</Button>
+      <Button
+        onClick={() => {
+          if (kind === 'templates') void navigate('/admin/templates/new')
+          else setEditing('new')
+        }}
+      >
+        Crear registro
+      </Button>
       {(kind === 'specialties' || kind === 'clientSpecialties') && (
         <p>
           <Link to="/admin/specialties">Catálogo global</Link> ·{' '}
@@ -160,7 +168,13 @@ function AdminList({ kind }: { kind: AdminKind }) {
           {
             label: 'Acción',
             render: (row) => (
-              <Button variant="secondary" onClick={() => setEditing(row)}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (kind === 'templates') void navigate(`/admin/templates/${row.id}/edit`)
+                  else setEditing(row)
+                }}
+              >
                 Editar
               </Button>
             ),
