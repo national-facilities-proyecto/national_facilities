@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthProvider'
+import { useInactivityLogout } from '../features/auth/useInactivityLogout'
 import { navigation } from '../app/navigation'
 import { ProfileMenu } from '../components/ProfileMenu'
 import { Button } from '../components/ui'
@@ -11,6 +12,7 @@ import { PageLoadingState } from '../components/feedback/PageLoadingState'
 import logo from '../assets/national-facilities-logo.png'
 export default function PortalLayout() {
   const { session } = useAuth()
+  useInactivityLogout()
   const [open, setOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const location = useLocation()
