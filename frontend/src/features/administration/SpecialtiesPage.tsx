@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useBeforeUnload, useBlocker } from 'react-router-dom'
+import { CircleCheck, X } from 'lucide-react'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
@@ -45,6 +46,7 @@ function Workspace({ initial }: { initial: Data }) {
   const [pending, setPending] = useState<(() => void) | null>(null)
   const client = data.clients.find((item) => item.id === Number(clientId))
   const enabled = data.specialties.filter((item) => item.active)
+  const selectedCount = enabled.filter((item) => selected.includes(item.id)).length
   const baseline = data.relations
     .filter((row) => row.clientId === Number(clientId) && row.active)
     .map((row) => row.categoryId)
@@ -122,9 +124,7 @@ function Workspace({ initial }: { initial: Data }) {
           .filter((row) => row.clientId === client.id && row.active)
           .map((row) => row.categoryId),
       )
-      setMessage(
-        `Se actualizaron las especialidades disponibles para las tiendas de ${client.name}.`,
-      )
+      setMessage(`Especialidades de ${client.name} actualizadas correctamente.`)
     } catch (cause) {
       setError(
         `${completed ? `Se ${completed === 1 ? 'guardó 1 cambio' : `guardaron ${completed} cambios`}. Quedan cambios pendientes; puedes reintentar. ` : ''}${errorMessage(cause)}`,
@@ -169,7 +169,21 @@ function Workspace({ initial }: { initial: Data }) {
         </Button>
       </div>
       {error && <Alert>{error}</Alert>}
-      {message && <p role="status">{message}</p>}
+      {message && (
+        <div className="nf-specialty-notification">
+          <CircleCheck size={24} aria-hidden="true" />
+          <p role="status" aria-atomic="true">
+            {message}
+          </p>
+          <Button
+            variant="secondary"
+            aria-label="Cerrar confirmación"
+            onClick={() => setMessage('')}
+          >
+            <X size={20} aria-hidden="true" />
+          </Button>
+        </div>
+      )}
       {tab === 'client' ? (
         <Card>
           <h2>Especialidades por cliente</h2>
@@ -199,35 +213,67 @@ function Workspace({ initial }: { initial: Data }) {
                 Selecciona las especialidades que podrán utilizar los supervisores de las tiendas de{' '}
                 <strong>{client.name}</strong>.
               </p>
-              <p>
-                {enabled.filter((item) => selected.includes(item.id)).length} de {enabled.length}{' '}
-                especialidades seleccionadas{dirty ? ' · Cambios sin guardar' : ' · Guardado'}
+              <p aria-live="polite" aria-atomic="true">
+                {selectedCount} de {enabled.length} especialidades seleccionadas
+                {dirty ? ' · Cambios sin guardar' : ' · Guardado'}
               </p>
               {!enabled.length ? (
                 <p>
                   No hay especialidades activas. Crea o activa una en Catálogo de especialidades.
                 </p>
               ) : (
-                <fieldset className="nf-specialty-options" disabled={busy}>
-                  <legend>Especialidades disponibles</legend>
-                  {enabled.map((item) => (
-                    <label className="nf-check" key={item.id}>
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(item.id)}
-                        onChange={(event) => {
-                          setSelected((current) =>
-                            event.target.checked
-                              ? [...current, item.id]
-                              : current.filter((id) => id !== item.id),
-                          )
-                          setMessage('')
-                        }}
-                      />
-                      {item.name}
-                    </label>
-                  ))}
-                </fieldset>
+                <>
+                  <div
+                    className="nf-actions"
+                    role="group"
+                    aria-label="Selección rápida de especialidades"
+                  >
+                    <Button
+                      variant="secondary"
+                      disabled={busy || selectedCount === enabled.length}
+                      onClick={() => {
+                        setSelected((current) => [
+                          ...new Set([...current, ...enabled.map((item) => item.id)]),
+                        ])
+                        setMessage('')
+                      }}
+                    >
+                      Seleccionar todas
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={busy || selectedCount === 0}
+                      onClick={() => {
+                        setSelected((current) =>
+                          current.filter((id) => !enabled.some((item) => item.id === id)),
+                        )
+                        setMessage('')
+                      }}
+                    >
+                      Desmarcar todas
+                    </Button>
+                  </div>
+                  <fieldset className="nf-specialty-options" disabled={busy}>
+                    <legend>Especialidades disponibles</legend>
+                    {enabled.map((item) => (
+                      <label className="nf-check" key={item.id}>
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(item.id)}
+                          onChange={(event) => {
+                            setSelected((current) =>
+                              event.target.checked
+                                ? [...current, item.id]
+                                : current.filter((id) => id !== item.id),
+                            )
+                            setMessage('')
+                          }}
+                        />
+                        {item.name}
+                      </label>
+                    ))}
+                  </fieldset>
+                </>
               )}
               {enabled.length > 0 && !enabled.some((item) => selected.includes(item.id)) && (
                 <p role="status">

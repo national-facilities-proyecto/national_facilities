@@ -34,3 +34,12 @@ Verificación local, octubre de 2026:
 
 Las pruebas de escritura se ejecutan en `nf_integration`, puerto 55433, sin
 utilizar la base local del usuario ni la aplicación desplegada.
+
+Mejora posterior: botones «Seleccionar todas» y «Desmarcar todas» para las
+especialidades globalmente activas, con contador actualizado y guardado explícito.
+La confirmación de éxito aparece en una tarjeta verde fija y se puede cerrar;
+permanece visible aunque se haya desplazado la página hasta el botón Guardar.
+Las cinco pruebas específicas comprueban además que no se muestre éxito antes
+de completar el guardado y que los controles se bloqueen mientras se guarda.
+Playwright verifica selección masiva y confirmación dentro de la pantalla a
+320 y 1440 px.

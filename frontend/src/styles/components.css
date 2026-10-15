@@ -1,4 +1,17 @@
 @layer components {
+  .nf-specialty-notification {
+    @apply fixed right-4 z-40 flex items-start gap-3 rounded-xl border border-emerald-700 bg-emerald-50 p-4 text-emerald-950 shadow-lg;
+    bottom: max(1rem, env(safe-area-inset-bottom));
+    width: min(440px, calc(100% - 2rem));
+  }
+  .nf-specialty-notification > svg {
+    flex-shrink: 0;
+    margin-top: 0.5rem;
+  }
+  .nf-specialty-notification p {
+    flex: 1;
+    margin-block: 0.5rem;
+  }
   .nf-specialty-options {
     display: grid;
     gap: 0.75rem;

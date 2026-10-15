@@ -36,7 +36,7 @@ it('selecciona explícitamente el cliente y conserva las selecciones si se cance
   await screen.findByRole('dialog', { name: 'Cambios sin guardar' })
   fireEvent.click(screen.getByRole('button', { name: 'Seguir editando' }))
   fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
-  await screen.findByText(/Se actualizaron las especialidades/)
+  await screen.findByText(/actualizadas correctamente/)
   expect(save).toHaveBeenCalledWith('clientSpecialties', {
     id: 2,
     clientId: 1,
@@ -60,7 +60,7 @@ it('explica un guardado parcial y al reintentar guarda únicamente los cambios p
   expect(screen.getByLabelText('Climatización')).not.toBeChecked()
   expect(screen.getByLabelText('Eléctrico')).not.toBeChecked()
   fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
-  await screen.findByText(/Se actualizaron las especialidades/)
+  await screen.findByText(/actualizadas correctamente/)
   expect(save).toHaveBeenCalledTimes(3)
   expect(save.mock.calls[2]).toEqual([
     'clientSpecialties',
@@ -109,7 +109,7 @@ it('conserva cambios ajenos en especialidades que el administrador no modificó'
   })
   save.mockClear()
   fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
-  await screen.findByText(/Se actualizaron las especialidades/)
+  await screen.findByText(/actualizadas correctamente/)
   expect(save).toHaveBeenCalledTimes(1)
   expect(save).toHaveBeenCalledWith('clientSpecialties', {
     id: 1,
@@ -118,4 +118,37 @@ it('conserva cambios ajenos en especialidades que el administrador no modificó'
     active: false,
   })
   expect(screen.getByLabelText('Eléctrico')).not.toBeChecked()
+})
+
+it('permite selección masiva sin guardar automáticamente y confirma solo al terminar el guardado', async () => {
+  const { save } = await setup()
+  fireEvent.change(screen.getByLabelText('Cliente'), { target: { value: '1' } })
+  expect(screen.getByRole('button', { name: 'Seleccionar todas' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Desmarcar todas' }))
+  expect(screen.getByText(/0 de 4 especialidades seleccionadas/)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Desmarcar todas' })).toBeDisabled()
+  expect(save).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Seleccionar todas' }))
+  expect(screen.getByText(/4 de 4 especialidades seleccionadas/)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Desmarcar todas' }))
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  save.mockImplementationOnce(async (_kind, entity) => {
+    await gate
+    return entity
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+  expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Seleccionar todas' })).toBeDisabled()
+  expect(screen.queryByText(/actualizadas correctamente/)).not.toBeInTheDocument()
+  release()
+  await screen.findByText(/actualizadas correctamente/)
+  expect(save).toHaveBeenCalledTimes(4)
+  expect(screen.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Cerrar confirmación' }))
+  expect(screen.queryByText(/actualizadas correctamente/)).not.toBeInTheDocument()
 })
