@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import { useAuth } from '../features/auth/AuthProvider'
@@ -15,6 +15,8 @@ export default function PortalLayout() {
   useInactivityLogout()
   const [open, setOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const sidebar = useRef<HTMLElement>(null)
+  const topbar = useRef<HTMLElement>(null)
   const location = useLocation()
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1024px)')
@@ -24,10 +26,12 @@ export default function PortalLayout() {
     media.addEventListener('change', resize)
     return () => media.removeEventListener('change', resize)
   }, [])
+  useEffect(() => {
+    if (sidebar.current) sidebar.current.inert = !sidebarOpen
+    if (!sidebarOpen)
+      topbar.current?.querySelector<HTMLButtonElement>('[aria-label="Abrir menú lateral"]')?.focus()
+  }, [sidebarOpen])
   if (!session) return null
-  const hasCollapsibleSidebar = ['technician', 'store_supervisor', 'administrator'].includes(
-    session.user.role,
-  )
   const items = navigation[session.user.role]
   const links = items.map((item) => (
     <NavLink key={item.to} to={item.to} end onClick={() => setOpen(false)}>
@@ -35,32 +39,33 @@ export default function PortalLayout() {
     </NavLink>
   ))
   return (
-    <div
-      className={`nf-shell ${hasCollapsibleSidebar && !sidebarOpen ? 'nf-shell--sidebar-collapsed' : ''}`}
-    >
+    <div className={`nf-shell ${!sidebarOpen ? 'nf-shell--sidebar-collapsed' : ''}`}>
       <a className="nf-skip" href="#main-content">
         Saltar al contenido
       </a>
       <aside
-        className={`nf-sidebar ${hasCollapsibleSidebar && !sidebarOpen ? 'nf-sidebar--collapsed' : ''}`}
+        ref={sidebar}
+        id="portal-sidebar"
+        aria-hidden={!sidebarOpen}
+        className={`nf-sidebar ${!sidebarOpen ? 'nf-sidebar--collapsed' : ''}`}
       >
         <div className="nf-sidebar__header">
           <p>Portal de mantenimiento</p>
-          {hasCollapsibleSidebar && (
-            <Button
-              variant="secondary"
-              className="hidden lg:inline-flex"
-              aria-label="Cerrar menú lateral"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <X aria-hidden="true" size={20} />
-            </Button>
-          )}
+          <Button
+            variant="secondary"
+            className="hidden lg:inline-flex"
+            aria-label="Cerrar menú lateral"
+            aria-controls="portal-sidebar"
+            aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen(false)}
+          >
+            <X aria-hidden="true" size={20} />
+          </Button>
         </div>
         <nav aria-label="Navegación principal">{links}</nav>
       </aside>
       <div className="nf-body">
-        <header className="nf-topbar">
+        <header ref={topbar} className="nf-topbar">
           <Button
             variant="secondary"
             className="lg:hidden"
@@ -69,12 +74,21 @@ export default function PortalLayout() {
           >
             <Menu aria-hidden="true" size={22} />
           </Button>
-          {hasCollapsibleSidebar && !sidebarOpen && (
+          {!sidebarOpen && (
             <Button
               variant="secondary"
               className="hidden lg:inline-flex"
               aria-label="Abrir menú lateral"
-              onClick={() => setSidebarOpen(true)}
+              aria-controls="portal-sidebar"
+              aria-expanded={sidebarOpen}
+              onClick={() => {
+                setSidebarOpen(true)
+                requestAnimationFrame(() =>
+                  sidebar.current
+                    ?.querySelector<HTMLButtonElement>('[aria-label="Cerrar menú lateral"]')
+                    ?.focus({ preventScroll: true }),
+                )
+              }}
             >
               <Menu aria-hidden="true" size={22} />
             </Button>
@@ -90,7 +104,13 @@ export default function PortalLayout() {
           </ErrorBoundary>
         </main>
       </div>
-      <Modal open={open} title="Menú de navegación" onClose={() => setOpen(false)}>
+      <Modal
+        open={open}
+        keepMounted
+        className="nf-navigation-modal"
+        title="Menú de navegación"
+        onClose={() => setOpen(false)}
+      >
         <nav className="nf-drawer" aria-label="Navegación móvil">
           {links}
         </nav>

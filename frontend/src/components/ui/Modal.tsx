@@ -8,6 +8,7 @@ export function Modal({
   onClose,
   busy = false,
   className = '',
+  keepMounted = false,
 }: {
   open: boolean
   title: string
@@ -15,6 +16,7 @@ export function Modal({
   onClose: () => void
   busy?: boolean
   className?: string
+  keepMounted?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -31,7 +33,7 @@ export function Modal({
       previous?.focus()
     }
   }, [open])
-  return open ? (
+  return open || keepMounted ? (
     <dialog
       ref={ref}
       className={`nf-modal ${className}`}

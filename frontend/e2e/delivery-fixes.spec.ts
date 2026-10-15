@@ -131,6 +131,13 @@ test.describe('Menú táctil Android', () => {
         await trigger.click()
         const menu = page.getByRole('dialog', { name: 'Menú de navegación' })
         await expect(menu).toBeVisible()
+        await menu.evaluate(async (element) => {
+          await new Promise(requestAnimationFrame)
+          await Promise.all(element.getAnimations().map((animation) => animation.finished))
+        })
+        await expect
+          .poll(() => menu.evaluate((element) => Math.round(element.getBoundingClientRect().x)))
+          .toBe(0)
         const bounds = await menu.boundingBox()
         expect(bounds!.x).toBeGreaterThanOrEqual(0)
         expect(bounds!.y).toBeGreaterThanOrEqual(0)
@@ -198,6 +205,9 @@ test.describe('Menú táctil Android', () => {
         await trigger.click()
         const menu = page.getByRole('dialog', { name: 'Menú de navegación' })
         await expect(menu).toBeVisible()
+        await expect
+          .poll(() => menu.evaluate((element) => Math.round(element.getBoundingClientRect().x)))
+          .toBe(0)
         const bounds = await menu.boundingBox()
         expect(bounds!.x).toBeGreaterThanOrEqual(0)
         expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
