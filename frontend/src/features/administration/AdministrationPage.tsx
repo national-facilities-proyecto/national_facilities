@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { ListFilter } from 'lucide-react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useRepositories } from '../../app/RepositoriesProvider'
 import { useQuery } from '../../hooks/useQuery'
 import { QueryState } from '../../components/feedback/QueryState'
@@ -19,11 +19,13 @@ import type { AdminKind } from '../../types/models'
 import { roleLabels } from '../../types/models'
 import { titles, type Entity } from './fields'
 import { AdminForm } from './AdminForm'
+import SpecialtiesPage from './SpecialtiesPage'
 
 const isKind = (value: string | undefined): value is AdminKind =>
   value !== undefined && Object.hasOwn(titles, value)
 export default function AdministrationPage() {
   const { kind } = useParams()
+  if (kind === 'specialties' || kind === 'clientSpecialties') return <SpecialtiesPage />
   return isKind(kind) ? (
     <AdminList key={kind} kind={kind} />
   ) : (
@@ -33,6 +35,7 @@ export default function AdministrationPage() {
   )
 }
 function AdminList({ kind }: { kind: AdminKind }) {
+  const navigate = useNavigate()
   const repos = useRepositories()
   const [editing, setEditing] = useState<Entity | 'new' | null>(null)
   const [userName, setUserName] = useState('')
@@ -72,13 +75,14 @@ function AdminList({ kind }: { kind: AdminKind }) {
         description="Administración de catálogos y configuración de la operación."
       />
       <QueryFeedback query={query} />
-      <Button onClick={() => setEditing('new')}>Crear registro</Button>
-      {(kind === 'specialties' || kind === 'clientSpecialties') && (
-        <p>
-          <Link to="/admin/specialties">Catálogo global</Link> ·{' '}
-          <Link to="/admin/clientSpecialties">Habilitación por cliente</Link>
-        </p>
-      )}
+      <Button
+        onClick={() => {
+          if (kind === 'templates') void navigate('/admin/templates/new')
+          else setEditing('new')
+        }}
+      >
+        Crear registro
+      </Button>
       {kind === 'users' && (
         <Card>
           <h2 className="nf-filters-title">
@@ -160,7 +164,13 @@ function AdminList({ kind }: { kind: AdminKind }) {
           {
             label: 'Acción',
             render: (row) => (
-              <Button variant="secondary" onClick={() => setEditing(row)}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (kind === 'templates') void navigate(`/admin/templates/${row.id}/edit`)
+                  else setEditing(row)
+                }}
+              >
                 Editar
               </Button>
             ),

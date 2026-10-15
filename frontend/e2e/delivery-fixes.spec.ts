@@ -131,6 +131,13 @@ test.describe('Menú táctil Android', () => {
         await trigger.click()
         const menu = page.getByRole('dialog', { name: 'Menú de navegación' })
         await expect(menu).toBeVisible()
+        await menu.evaluate(async (element) => {
+          await new Promise(requestAnimationFrame)
+          await Promise.all(element.getAnimations().map((animation) => animation.finished))
+        })
+        await expect
+          .poll(() => menu.evaluate((element) => Math.round(element.getBoundingClientRect().x)))
+          .toBe(0)
         const bounds = await menu.boundingBox()
         expect(bounds!.x).toBeGreaterThanOrEqual(0)
         expect(bounds!.y).toBeGreaterThanOrEqual(0)
@@ -198,6 +205,9 @@ test.describe('Menú táctil Android', () => {
         await trigger.click()
         const menu = page.getByRole('dialog', { name: 'Menú de navegación' })
         await expect(menu).toBeVisible()
+        await expect
+          .poll(() => menu.evaluate((element) => Math.round(element.getBoundingClientRect().x)))
+          .toBe(0)
         const bounds = await menu.boundingBox()
         expect(bounds!.x).toBeGreaterThanOrEqual(0)
         expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
@@ -365,6 +375,14 @@ test('administración: ocho secciones y formularios visibles en escritorio y mó
     'clientSpecialties',
   ]) {
     await page.goto('/admin/' + kind)
+    if (kind === 'specialties' || kind === 'clientSpecialties') {
+      await expect(page.getByLabel('Cliente', { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Catálogo de especialidades', exact: true }).click()
+      await page.getByRole('button', { name: 'Nueva especialidad', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: 'Nueva especialidad' })).toBeVisible()
+      await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+      continue
+    }
     await expect(page.getByRole('button', { name: 'Crear registro', exact: true })).toBeVisible()
     for (const size of [
       { width: 1440, height: 900 },
@@ -372,6 +390,19 @@ test('administración: ocho secciones y formularios visibles en escritorio y mó
     ]) {
       await page.setViewportSize(size)
       await page.getByRole('button', { name: 'Crear registro', exact: true }).click()
+      if (kind === 'templates') {
+        await expect(page).toHaveURL(/\/admin\/templates\/new$/)
+        await expect(
+          page.getByRole('heading', { name: 'Nueva plantilla', exact: true }),
+        ).toBeVisible()
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+        ).toBe(true)
+        await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+        await expect(page).toHaveURL(/\/admin\/templates$/)
+        continue
+      }
       const dialog = page.getByRole('dialog')
       await expect(dialog).toBeVisible()
       const bounds = await dialog.boundingBox()

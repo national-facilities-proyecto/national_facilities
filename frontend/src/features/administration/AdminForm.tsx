@@ -8,6 +8,7 @@ import { normalizeRole } from '../auth/session'
 import { AppError, errorMessage, required } from '../../services/errors'
 import { titles, getAdminFields, type Entity } from './fields'
 import { TemplateItems } from './TemplateItems'
+import { buildTemplate } from './templateDraft'
 import { pastedCoordinatePair, storeCoordinate } from './storeCoordinates'
 
 export function AdminForm({
@@ -183,21 +184,7 @@ export function AdminForm({
         active,
       }
     }
-    required(
-      tasks.length && tasks.every((task) => task.title.trim()),
-      'Agrega al menos un ítem con descripción.',
-    )
-    required(
-      Number.isInteger(num('version')) && num('version') > 0,
-      'La versión debe ser un entero positivo.',
-    )
-    return {
-      id,
-      name: text('name'),
-      version: num('version'),
-      active,
-      tasks: tasks.map((task, index) => ({ ...task, order: index + 1 })),
-    }
+    return buildTemplate(id, text('name'), values.version ?? '', active, tasks)
   }
   return (
     <Modal

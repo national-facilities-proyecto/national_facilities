@@ -480,6 +480,7 @@ test('administración crea una plantilla real y conserva sus tareas al recargar'
   await page.getByLabel('Ítem 1', { exact: true }).fill('Verify persisted component')
   await page.getByRole('button', { name: 'Revisar cambios' }).click()
   await page.getByRole('button', { name: 'Confirmar y guardar' }).click()
+  await expect(page).toHaveURL(/\/admin\/templates$/)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.reload()
   await expect(page.getByText(new RegExp(name)).first()).toBeVisible()

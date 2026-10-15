@@ -155,7 +155,7 @@ export default function SupervisorNewTicketPage() {
         {query.data.catalogs.categories.length === 0 && (
           <Alert>
             No hay especialidades habilitadas para el cliente de tu tienda. Solicita al
-            administrador que las active en Especialidades → Habilitación por cliente.
+            administrador que las habilite en Especialidades → Por cliente.
           </Alert>
         )}
         {query.data.temporary.length > 0 && (
