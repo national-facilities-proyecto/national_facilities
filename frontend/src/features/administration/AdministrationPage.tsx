@@ -19,11 +19,13 @@ import type { AdminKind } from '../../types/models'
 import { roleLabels } from '../../types/models'
 import { titles, type Entity } from './fields'
 import { AdminForm } from './AdminForm'
+import SpecialtiesPage from './SpecialtiesPage'
 
 const isKind = (value: string | undefined): value is AdminKind =>
   value !== undefined && Object.hasOwn(titles, value)
 export default function AdministrationPage() {
   const { kind } = useParams()
+  if (kind === 'specialties' || kind === 'clientSpecialties') return <SpecialtiesPage />
   return isKind(kind) ? (
     <AdminList key={kind} kind={kind} />
   ) : (
@@ -81,12 +83,6 @@ function AdminList({ kind }: { kind: AdminKind }) {
       >
         Crear registro
       </Button>
-      {(kind === 'specialties' || kind === 'clientSpecialties') && (
-        <p>
-          <Link to="/admin/specialties">Catálogo global</Link> ·{' '}
-          <Link to="/admin/clientSpecialties">Habilitación por cliente</Link>
-        </p>
-      )}
       {kind === 'users' && (
         <Card>
           <h2 className="nf-filters-title">

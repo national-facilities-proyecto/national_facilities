@@ -365,6 +365,14 @@ test('administración: ocho secciones y formularios visibles en escritorio y mó
     'clientSpecialties',
   ]) {
     await page.goto('/admin/' + kind)
+    if (kind === 'specialties' || kind === 'clientSpecialties') {
+      await expect(page.getByLabel('Cliente', { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: 'Catálogo de especialidades', exact: true }).click()
+      await page.getByRole('button', { name: 'Nueva especialidad', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: 'Nueva especialidad' })).toBeVisible()
+      await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+      continue
+    }
     await expect(page.getByRole('button', { name: 'Crear registro', exact: true })).toBeVisible()
     for (const size of [
       { width: 1440, height: 900 },
