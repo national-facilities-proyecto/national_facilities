@@ -1,0 +1,27 @@
+name: APF3 Prettier Diff
+on:
+  push:
+    branches:
+      - fix/apf3-openfreemap-resilience-20261104
+    paths:
+      - .github/workflows/apf3-prettier-debug.yml
+  workflow_dispatch:
+jobs:
+  prettier_diff:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - name: Show exactly the format corrections needed
+        working-directory: frontend
+        run: |
+          npx prettier --write src/features/technician/AssignedLocationsMap.tsx src/features/technician/AssignedLocationsMap.test.tsx src/features/technician/mapProviderAdapter.test.ts
+          git diff -- src/features/technician/AssignedLocationsMap.tsx src/features/technician/AssignedLocationsMap.test.tsx src/features/technician/mapProviderAdapter.test.ts
