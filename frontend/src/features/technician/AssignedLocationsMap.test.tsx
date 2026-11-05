@@ -80,7 +80,6 @@ it('informa error recuperable cuando el mapa supera el timeout', async () => {
   expect(onError).toHaveBeenCalledWith('Tiempo de espera agotado al cargar el mapa base.')
 })
 
-
 it('no reinstala el mapa si el proveedor carga después de desmontar la vista', async () => {
   let resolveLayer!: (layer: typeof mapMocks.layer) => void
   const pending = new Promise<typeof mapMocks.layer>((resolve) => {
