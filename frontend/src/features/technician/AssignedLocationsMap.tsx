@@ -70,10 +70,7 @@ function Bounds({ stores, position }: { stores: MapLocation[]; position?: [numbe
   useEffect(() => {
     if (stores.length)
       map.fitBounds(
-        [
-          ...stores.map((store) => toProviderLatLng(store)!),
-          ...(position ? [position] : []),
-        ],
+        [...stores.map((store) => toProviderLatLng(store)!), ...(position ? [position] : [])],
         { padding: [32, 32], maxZoom: 15, animate: false },
       )
     const observer = new ResizeObserver(() => map.invalidateSize())
