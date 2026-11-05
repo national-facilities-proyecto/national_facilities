@@ -30,6 +30,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_extensions",
@@ -110,6 +111,7 @@ from corsheaders.defaults import default_headers
 CORS_ALLOW_HEADERS = [*default_headers, "idempotency-key"]
 
 REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "core.api_errors.api_exception_handler",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "core.authentication.SessionAuthentication",
@@ -126,4 +128,12 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
+}
+
+# Contrato vivo para auditoría APF3. Las reglas de autorización de la API no cambian.
+SPECTACULAR_SETTINGS = {
+    "TITLE": "National Facilities V2 API",
+    "DESCRIPTION": "API de operaciones de National Facilities V2.",
+    "VERSION": "2.0.0",
+    "OAS_VERSION": "3.0.3",
 }
