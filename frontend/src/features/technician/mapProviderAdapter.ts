@@ -3,7 +3,7 @@
  * Aísla el contrato de coordenadas del dominio respecto a Leaflet/OpenFreeMap.
  * No envía credenciales ni datos de los usuarios al proveedor de tiles.
  */
-export type ProviderLatLng = readonly [latitude: number, longitude: number]
+export type ProviderLatLng = [latitude: number, longitude: number]
 
 export function toProviderLatLng(location: {
   latitude: unknown
