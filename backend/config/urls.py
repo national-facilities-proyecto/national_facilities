@@ -12,6 +12,7 @@ Class-based views
     2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
 Including another URLconf
     1. Import the include() function: from django.urls import include, path
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from core.admin import inspection_site
@@ -20,6 +21,9 @@ from django.urls import include, path
 urlpatterns = [
     path("admin/", inspection_site.urls),
     path("api/", include("core.urls")),
+    # Documentación OpenAPI. Se entrega el esquema sin exigir sesión.
+    path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
 ]
 
 # Evidencias privadas: se sirven únicamente por endpoints autenticados.
