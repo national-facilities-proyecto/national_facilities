@@ -1,0 +1,14 @@
+# APF3: CPU limits for the AWS Compose profile.
+# Non-secret override to be validated against /opt/national-facilities/repo/compose.aws.yml.
+# This file does NOT deploy anything and does NOT alter the memory limits already enforced in AWS.
+# Preview: docker compose -f compose.aws.yml -f docs/apf3/compose.aws.cpu-limits.override.yml config
+# Apply only after backup, review and demo approval (recreating containers may interrupt service).
+services:
+  db:
+    cpus: "0.50"
+  backend:
+    cpus: "1.00"
+  claim-expiry:
+    cpus: "0.25"
+  frontend:
+    cpus: "0.50"
