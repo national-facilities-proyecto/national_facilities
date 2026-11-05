@@ -112,7 +112,7 @@ export function OpenFreeMapLayer({
         layer = createdLayer
         layer.once('load', () => {
           clearTimeout(timer)
-          if (!failed) onReady()
+          if (!failed && !disposed) onReady()
         })
         layer.once('tileerror', () => {
           clearTimeout(timer)
