@@ -79,3 +79,24 @@ it('informa error recuperable cuando el mapa supera el timeout', async () => {
 
   expect(onError).toHaveBeenCalledWith('Tiempo de espera agotado al cargar el mapa base.')
 })
+
+it('no reinstala el mapa si el proveedor carga después de desmontar la vista', async () => {
+  let resolveLayer!: (layer: typeof mapMocks.layer) => void
+  const pending = new Promise<typeof mapMocks.layer>((resolve) => {
+    resolveLayer = resolve
+  })
+  mapMocks.createLayer.mockReturnValueOnce(pending)
+  const onReady = vi.fn()
+  const onError = vi.fn()
+  const view = render(<OpenFreeMapLayer onReady={onReady} onError={onError} timeoutMs={1000} />)
+  view.unmount()
+
+  await act(async () => {
+    resolveLayer(mapMocks.layer)
+    await pending
+  })
+
+  expect(mapMocks.layer.addTo).not.toHaveBeenCalled()
+  expect(onReady).not.toHaveBeenCalled()
+  expect(onError).not.toHaveBeenCalled()
+})

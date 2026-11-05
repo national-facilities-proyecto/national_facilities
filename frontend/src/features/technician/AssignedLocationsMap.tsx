@@ -15,6 +15,7 @@ import type { MapLocation } from './mapLocation'
 import { Button, LoadingState } from '../../components/ui'
 import { requestLocation } from '../geolocation/location'
 import { createOpenFreeMapLayer } from './openFreeMap'
+import { toProviderLatLng } from './mapProviderAdapter'
 const icon = L.divIcon({
   className: 'nf-marker',
   html: '<span aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10V21H21V10M2 10L4 3H20L22 10ZM9 21V14H15V21"/></svg></span>',
@@ -69,10 +70,7 @@ function Bounds({ stores, position }: { stores: MapLocation[]; position?: [numbe
   useEffect(() => {
     if (stores.length)
       map.fitBounds(
-        [
-          ...stores.map((store): [number, number] => [store.latitude, store.longitude]),
-          ...(position ? [position] : []),
-        ],
+        [...stores.map((store) => toProviderLatLng(store)!), ...(position ? [position] : [])],
         { padding: [32, 32], maxZoom: 15, animate: false },
       )
     const observer = new ResizeObserver(() => map.invalidateSize())
@@ -94,8 +92,9 @@ export function OpenFreeMapLayer({
   useEffect(() => {
     let layer: L.Layer | undefined
     let failed = false
+    let disposed = false
     const fail = (message: string) => {
-      if (failed) return
+      if (failed || disposed) return
       failed = true
       onError(message)
     }
@@ -105,10 +104,12 @@ export function OpenFreeMapLayer({
     )
     void createOpenFreeMapLayer()
       .then((createdLayer) => {
+        // Un import asíncrono tardío no debe instalar capas sobre un mapa desmontado.
+        if (disposed || failed) return
         layer = createdLayer
         layer.once('load', () => {
           clearTimeout(timer)
-          if (!failed) onReady()
+          if (!failed && !disposed) onReady()
         })
         layer.once('tileerror', () => {
           clearTimeout(timer)
@@ -121,6 +122,7 @@ export function OpenFreeMapLayer({
         fail('No se pudo inicializar el mapa base.')
       })
     return () => {
+      disposed = true
       clearTimeout(timer)
       layer?.remove()
     }
@@ -134,7 +136,9 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
   const [message, setMessage] = useState('')
   const ready = useCallback(() => setState('ready'), [])
   const error = useCallback(() => setState('error'), [])
-  if (!stores.length) return null
+  // ACL: solo coordenadas válidas llegan al proveedor de mapas.
+  const validStores = stores.filter((store) => toProviderLatLng(store) !== null)
+  if (!validStores.length) return null
   return (
     <section className="nf-card" aria-label="Mapa de tiendas">
       <div className="nf-map-heading">
@@ -157,7 +161,7 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
       </div>
       <div className="nf-map">
         <MapContainer
-          center={[stores[0].latitude, stores[0].longitude]}
+          center={toProviderLatLng(validStores[0])!}
           zoom={13}
           className="nf-map-container"
           attributionControl={false}
@@ -167,11 +171,11 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           <OpenFreeMapLayer key={attempt} onReady={ready} onError={error} />
           <AttributionControl prefix="OpenFreeMap | © OpenStreetMap contributors" />
           <ZoomControl position="bottomright" />
-          <Bounds stores={stores} position={position} />
-          {stores.map((store) => (
+          <Bounds stores={validStores} position={position} />
+          {validStores.map((store) => (
             <Marker
               key={store.id}
-              position={[store.latitude, store.longitude]}
+              position={toProviderLatLng(store)!}
               icon={icon}
               title={store.name}
               eventHandlers={{
