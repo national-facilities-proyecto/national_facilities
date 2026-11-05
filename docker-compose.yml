@@ -3,6 +3,11 @@ services:
     image: postgres:16-alpine
     container_name: nf_db
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -21,6 +26,11 @@ services:
     build: ./backend
     container_name: nf_backend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 768M
     command: python manage.py runserver 0.0.0.0:8000
     env_file:
       - .env
@@ -36,6 +46,11 @@ services:
   claim-expiry:
     build: ./backend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
     command: python manage.py expire_checklist_claims --watch --interval 60
     env_file:
       - .env
@@ -49,6 +64,11 @@ services:
     build: ./frontend
     container_name: nf_frontend
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
     environment:
       VITE_DATA_SOURCE: api
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}
