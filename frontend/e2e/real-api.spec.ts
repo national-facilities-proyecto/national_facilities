@@ -185,9 +185,27 @@ test('ticket: reporte, programación, reasignación, atención y resolución ent
   await page
     .getByLabel('Fotografías del reporte', { exact: true })
     .setInputFiles({ name: 'original.jpg', mimeType: 'image/jpeg', buffer: jpeg })
-  await expect(page.getByRole('button', { name: 'Reintentar carga', exact: true })).toBeVisible()
+  const retryUpload = page.getByRole('button', { name: 'Reintentar carga', exact: true })
+  await expect(retryUpload).toBeVisible()
   await context.setOffline(false)
-  await page.getByRole('button', { name: 'Reintentar carga', exact: true }).click()
+  // La carga puede reanudarse mientras la red vuelve: no hacer clic en un
+  // botón que ya se desmontó. La comprobación posterior exige persistencia.
+  await expect
+    .poll(
+      async () => {
+        if (!(await retryUpload.isVisible())) return 'recovered'
+        if (await retryUpload.isEnabled()) {
+          try {
+            await retryUpload.click({ timeout: 1200 })
+          } catch {
+            // El botón puede desaparecer mientras se completa la carga.
+          }
+        }
+        return (await retryUpload.isVisible()) ? 'retrying' : 'recovered'
+      },
+      { timeout: 15000 },
+    )
+    .toBe('recovered')
   await expect(page.locator('.nf-evidence img')).toHaveCount(1)
   await page.reload()
   await expect(page.locator('.nf-evidence img')).toHaveCount(1)
