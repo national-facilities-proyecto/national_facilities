@@ -1,4 +1,6 @@
 import L from 'leaflet'
+import { openFreeMapProvider, type MapProvider } from './mapProviders'
+import { attachVectorTileTransport, type VectorMapLayer } from './vectorTileTransport'
 
 type VectorTileStyle =
   | L.PathOptions
@@ -15,10 +17,8 @@ type VectorGridFactory = {
       rendererFactory: unknown
       vectorTileLayerStyles: Record<string, VectorTileStyle>
     },
-  ) => L.Layer
+  ) => VectorMapLayer
 }
-
-const vectorTilesUrl = 'https://tiles.openfreemap.org/planet/latest/{z}/{x}/{y}.pbf'
 
 const disabledLayers = Object.fromEntries(
   [
@@ -52,27 +52,39 @@ const vectorTileLayerStyles: Record<string, VectorTileStyle> = {
 
 let vectorGrid: Promise<VectorGridFactory> | undefined
 
-export function createOpenFreeMapLayer() {
+export function createVectorMapLayer(provider: MapProvider) {
   if (!vectorGrid) {
     window.L = L
-    vectorGrid = import('leaflet.vectorgrid').then(() => {
-      const leaflet = L as typeof L & {
-        canvas: typeof L.canvas & { tile?: unknown }
-        vectorGrid?: VectorGridFactory
-      }
-      if (!leaflet.vectorGrid || !leaflet.canvas.tile)
-        throw new Error('Leaflet.VectorGrid no se pudo inicializar.')
-      return leaflet.vectorGrid
-    })
+    vectorGrid = import('leaflet.vectorgrid')
+      .then(() => {
+        const leaflet = L as typeof L & {
+          canvas: typeof L.canvas & { tile?: unknown }
+          vectorGrid?: VectorGridFactory
+        }
+        if (!leaflet.vectorGrid || !leaflet.canvas.tile)
+          throw new Error('Leaflet.VectorGrid no se pudo inicializar.')
+        return leaflet.vectorGrid
+      })
+      .catch((error: unknown) => {
+        vectorGrid = undefined
+        throw error
+      })
   }
   return vectorGrid.then((factory) =>
-    factory.protobuf(vectorTilesUrl, {
-      interactive: false,
-      maxNativeZoom: 14,
-      maxZoom: 18,
-      rendererFactory: (L as typeof L & { canvas: typeof L.canvas & { tile: unknown } }).canvas
-        .tile,
-      vectorTileLayerStyles,
-    }),
+    attachVectorTileTransport(
+      factory.protobuf(provider.url, {
+        interactive: false,
+        maxNativeZoom: 14,
+        maxZoom: 18,
+        rendererFactory: (L as typeof L & { canvas: typeof L.canvas & { tile: unknown } }).canvas
+          .tile,
+        vectorTileLayerStyles,
+      }),
+      provider.url,
+    ),
   )
+}
+
+export function createOpenFreeMapLayer() {
+  return createVectorMapLayer(openFreeMapProvider)
 }

@@ -1,0 +1,148 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "National Facilities: isolated, optional static MVT fallback. Creates NEW resources only.",
+  "Parameters": {
+    "PriceClass": {
+      "Type": "String",
+      "Default": "PriceClass_100",
+      "AllowedValues": ["PriceClass_100", "PriceClass_200", "PriceClass_All"]
+    }
+  },
+  "Resources": {
+    "TilesBucket": {
+      "Type": "AWS::S3::Bucket",
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain",
+      "Properties": {
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "IgnorePublicAcls": true,
+          "BlockPublicPolicy": true,
+          "RestrictPublicBuckets": true
+        },
+        "OwnershipControls": { "Rules": [{ "ObjectOwnership": "BucketOwnerEnforced" }] },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [{ "ServerSideEncryptionByDefault": { "SSEAlgorithm": "AES256" } }]
+        },
+        "VersioningConfiguration": { "Status": "Enabled" },
+        "CorsConfiguration": {
+          "CorsRules": [{
+            "AllowedOrigins": ["*"],
+            "AllowedMethods": ["GET", "HEAD"],
+            "AllowedHeaders": ["*"],
+            "ExposedHeaders": ["Content-Type", "Content-Encoding", "Cache-Control", "ETag"],
+            "MaxAge": 600
+          }]
+        }
+      }
+    },
+    "OriginAccess": {
+      "Type": "AWS::CloudFront::OriginAccessControl",
+      "Properties": {
+        "OriginAccessControlConfig": {
+          "Name": { "Fn::Sub": "${AWS::StackName}-tiles-oac" },
+          "OriginAccessControlOriginType": "s3",
+          "SigningBehavior": "always",
+          "SigningProtocol": "sigv4"
+        }
+      }
+    },
+    "TilesCachePolicy": {
+      "Type": "AWS::CloudFront::CachePolicy",
+      "Properties": {
+        "CachePolicyConfig": {
+          "Name": { "Fn::Sub": "${AWS::StackName}-tiles-cache" },
+          "MinTTL": 0,
+          "DefaultTTL": 86400,
+          "MaxTTL": 31536000,
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "EnableAcceptEncodingGzip": false,
+            "EnableAcceptEncodingBrotli": false,
+            "CookiesConfig": { "CookieBehavior": "none" },
+            "HeadersConfig": { "HeaderBehavior": "none" },
+            "QueryStringsConfig": { "QueryStringBehavior": "none" }
+          }
+        }
+      }
+    },
+    "TilesHeaders": {
+      "Type": "AWS::CloudFront::ResponseHeadersPolicy",
+      "Properties": {
+        "ResponseHeadersPolicyConfig": {
+          "Name": { "Fn::Sub": "${AWS::StackName}-tiles-cors" },
+          "CorsConfig": {
+            "AccessControlAllowCredentials": false,
+            "AccessControlAllowOrigins": { "Items": ["*"] },
+            "AccessControlAllowMethods": { "Items": ["GET", "HEAD", "OPTIONS"] },
+            "AccessControlAllowHeaders": { "Items": ["*"] },
+            "AccessControlExposeHeaders": { "Items": ["Content-Type", "Content-Encoding", "Cache-Control", "ETag"] },
+            "AccessControlMaxAgeSec": 600,
+            "OriginOverride": true
+          }
+        }
+      }
+    },
+    "TilesDistribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "Comment": "National Facilities optional map fallback",
+          "HttpVersion": "http2",
+          "IPV6Enabled": true,
+          "PriceClass": { "Ref": "PriceClass" },
+          "ViewerCertificate": { "CloudFrontDefaultCertificate": true },
+          "Origins": [{
+            "Id": "private-tiles",
+            "DomainName": { "Fn::GetAtt": ["TilesBucket", "RegionalDomainName"] },
+            "OriginAccessControlId": { "Ref": "OriginAccess" },
+            "S3OriginConfig": { "OriginAccessIdentity": "" }
+          }],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "private-tiles",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": ["GET", "HEAD", "OPTIONS"],
+            "CachedMethods": ["GET", "HEAD"],
+            "Compress": false,
+            "CachePolicyId": { "Ref": "TilesCachePolicy" },
+            "ResponseHeadersPolicyId": { "Ref": "TilesHeaders" }
+          },
+          "CustomErrorResponses": [
+            { "ErrorCode": 403, "ErrorCachingMinTTL": 10 },
+            { "ErrorCode": 404, "ErrorCachingMinTTL": 10 },
+            { "ErrorCode": 500, "ErrorCachingMinTTL": 10 },
+            { "ErrorCode": 502, "ErrorCachingMinTTL": 10 },
+            { "ErrorCode": 503, "ErrorCachingMinTTL": 10 },
+            { "ErrorCode": 504, "ErrorCachingMinTTL": 10 }
+          ]
+        }
+      }
+    },
+    "TilesBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "TilesBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Sid": "OnlyThisCloudFrontDistribution",
+            "Effect": "Allow",
+            "Principal": { "Service": "cloudfront.amazonaws.com" },
+            "Action": "s3:GetObject",
+            "Resource": { "Fn::Sub": "${TilesBucket.Arn}/*" },
+            "Condition": {
+              "StringEquals": {
+                "AWS:SourceArn": { "Fn::Sub": "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${TilesDistribution}" }
+              }
+            }
+          }]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "BucketName": { "Value": { "Ref": "TilesBucket" } },
+    "DistributionId": { "Value": { "Ref": "TilesDistribution" } },
+    "TilesUrl": { "Value": { "Fn::Join": ["", ["https://", { "Fn::GetAtt": ["TilesDistribution", "DomainName"] }, "/lima/v1/{z}/{x}/{y}.pbf"]] } }
+  }
+}

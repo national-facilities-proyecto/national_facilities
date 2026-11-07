@@ -1,9 +1,9 @@
 name: Django React PostgreSQL
 on:
   push:
-    paths: ['frontend/**', 'backend/**', '.github/workflows/frontend.yml']
+    paths: ['frontend/**', 'backend/**', 'docs/maps/**', '.github/workflows/frontend.yml']
   pull_request:
-    paths: ['frontend/**', 'backend/**', '.github/workflows/frontend.yml']
+    paths: ['frontend/**', 'backend/**', 'docs/maps/**', '.github/workflows/frontend.yml']
 permissions:
   contents: read
 jobs:
@@ -62,10 +62,12 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - run: python -m unittest discover -s ../docs/maps -p test_export_mbtiles.py -v
       - run: npm run test:coverage
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: npm run test:map:e2e
       - run: npm run build:api
       - run: node scripts/check-api-build.mjs
       - uses: actions/upload-artifact@v4

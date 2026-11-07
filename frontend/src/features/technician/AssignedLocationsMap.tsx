@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AttributionControl,
   MapContainer,
@@ -14,8 +14,12 @@ import './map.css'
 import type { MapLocation } from './mapLocation'
 import { Button, LoadingState } from '../../components/ui'
 import { requestLocation } from '../geolocation/location'
-import { createOpenFreeMapLayer } from './openFreeMap'
+import { MapBaseLayer } from './MapBaseLayer'
+import { openFreeMapProvider, type MapProvider } from './mapProviders'
 import { toProviderLatLng } from './mapProviderAdapter'
+
+// Conserva el punto de entrada utilizado por las pruebas y consumidores actuales.
+export { MapBaseLayer as OpenFreeMapLayer } from './MapBaseLayer'
 const icon = L.divIcon({
   className: 'nf-marker',
   html: '<span aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10V21H21V10M2 10L4 3H20L22 10ZM9 21V14H15V21"/></svg></span>',
@@ -79,65 +83,30 @@ function Bounds({ stores, position }: { stores: MapLocation[]; position?: [numbe
   }, [map, stores, position])
   return null
 }
-export function OpenFreeMapLayer({
-  onReady,
-  onError,
-  timeoutMs = 12000,
-}: {
-  onReady(this: void): void
-  onError(this: void, message: string): void
-  timeoutMs?: number
-}) {
-  const map = useMap()
-  useEffect(() => {
-    let layer: L.Layer | undefined
-    let failed = false
-    let disposed = false
-    const fail = (message: string) => {
-      if (failed || disposed) return
-      failed = true
-      onError(message)
-    }
-    const timer = setTimeout(
-      () => fail('Tiempo de espera agotado al cargar el mapa base.'),
-      timeoutMs,
-    )
-    void createOpenFreeMapLayer()
-      .then((createdLayer) => {
-        // Un import asíncrono tardío no debe instalar capas sobre un mapa desmontado.
-        if (disposed || failed) return
-        layer = createdLayer
-        layer.once('load', () => {
-          clearTimeout(timer)
-          if (!failed && !disposed) onReady()
-        })
-        layer.once('tileerror', () => {
-          clearTimeout(timer)
-          fail('No se pudo cargar el mapa base.')
-        })
-        layer.addTo(map)
-      })
-      .catch(() => {
-        clearTimeout(timer)
-        fail('No se pudo inicializar el mapa base.')
-      })
-    return () => {
-      disposed = true
-      clearTimeout(timer)
-      layer?.remove()
-    }
-  }, [map, onError, onReady, timeoutMs])
-  return null
-}
 export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [attempt, setAttempt] = useState(0)
   const [position, setPosition] = useState<[number, number]>()
   const [message, setMessage] = useState('')
-  const ready = useCallback(() => setState('ready'), [])
+  const [provider, setProvider] = useState<MapProvider>(openFreeMapProvider)
+  const ready = useCallback((active: MapProvider) => {
+    setProvider(active)
+    setState('ready')
+  }, [])
+  const loading = useCallback((active: MapProvider) => {
+    setProvider(active)
+    setState('loading')
+  }, [])
+  const retry = () => {
+    setState('loading')
+    setAttempt((value) => value + 1)
+  }
   const error = useCallback(() => setState('error'), [])
   // ACL: solo coordenadas válidas llegan al proveedor de mapas.
-  const validStores = stores.filter((store) => toProviderLatLng(store) !== null)
+  const validStores = useMemo(
+    () => stores.filter((store) => toProviderLatLng(store) !== null),
+    [stores],
+  )
   if (!validStores.length) return null
   return (
     <section className="nf-card" aria-label="Mapa de tiendas">
@@ -168,8 +137,8 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           scrollWheelZoom={false}
           zoomControl={false}
         >
-          <OpenFreeMapLayer key={attempt} onReady={ready} onError={error} />
-          <AttributionControl prefix="OpenFreeMap | © OpenStreetMap contributors" />
+          <MapBaseLayer key={attempt} onReady={ready} onError={error} onLoading={loading} />
+          <AttributionControl prefix={provider.attribution} />
           <ZoomControl position="bottomright" />
           <Bounds stores={validStores} position={position} />
           {validStores.map((store) => (
@@ -223,25 +192,44 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
             {state === 'loading' ? (
               <LoadingState
                 variant="map"
-                title="Cargando mapa"
+                title={provider.id === 'aws' ? 'Cargando cartografía de respaldo' : 'Cargando mapa'}
                 description="Puedes continuar desde la lista mientras se carga."
               />
             ) : (
               <>
                 <p>Mapa no disponible. Puedes continuar desde la lista de tiendas.</p>
-                <Button
-                  onClick={() => {
-                    setState('loading')
-                    setAttempt((value) => value + 1)
-                  }}
-                >
-                  Reintentar mapa
-                </Button>
+                <Button onClick={retry}>Reintentar mapa</Button>
               </>
             )}
           </div>
         )}
       </div>
+      {state === 'ready' && provider.id === 'aws' && (
+        <div role="status">
+          <p>Usando cartografía de respaldo de AWS.</p>
+          <Button variant="secondary" onClick={retry}>
+            Reintentar mapa principal
+          </Button>
+        </div>
+      )}
+      {state === 'error' && (
+        <ul aria-label="Tiendas asignadas sin mapa">
+          {validStores.map((store) => (
+            <li key={store.id}>
+              <strong>{store.name}</strong>
+              <p>{store.address}</p>
+              <a
+                className="nf-link"
+                target="_blank"
+                rel="noopener noreferrer"
+                href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}
+              >
+                Cómo llegar a {store.name}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
       <p className="nf-map-legend">Tiendas: icono de local. Tu ubicación: punto azul.</p>
       {message && <p role="status">{message}</p>}
     </section>
