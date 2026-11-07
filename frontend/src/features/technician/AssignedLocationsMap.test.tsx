@@ -9,6 +9,14 @@ const mapMocks = vi.hoisted(() => {
       listeners.set(event, callback)
       return layer
     }),
+    on: vi.fn((event: string, callback: () => void) => {
+      listeners.set(event, callback)
+      return layer
+    }),
+    off: vi.fn((event: string) => {
+      listeners.delete(event)
+      return layer
+    }),
     remove: vi.fn(),
   }
   return {
@@ -89,6 +97,7 @@ it('no reinstala el mapa si el proveedor carga después de desmontar la vista', 
   const onReady = vi.fn()
   const onError = vi.fn()
   const view = render(<OpenFreeMapLayer onReady={onReady} onError={onError} timeoutMs={1000} />)
+  await act(async () => {})
   view.unmount()
 
   await act(async () => {

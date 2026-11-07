@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
 import { scheduledMapVisit, login } from './helpers.js'
 
+// These tests delay module downloads with page.route(). Service Worker fetches
+// bypass those routes; real worker/cache coverage lives in map-tests instead.
+test.use({ serviceWorkers: 'block' })
+
 function gate() {
   let release = () => {}
   const promise = new Promise<void>((resolve) => {
@@ -29,7 +33,11 @@ for (const width of [320, 1440]) {
       await mapGate.promise
       await route.continue()
     })
-    await page.route('https://tiles.openfreemap.org/**', (route) => route.abort())
+    // Isolate chunk loading/layout from the separate GeoJSON/list failure modes.
+    // An empty, valid MVT renders the primary without external network access.
+    await page.route('https://tiles.openfreemap.org/**', (route) =>
+      route.fulfill({ contentType: 'application/x-protobuf', body: Buffer.alloc(0) }),
+    )
     await login(page)
     await expect(page.getByRole('heading', { name: 'Mis Checklist', exact: true })).toBeVisible()
     const navigation = page.getByRole('navigation', {
@@ -38,6 +46,10 @@ for (const width of [320, 1440]) {
     try {
       if (width < 1024) await page.getByRole('button', { name: 'Abrir menú' }).click()
       await navigation.getByRole('link', { name: 'Atenciones', exact: true }).click()
+      // The drawer remains displayed during its discrete closing transition.
+      // Audit the settled page, not the partially transparent menu mid-animation.
+      if (width < 1024)
+        await expect(page.locator('.nf-navigation-modal')).toHaveCSS('display', 'none')
       await expect(page.getByRole('heading', { name: 'Atenciones', exact: true })).toBeVisible()
       const loadingView = page.locator('#main-content .nf-loading--list:visible')
       await expect(loadingView).toHaveCount(1)
@@ -75,6 +87,7 @@ for (const width of [320, 1440]) {
       await page.screenshot({ path: `test-results/loading-map-${width}.png`, fullPage: true })
       mapGate.release()
       await expect(page.locator('.nf-map-container')).toBeVisible()
+      await expect(page.locator('.nf-map-status')).toHaveCount(0)
       await expect(page.getByText('Preparando tus ubicaciones asignadas.')).toHaveCount(0)
       const map = await page.locator('.nf-map-container').boundingBox()
       const mapCard = await page

@@ -1,5 +1,6 @@
 dist
 node_modules
+src/features/technician/data/lima-pilot.geojson
 coverage
 playwright-report
 test-results
