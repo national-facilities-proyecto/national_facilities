@@ -1,122 +1,85 @@
-# Evidencia de implementación y pruebas
+# Verificación de la alternativa aprobada
 
-Fecha: 2026-11-07. Rama: `feat/aws-map-fallback`, creada desde
-`origin/main` actualizado (`f2ab0835495463abb8a210f9aa4fa311b83c85bb`).
-Entorno local: Windows, Node 22.14.0, npm 10.9.2, Python 3.13, Microsoft Edge.
+Rama: `feat/local-map-assets-cache`. Se conserva el commit anterior como historia;
+el diff final retira las partes específicas del respaldo AWS. No se modifica main,
+no se ejecuta merge y no se despliega.
 
-## Resultados reales
+Fecha: 2026-11-07. Entorno: Windows, Node 22.14.0 y Microsoft Edge.
 
-| Comprobación | Resultado |
+| Comprobación | Resultado real |
 | --- | --- |
-| `npm ci` | Correcto; versiones del lockfile existentes |
-| `npm test` | 45 archivos, 300 pruebas aprobadas |
-| `npm test -- src/features/technician` | 7 archivos, 51 pruebas aprobadas (incluye cámara y coordenadas existentes) |
-| `npm run test:coverage` | 300 pruebas; umbrales existentes aprobados: statements 92.35%, branches 92.45%, functions 92.39%, lines 92.83% |
-| `npm run test:map:e2e` | 6 pruebas aprobadas, Leaflet/VectorGrid/Canvas reales en Edge |
-| `npm run typecheck` | Correcto, incluye las nuevas pruebas de navegador y su fixture |
+| `npm run test:coverage` | 46 archivos, 310 pruebas aprobadas; umbrales existentes aprobados |
+| `npm run test:map:e2e` | 7 escenarios aprobados sobre build real y Service Worker real |
+| `npm run typecheck` | Correcto |
 | `npm run lint` | Correcto |
 | `npm run format:check` | Correcto |
-| `npm run build` y `npm run build:api` | Correctos |
-| `node scripts/check-api-build.mjs` | Correcto; el bundle API no incluye fixtures/repositorio mock |
-| `python -m unittest discover -s docs/maps -p test_export_mbtiles.py -v` | 6 pruebas aprobadas |
-| Exportación y `validate-map-tiles.mjs` sobre MBTiles sintético | Correcto: 16 teselas, 15 vacías, agua y transporte decodificados |
-| `python -m json.tool docs/maps/aws-map-fallback.cloudformation.json` | JSON válido localmente |
-| `git diff --check` | Correcto |
+| `npm run build` | Correcto; emite map-assets-sw.js y excluye el fixture maptest |
+| `npm run build:api` | Correcto |
+| `node scripts/check-api-build.mjs` | Correcto; bundle API sin fixtures/repositorio mock |
 
-La configuración de cobertura existente mide módulos centrales seleccionados;
-**esos porcentajes no representan la cobertura del módulo cartográfico**.
-Los escenarios cartográficos se verifican con sus pruebas específicas unitarias
-y de navegador, conservando todas las pruebas anteriores.
+La cobertura existente mide módulos centrales seleccionados: statements 92.35%,
+branches 92.45%, functions 92.39%, lines 92.83%. Esos porcentajes **no representan
+la cobertura del worker ni del módulo cartográfico**; estos tienen sus pruebas
+específicas unitarias y de navegador. No se amplió artificialmente ese alcance.
 
-Se corrigieron durante la validación errores de tipado/lint de las pruebas,
-cierre de conexiones SQLite en Windows y actualización de la atribución:
-React Leaflet no actualiza `prefix` automáticamente, por lo que se llama a
-`setPrefix` sobre el mismo control sin remontarlo. Se elevó el overlay de carga/error
-para que sus acciones no se solapen con los controles de Leaflet.
+La prueba de viabilidad anterior verificó términos oficiales y una sola solicitud
+HEAD real a OpenFreeMap; no se descargaron áreas. Las pruebas automatizadas usan
+respuestas MVT sintéticas para no depender del proveedor. El worker y la caché
+de archivos propios son reales en Playwright, no mocks de Service Worker.
 
-## Qué demuestran las pruebas
+Se corrigió una incompatibilidad de claves debida a Vary/Origin entre peticiones
+de CSS/módulos y fetch. Las claves normalizadas de archivos estáticos no conservan
+cabeceras de solicitud. Las lecturas no reescriben ni prolongan la vida de entradas.
 
-- OpenFreeMap correcto no crea una capa AWS ni hace peticiones a ese dominio.
-- HTTP 403/404/429/500/503, error de red, cuerpo corrupto/ilegible y timeout se
-  convierten en fallos recuperables; los errores de HTTP no son falsos éxitos.
-- El principal fallido se retira y cancela antes de instalar el respaldo.
-- La carga de AWS usa el mismo renderer y estilos; se actualizan aviso y atribución.
-- Tras doble fallo no hay rondas automáticas adicionales; el reintento manual
-  comienza por el principal, incluso desde un respaldo operativo simulado.
-- Un nuevo ciclo `loading` después de estar listo también queda protegido por timeout.
-- Eventos tardíos, imports tardíos, desmontaje y solicitudes concurrentes canceladas
-  no reinstalan capas ni generan callbacks de estado sobre la vista desmontada.
-- Los marcadores de tienda y GPS, coordenadas válidas, límites, controles y objeto
-  de mapa se conservan. El fallo no vuelve a ejecutar `fitBounds`.
-- Si no queda mapa base, nombres, direcciones e indicaciones siguen accesibles
-  desde una lista independiente de visitas/checklists.
-- El exportador convierte Y de TMS a XYZ, verifica contrato de la fuente,
-  limita volumen, genera gzip determinista y evita sobrescribir salidas.
+## Alcance comprobable
 
-## Evidencia visual controlada
+- Pruebas de la política: hit, miss, fallo de red, caducidad absoluta, recuperación,
+  límites de cantidad/bytes, concurrencia, cuota, almacenamiento denegado, limpieza
+  de versiones propias y exclusión de teselas/API/HTML/Authorization.
+- Pruebas de registro: producción segura, desarrollo, contexto inseguro y error tolerado.
+- Pruebas de ciclo de mapa: carga, timeout inicial/tardío, errores, limpieza,
+  cancelación, desmontaje/import tardío y reintento sin bucles.
+- Integración de componente: identidad de mapa/marcadores, GPS, coordenadas y lista.
+- Playwright sobre build real: worker y Cache Storage reales, reutilización offline
+  de archivo propio guardado, ausencia/borrado, caducidad y recuperación online.
+- Leaflet/VectorGrid reales con HTTP, rechazo de red, PBF corrupto y timeout de
+  OpenFreeMap simulados; tiendas accesibles y recuperación manual del principal.
 
-Estas capturas usan tiendas ficticias y teselas MVT sintéticas interceptadas por
-Playwright. El fondo gris corresponde al fixture mínimo, **no a cartografía real de
-Lima ni a un error de AWS**. Sirven para revisar estados, controles y marcadores.
+Esto no demuestra mapas offline ni disponibilidad de teselas/zonas/zooms. No se
+activa una caché PBF personalizada: esa parte se descartó en la alternativa aprobada.
+No se cachéan HTML ni toda la cadena de dependencias; no se garantiza abrir el
+portal sin red. La suite completa E2E de negocio requiere API/BD preparadas y se
+conserva en CI; la suite de mapas no requiere backend.
 
-![Respaldo simulado cargado](screenshots/aws-fallback.png)
+## Retirado y conservado
 
-![Doble fallo simulado con lista accesible](screenshots/both-failed.png)
+Se retiran la plantilla CloudFormation, exportador MBTiles y pruebas, validador de
+dataset, capturas AWS, variable VITE_AWS_MAP_TILES_URL, build arg Docker, rama de
+selección AWS y sus escenarios específicos. Las guías de despliegue cartográfico
+se sustituyen por la explicación de almacenamiento local. El ADR-011 permanece
+como decisión histórica descartada; ADR-012 registra la alternativa aprobada.
 
-## Pendientes y límites de esta verificación
+Se mantienen todas las pruebas previas a AWS, el adaptador de coordenadas, estilos,
+correcciones del transporte, cancelación, timeouts, lista y reintento. No se cambian
+paquetes/versiones, backend, datos, usuarios, permisos ni configuración de PostgreSQL.
 
-- No se creó ni modificó ningún recurso AWS, ni se ejecutó un change set o despliegue.
-- La plantilla pasó revisión local/JSON; queda pendiente validación semántica
-  por CloudFormation en la cuenta autorizada, con IAM, cuotas y región reales.
-- No se generó el dataset real de Lima ni se verificaron sus licencias auxiliares,
-  cobertura, fidelidad visual, CORS, gzip y caché a través de un endpoint real.
-- La suite E2E completa de negocio/backend no se ejecutó localmente: este entorno
-  no tiene Django instalado ni API/BD de integración preparadas. Se mantuvo intacta
-  y el workflow existente la seguirá ejecutando, además de la nueva suite de mapas.
-- `npm ci` reportó 48 vulnerabilidades (34 moderadas, 14 altas) en el árbol existente.
-  No se aplicó `audit fix` ni se actualizaron dependencias ajenas al alcance.
-- No existe una tarea Jira suministrada para asociar; no se inventó un identificador.
+## Evidencia visual
 
-El procedimiento para completar la habilitación y validación real, costos y riesgos
-operativos está en [README](README.md).
+Captura de un fallo HTTP controlado, con tiendas ficticias y renderer Leaflet real.
+No demuestra disponibilidad offline del mapa base.
 
-## Archivos de la propuesta
+![Mapa no disponible y tiendas accesibles](screenshots/map-unavailable.png)
 
-Modificados:
+## Archivos principales
 
-- `.github/workflows/frontend.yml`
-- `docs/decisions/README.md`
-- `frontend/.env.example`
-- `frontend/Dockerfile`
-- `frontend/package.json`
-- `frontend/package-lock.json`
-- `frontend/tsconfig.app.json`
-- `frontend/tsconfig.node.json`
-- `frontend/src/features/technician/AssignedLocationsMap.tsx`
-- `frontend/src/features/technician/AssignedLocationsMap.test.tsx`
-- `frontend/src/features/technician/openFreeMap.ts`
-- `frontend/src/features/technician/map.css`
+- Nuevos: `frontend/mapAssetPlugin.ts`, `mapAssetWorker.ts`, `registerMapAssetWorker.ts`
+  y sus pruebas; `frontend/map-tests/map-cache.spec.ts`, entorno ficticio `.env.maptest`
+  y ADR-012.
+- Adaptados: Vite, Nginx, registro en `main.tsx`, configuración Playwright/CI,
+  componente/fábrica/ciclo de mapa y escenarios de integración.
+- Documentación: esta evidencia y guía de limitaciones; ADR-011 marcado descartado.
+- Retirados: herramientas, configuración y pruebas específicas de AWS detalladas arriba.
 
-Creados:
-
-- `docs/decisions/011-contingencia-cartografica-aws.md`
-- `docs/maps/README.md`
-- `docs/maps/VERIFICATION.md`
-- `docs/maps/aws-map-fallback.cloudformation.json`
-- `docs/maps/export_mbtiles.py`
-- `docs/maps/test_export_mbtiles.py`
-- `docs/maps/screenshots/aws-fallback.png`
-- `docs/maps/screenshots/both-failed.png`
-- `frontend/playwright.map.config.ts`
-- `frontend/map-tests/fixtures/map.html`
-- `frontend/map-tests/fixtures/map.tsx`
-- `frontend/map-tests/map-fallback.spec.ts`
-- `frontend/scripts/validate-map-tiles.mjs`
-- `frontend/src/features/technician/MapBaseLayer.tsx`
-- `frontend/src/features/technician/MapBaseLayer.test.tsx`
-- `frontend/src/features/technician/mapProviders.ts`
-- `frontend/src/features/technician/mapProviders.test.ts`
-- `frontend/src/features/technician/vectorTileTransport.ts`
-- `frontend/src/features/technician/vectorTileTransport.test.ts`
-- `frontend/src/features/technician/AssignedLocationsMap.fallback.test.tsx`
-- `frontend/src/types/vector-tile.d.ts`
+No se ejecutó la suite E2E completa de negocio por faltar API/BD de integración
+locales; se conserva en el workflow. No se comprobó disponibilidad de OpenFreeMap
+durante las pruebas de integración: sus respuestas están interceptadas.

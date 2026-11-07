@@ -1,31 +1,27 @@
 import { useEffect } from 'react'
 import { useMap } from 'react-leaflet'
-import { createOpenFreeMapLayer, createVectorMapLayer } from './openFreeMap'
-import { getMapProviders, type MapProvider } from './mapProviders'
+import { createOpenFreeMapLayer } from './openFreeMap'
+import { openFreeMapProvider, type MapProvider } from './mapProviders'
 import type { VectorMapLayer } from './vectorTileTransport'
-
-const configuredProviders = getMapProviders()
 
 export function MapBaseLayer({
   onReady,
   onError,
   onLoading,
   timeoutMs = 12000,
-  providers = configuredProviders,
 }: {
   onReady(this: void, provider: MapProvider): void
   onError(this: void, message: string): void
   onLoading?(this: void, provider: MapProvider): void
   timeoutMs?: number
-  providers?: readonly MapProvider[]
 }) {
   const map = useMap()
   useEffect(() => {
     let disposed = false
     let release: (() => void) | undefined
 
-    const start = (index: number) => {
-      const provider = providers[index]
+    const start = () => {
+      const provider = openFreeMapProvider
       // React Leaflet considera prefix una opción inicial. Actualizar el control
       // existente evita remontarlo y alterar su orden respecto al zoom.
       map.attributionControl?.setPrefix(provider.attribution)
@@ -47,8 +43,7 @@ export function MapBaseLayer({
         if (failed || disposed) return
         failed = true
         detach()
-        if (index + 1 < providers.length) start(index + 1)
-        else onError(message)
+        onError(message)
       }
       const loading = () => {
         if (failed || disposed) return
@@ -70,9 +65,7 @@ export function MapBaseLayer({
       void Promise.resolve()
         .then(() => {
           if (disposed || failed) return
-          return provider.id === 'openfreemap'
-            ? createOpenFreeMapLayer()
-            : createVectorMapLayer(provider)
+          return createOpenFreeMapLayer()
         })
         .then((createdLayer) => {
           if (!createdLayer) return
@@ -89,12 +82,11 @@ export function MapBaseLayer({
         })
         .catch(() => fail('No se pudo inicializar el mapa base.'))
     }
-    if (providers.length) start(0)
-    else onError('No hay proveedores cartográficos configurados.')
+    start()
     return () => {
       disposed = true
       release?.()
     }
-  }, [map, onError, onReady, onLoading, timeoutMs, providers])
+  }, [map, onError, onReady, onLoading, timeoutMs])
   return null
 }

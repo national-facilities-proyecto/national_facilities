@@ -15,10 +15,8 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command:
-      'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5175 --strictPort --mode test',
+    command: 'node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 5175 --strictPort',
     url: 'http://127.0.0.1:5175/map-tests/fixtures/map.html',
     reuseExistingServer: false,
-    env: { VITE_AWS_MAP_TILES_URL: 'https://maps.example.test/lima/v1/{z}/{x}/{y}.pbf' },
   },
 })

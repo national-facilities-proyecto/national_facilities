@@ -52,7 +52,7 @@ const vectorTileLayerStyles: Record<string, VectorTileStyle> = {
 
 let vectorGrid: Promise<VectorGridFactory> | undefined
 
-export function createVectorMapLayer(provider: MapProvider) {
+function createVectorMapLayer(provider: MapProvider) {
   if (!vectorGrid) {
     window.L = L
     vectorGrid = import('leaflet.vectorgrid')

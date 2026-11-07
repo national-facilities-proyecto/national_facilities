@@ -62,7 +62,6 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      - run: python -m unittest discover -s ../docs/maps -p test_export_mbtiles.py -v
       - run: npm run test:coverage
       - run: npm run build
       - run: npx playwright install --with-deps chromium

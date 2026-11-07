@@ -2,17 +2,11 @@ import L from 'leaflet'
 import { act, cleanup, render } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { VectorMapLayer } from './vectorTileTransport'
-import { getMapProviders, type MapProvider } from './mapProviders'
-
-const mocks = vi.hoisted(() => ({ primary: vi.fn(), backup: vi.fn(), map: {} }))
+import { openFreeMapProvider } from './mapProviders'
+const mocks = vi.hoisted(() => ({ create: vi.fn(), map: {} }))
 vi.mock('react-leaflet', () => ({ useMap: () => mocks.map }))
-vi.mock('./openFreeMap', () => ({
-  createOpenFreeMapLayer: mocks.primary,
-  createVectorMapLayer: mocks.backup,
-}))
+vi.mock('./openFreeMap', () => ({ createOpenFreeMapLayer: mocks.create }))
 import { MapBaseLayer } from './MapBaseLayer'
-
-const providers = getMapProviders('https://maps.example.org/lima/v1/{z}/{x}/{y}.pbf')
 const flush = () => act(async () => {})
 function makeLayer() {
   const layer = new L.Layer() as VectorMapLayer
@@ -21,14 +15,11 @@ function makeLayer() {
   layer.dispose = vi.fn()
   return layer
 }
-let primary: VectorMapLayer
-let backup: VectorMapLayer
+let layer: VectorMapLayer
 beforeEach(() => {
   vi.useFakeTimers()
-  primary = makeLayer()
-  backup = makeLayer()
-  mocks.primary.mockReset().mockResolvedValue(primary)
-  mocks.backup.mockReset().mockResolvedValue(backup)
+  layer = makeLayer()
+  mocks.create.mockReset().mockResolvedValue(layer)
 })
 afterEach(() => {
   cleanup()
@@ -36,188 +27,87 @@ afterEach(() => {
   vi.useRealTimers()
 })
 function setup() {
-  const onReady = vi.fn()
-  const onError = vi.fn()
-  const onLoading = vi.fn<(provider: MapProvider) => void>()
-  const props = { onReady, onError, onLoading, providers, timeoutMs: 1000 }
-  return { ...render(<MapBaseLayer {...props} />), props, onReady, onError, onLoading }
+  const props = { onReady: vi.fn(), onError: vi.fn(), onLoading: vi.fn(), timeoutMs: 1000 }
+  return { ...render(<MapBaseLayer {...props} />), ...props, props }
 }
-
-it('carga OpenFreeMap sin crear ni consultar AWS', async () => {
-  const { onReady } = setup()
+it('carga OpenFreeMap y cancela el timer al terminar', async () => {
+  const { onReady, onError } = setup()
   await flush()
   act(() => {
-    primary.fire('load')
+    layer.fire('load')
   })
   await act(async () => vi.advanceTimersByTime(60000))
-  expect(onReady).toHaveBeenCalledWith(providers[0])
-  expect(mocks.primary).toHaveBeenCalledOnce()
-  expect(mocks.backup).not.toHaveBeenCalled()
-})
-
-it('retira y cancela la capa fallida antes de instalar AWS con los mismos eventos', async () => {
-  const { onReady, onError, onLoading } = setup()
-  await flush()
-  act(() => {
-    primary.fire('tileerror')
-  })
-  await flush()
-  expect(primary.remove).toHaveBeenCalledOnce()
-  expect(primary.dispose).toHaveBeenCalledOnce()
-  expect(primary.listens('load')).toBe(false)
-  expect(primary.listens('loading')).toBe(false)
-  expect(primary.listens('tileerror')).toBe(false)
-  expect(mocks.backup).toHaveBeenCalledWith(providers[1])
-  expect(vi.mocked(primary.remove).mock.invocationCallOrder[0]).toBeLessThan(
-    vi.mocked(backup.addTo).mock.invocationCallOrder[0],
-  )
-  act(() => {
-    primary.fire('load')
-  })
-  expect(onReady).not.toHaveBeenCalled()
-  act(() => {
-    backup.fire('load')
-  })
-  expect(onReady).toHaveBeenCalledWith(providers[1])
-  expect(onLoading.mock.calls.map(([provider]) => provider.id)).toEqual(['openfreemap', 'aws'])
+  expect(onReady).toHaveBeenCalledWith(openFreeMapProvider)
   expect(onError).not.toHaveBeenCalled()
+  expect(mocks.create).toHaveBeenCalledOnce()
 })
-
-it('activa AWS tras timeout del principal y termina sin bucles si AWS tampoco responde', async () => {
-  const { onError } = setup()
-  await flush()
-  await act(async () => vi.advanceTimersByTime(1000))
-  expect(mocks.backup).toHaveBeenCalledOnce()
-  await act(async () => vi.advanceTimersByTime(1000))
-  expect(onError).toHaveBeenCalledWith('Tiempo de espera agotado al cargar el mapa base.')
-  await act(async () => vi.advanceTimersByTime(600000))
-  expect(mocks.primary).toHaveBeenCalledOnce()
-  expect(mocks.backup).toHaveBeenCalledOnce()
-  expect(backup.remove).toHaveBeenCalledOnce()
-  expect(onError).toHaveBeenCalledOnce()
-})
-
-it('termina tras errores de ambos orígenes e ignora eventos repetidos o tardíos', async () => {
+it('retira y cancela la capa fallida sin bucles ni eventos tardíos', async () => {
   const { onError, onReady } = setup()
   await flush()
   act(() => {
-    primary.fire('tileerror')
-  })
-  await flush()
-  act(() => {
-    backup.fire('tileerror')
-  })
-  act(() => {
-    primary.fire('tileerror').fire('load')
-    backup.fire('tileerror').fire('load')
+    layer.fire('tileerror').fire('load').fire('tileerror')
   })
   await act(async () => vi.advanceTimersByTime(600000))
+  expect(layer.remove).toHaveBeenCalledOnce()
+  expect(layer.dispose).toHaveBeenCalledOnce()
+  for (const event of ['load', 'loading', 'tileerror'] as const)
+    expect(layer.listens(event)).toBe(false)
   expect(onError).toHaveBeenCalledOnce()
   expect(onReady).not.toHaveBeenCalled()
-  expect(mocks.primary).toHaveBeenCalledOnce()
-  expect(mocks.backup).toHaveBeenCalledOnce()
+  expect(mocks.create).toHaveBeenCalledOnce()
 })
-
-it('detecta fallo de nuevas teselas después de estar listo y vigila su timeout', async () => {
-  const { onReady } = setup()
+it('mantiene timeout al solicitar teselas después de estar listo', async () => {
+  const { onError } = setup()
   await flush()
   act(() => {
-    primary.fire('load')
-  })
-  expect(onReady).toHaveBeenCalledWith(providers[0])
-  act(() => {
-    primary.fire('loading')
+    layer.fire('load').fire('loading')
   })
   await act(async () => vi.advanceTimersByTime(1000))
-  expect(mocks.backup).toHaveBeenCalledOnce()
-  act(() => {
-    backup.fire('load')
-  })
-  expect(onReady).toHaveBeenLastCalledWith(providers[1])
+  expect(onError).toHaveBeenCalledWith('Tiempo de espera agotado al cargar el mapa base.')
 })
-
-it('permite recuperación manual empezando otra vez por el principal', async () => {
+it('permite recuperación manual con una nueva capa del principal', async () => {
   const { rerender, props, onReady } = setup()
   await flush()
   act(() => {
-    primary.fire('tileerror')
-  })
-  await flush()
-  act(() => {
-    backup.fire('load')
+    layer.fire('tileerror')
   })
   const recovered = makeLayer()
-  mocks.primary.mockResolvedValueOnce(recovered)
-  rerender(<MapBaseLayer key="manual" {...props} />)
+  mocks.create.mockResolvedValueOnce(recovered)
+  rerender(<MapBaseLayer key="retry" {...props} />)
   await flush()
-  expect(backup.remove).toHaveBeenCalledOnce()
   act(() => {
     recovered.fire('load')
   })
-  expect(mocks.primary).toHaveBeenCalledTimes(2)
-  expect(mocks.backup).toHaveBeenCalledOnce()
-  expect(onReady).toHaveBeenLastCalledWith(providers[0])
+  expect(mocks.create).toHaveBeenCalledTimes(2)
+  expect(onReady).toHaveBeenCalledWith(openFreeMapProvider)
 })
-
-it.each(['primary', 'backup'] as const)(
-  'libera una capa %s que llega después del desmontaje',
-  async (origin) => {
-    let resolve!: (layer: VectorMapLayer) => void
-    const pending = new Promise<VectorMapLayer>((done) => {
-      resolve = done
-    })
-    mocks[origin].mockReturnValueOnce(pending)
-    const { unmount, onReady, onError } = setup()
-    await flush()
-    if (origin === 'backup') {
-      act(() => {
-        primary.fire('tileerror')
-      })
-      await flush()
-    }
-    unmount()
-    const late = makeLayer()
-    await act(async () => {
-      resolve(late)
-      await pending
-    })
-    expect(late.addTo).not.toHaveBeenCalled()
-    expect(late.dispose).toHaveBeenCalledOnce()
-    expect(late.remove).toHaveBeenCalledOnce()
-    expect(onReady).not.toHaveBeenCalled()
-    expect(onError).not.toHaveBeenCalled()
-  },
-)
-
-it('libera un import tardío del principal después de activar AWS por timeout', async () => {
-  let resolve!: (layer: VectorMapLayer) => void
-  mocks.primary.mockReturnValueOnce(
+it.each(['unmount', 'timeout'])('libera una capa tardía después de %s', async (reason) => {
+  let resolve!: (value: VectorMapLayer) => void
+  mocks.create.mockReturnValueOnce(
     new Promise<VectorMapLayer>((done) => {
       resolve = done
     }),
   )
-  const { onReady } = setup()
+  const { unmount, onReady, onError } = setup()
   await flush()
-  await act(async () => vi.advanceTimersByTime(1000))
-  const late = makeLayer()
+  if (reason === 'unmount') unmount()
+  else await act(async () => vi.advanceTimersByTime(1000))
   await act(async () => {
-    resolve(late)
+    resolve(layer)
   })
-  expect(late.addTo).not.toHaveBeenCalled()
-  expect(late.dispose).toHaveBeenCalledOnce()
-  act(() => {
-    backup.fire('load')
-  })
-  expect(onReady).toHaveBeenCalledWith(providers[1])
+  expect(layer.addTo).not.toHaveBeenCalled()
+  expect(layer.dispose).toHaveBeenCalledOnce()
+  expect(layer.remove).toHaveBeenCalledOnce()
+  expect(onReady).not.toHaveBeenCalled()
+  expect(onError).toHaveBeenCalledTimes(reason === 'timeout' ? 1 : 0)
 })
-
-it('recupera errores de inicialización y de instalación de la capa', async () => {
-  mocks.primary.mockRejectedValueOnce(new Error('import failed'))
-  backup.addTo = vi.fn(() => {
-    throw new Error('addTo failed')
-  })
+it.each(['import', 'installation'])('normaliza fallo de %s', async (stage) => {
+  if (stage === 'import') mocks.create.mockRejectedValueOnce(new Error('import failed'))
+  else
+    layer.addTo = vi.fn(() => {
+      throw new Error('addTo failed')
+    })
   const { onError } = setup()
   await flush()
   expect(onError).toHaveBeenCalledWith('No se pudo inicializar el mapa base.')
-  expect(backup.remove).toHaveBeenCalledOnce()
 })

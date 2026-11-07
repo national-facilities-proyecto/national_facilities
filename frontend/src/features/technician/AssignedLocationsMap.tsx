@@ -15,7 +15,7 @@ import type { MapLocation } from './mapLocation'
 import { Button, LoadingState } from '../../components/ui'
 import { requestLocation } from '../geolocation/location'
 import { MapBaseLayer } from './MapBaseLayer'
-import { openFreeMapProvider, type MapProvider } from './mapProviders'
+import { openFreeMapProvider } from './mapProviders'
 import { toProviderLatLng } from './mapProviderAdapter'
 
 // Conserva el punto de entrada utilizado por las pruebas y consumidores actuales.
@@ -88,15 +88,8 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
   const [attempt, setAttempt] = useState(0)
   const [position, setPosition] = useState<[number, number]>()
   const [message, setMessage] = useState('')
-  const [provider, setProvider] = useState<MapProvider>(openFreeMapProvider)
-  const ready = useCallback((active: MapProvider) => {
-    setProvider(active)
-    setState('ready')
-  }, [])
-  const loading = useCallback((active: MapProvider) => {
-    setProvider(active)
-    setState('loading')
-  }, [])
+  const ready = useCallback(() => setState('ready'), [])
+  const loading = useCallback(() => setState('loading'), [])
   const retry = () => {
     setState('loading')
     setAttempt((value) => value + 1)
@@ -138,7 +131,7 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           zoomControl={false}
         >
           <MapBaseLayer key={attempt} onReady={ready} onError={error} onLoading={loading} />
-          <AttributionControl prefix={provider.attribution} />
+          <AttributionControl prefix={openFreeMapProvider.attribution} />
           <ZoomControl position="bottomright" />
           <Bounds stores={validStores} position={position} />
           {validStores.map((store) => (
@@ -192,7 +185,7 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
             {state === 'loading' ? (
               <LoadingState
                 variant="map"
-                title={provider.id === 'aws' ? 'Cargando cartografía de respaldo' : 'Cargando mapa'}
+                title="Cargando mapa"
                 description="Puedes continuar desde la lista mientras se carga."
               />
             ) : (
@@ -204,14 +197,6 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           </div>
         )}
       </div>
-      {state === 'ready' && provider.id === 'aws' && (
-        <div role="status">
-          <p>Usando cartografía de respaldo de AWS.</p>
-          <Button variant="secondary" onClick={retry}>
-            Reintentar mapa principal
-          </Button>
-        </div>
-      )}
       {state === 'error' && (
         <ul aria-label="Tiendas asignadas sin mapa">
           {validStores.map((store) => (

@@ -16,4 +16,5 @@ Cuando una decisión se revisa, no se borra: se conserva el texto original y se 
 | [008](008-integracion-api-ejecucion-recuperable.md) | API autoritativa y ejecución recuperable         | Implementación técnica; reglas operativas pendientes |
 | [009](009-flujo-tecnico-p0.md)                      | Flujo técnico P0 y evidencia de llegada          | Implementación para revisión en V2; actualiza 008    |
 | [010](010-llegada-y-presentacion-operativa-v2.md)   | Llegada con una acción y presentación operativa  | Implementación para revisión en V2                   |
-| [011](011-contingencia-cartografica-aws.md)        | Contingencia cartográfica propia en AWS          | Propuesta implementada; validación AWS pendiente      |
+| [011](011-contingencia-cartografica-aws.md)        | Contingencia cartográfica propia en AWS          | Descartada por costos; sustituida por 012             |
+| [012](012-cache-local-visor.md)                   | Caché local de archivos propios del visor        | Alternativa conservadora aprobada                    |

@@ -7,6 +7,8 @@ import { RepositoriesContext } from './app/RepositoriesProvider'
 import { AuthProvider } from './features/auth/AuthProvider'
 import { ErrorBoundary } from './components/feedback/ErrorBoundary'
 import { LoadingState } from './components/ui'
+import { registerMapAssetWorker } from './features/technician/registerMapAssetWorker'
+void registerMapAssetWorker()
 const root = createRoot(document.getElementById('root')!)
 root.render(
   <LoadingState

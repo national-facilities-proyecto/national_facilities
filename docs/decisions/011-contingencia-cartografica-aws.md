@@ -1,7 +1,11 @@
 # ADR-011: Contingencia cartográfica con teselas propias en AWS
 
 **Fecha:** 2026-11-07
-**Estado:** Implementación propuesta para revisión; infraestructura y validación real pendientes
+**Estado:** Descartado el 2026-11-07; sustituido por [ADR-012](012-cache-local-visor.md)
+
+Documento histórico. El usuario descartó S3/CloudFront por costos; se retiraron
+su integración y herramientas antes de desplegar. Los apartados siguientes
+describen la propuesta anterior, no la arquitectura vigente.
 
 ## Contexto
 

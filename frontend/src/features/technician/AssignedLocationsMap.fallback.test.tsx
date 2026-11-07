@@ -6,20 +6,11 @@ import type { VectorMapLayer } from './vectorTileTransport'
 
 const mocks = vi.hoisted(() => ({
   primary: vi.fn(),
-  backup: vi.fn(),
   markerMount: vi.fn(),
   map: { fitBounds: vi.fn(), invalidateSize: vi.fn(), getContainer: () => document.body },
 }))
-vi.mock('./mapProviders', async (original) => {
-  const actual = await original<typeof import('./mapProviders')>()
-  return {
-    ...actual,
-    getMapProviders: () => actual.getMapProviders('https://maps.example.org/{z}/{x}/{y}.pbf'),
-  }
-})
 vi.mock('./openFreeMap', () => ({
   createOpenFreeMapLayer: mocks.primary,
-  createVectorMapLayer: mocks.backup,
 }))
 vi.mock('react-leaflet', async () => {
   const { useEffect } = await import('react')
@@ -70,7 +61,6 @@ const stores = [
   { id: 2, name: 'Coordenada inválida', address: 'No enviar', latitude: NaN, longitude: 0 },
 ]
 let primary: VectorMapLayer
-let backup: VectorMapLayer
 function makeLayer() {
   const layer = new L.Layer() as VectorMapLayer
   layer.addTo = vi.fn(() => layer)
@@ -88,15 +78,13 @@ beforeEach(() => {
     },
   )
   primary = makeLayer()
-  backup = makeLayer()
   mocks.primary.mockReset().mockResolvedValue(primary)
-  mocks.backup.mockReset().mockResolvedValue(backup)
   mocks.markerMount.mockClear()
   mocks.map.fitBounds.mockClear()
 })
 afterEach(() => vi.unstubAllGlobals())
 
-it('conserva el mapa, los marcadores, coordenadas, GPS y controles al pasar a AWS', async () => {
+it('conserva el mapa, los marcadores, coordenadas, GPS y controles ante un fallo recuperable', async () => {
   render(<AssignedLocationsMap stores={stores} />)
   await flush()
   const map = screen.getByTestId('map')
@@ -108,11 +96,7 @@ it('conserva el mapa, los marcadores, coordenadas, GPS y controles al pasar a AW
     primary.fire('tileerror')
   })
   await flush()
-  expect(screen.getByText('Cargando cartografía de respaldo')).toBeVisible()
-  act(() => {
-    backup.fire('load')
-  })
-  expect(screen.getByText('Usando cartografía de respaldo de AWS.')).toBeVisible()
+  expect(screen.getByRole('alert')).toHaveTextContent('Mapa no disponible')
   expect(screen.getByTestId('map')).toBe(map)
   expect(screen.getAllByTestId('marker')[0]).toBe(storeMarker)
   expect(storeMarker).toHaveAttribute('data-position', '[-12.1739,-77.0181]')
@@ -120,21 +104,18 @@ it('conserva el mapa, los marcadores, coordenadas, GPS y controles al pasar a AW
   expect(mocks.markerMount.mock.calls).toEqual([['Tienda piloto'], ['Tu ubicación']])
   expect(screen.queryByLabelText('Coordenada inválida')).not.toBeInTheDocument()
   expect(screen.getByText('Zoom')).toBeVisible()
-  expect(screen.getByTestId('attribution')).toHaveTextContent('Cartografía propia')
+  expect(screen.getByTestId('attribution')).toHaveTextContent('OpenFreeMap')
   // Solo montaje y GPS ajustaron bounds; el fallo no alteró el viewport.
   expect(mocks.map.fitBounds).toHaveBeenCalledTimes(2)
 })
 
-it('mantiene una lista utilizable al fallar ambos orígenes y el botón vuelve al principal', async () => {
+it('mantiene una lista utilizable al fallar el mapa y el botón reintenta OpenFreeMap', async () => {
   render(<AssignedLocationsMap stores={stores} />)
   await flush()
   act(() => {
     primary.fire('tileerror')
   })
   await flush()
-  act(() => {
-    backup.fire('tileerror')
-  })
   expect(screen.getByRole('alert')).toHaveTextContent('Mapa no disponible')
   const list = screen.getByRole('list', { name: 'Tiendas asignadas sin mapa' })
   expect(within(list).getByText(stores[0].name)).toBeVisible()
@@ -151,23 +132,5 @@ it('mantiene una lista utilizable al fallar ambos orígenes y el botón vuelve a
     recovered.fire('load')
   })
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  expect(screen.queryByText('Usando cartografía de respaldo de AWS.')).not.toBeInTheDocument()
   expect(mocks.primary).toHaveBeenCalledTimes(2)
-  expect(mocks.backup).toHaveBeenCalledOnce()
-})
-
-it('ofrece recuperación manual también desde un respaldo cargado correctamente', async () => {
-  render(<AssignedLocationsMap stores={stores} />)
-  await flush()
-  act(() => {
-    primary.fire('tileerror')
-  })
-  await flush()
-  act(() => {
-    backup.fire('load')
-  })
-  fireEvent.click(screen.getByRole('button', { name: 'Reintentar mapa principal' }))
-  await flush()
-  expect(mocks.primary).toHaveBeenCalledTimes(2)
-  expect(backup.dispose).toHaveBeenCalledOnce()
 })
