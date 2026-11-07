@@ -24,6 +24,8 @@ const target = (visit: Visit) =>
 export function WorkRecovery() {
   const { visits } = useRepositories()
   const query = useQuery(useCallback((signal) => visits.recovery({ signal }), [visits]))
+  // La recuperación no debe introducir un bloque grande que desaparece al cargar.
+  if (query.status === 'loading') return null
   if (query.status !== 'success' || !query.data)
     return <QueryState query={query} showHeading={false} />
   const data = query.data
