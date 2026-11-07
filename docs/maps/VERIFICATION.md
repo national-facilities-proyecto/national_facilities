@@ -1,5 +1,29 @@
 # Verificación — respaldo GeoJSON local
 
+## Corrección de los tests de carga en CI (2026-11-07)
+
+Las ejecuciones iniciales de GitHub Actions del commit `b347724` aprobaron
+61 escenarios E2E y fallaron los dos de `e2e/loading.spec.ts`: la petición del
+chunk del visor pasaba por el Service Worker y el `page.route()` del test no
+la interceptaba. El artefacto móvil también registró una medición de contraste
+durante la transición de cierre del menú.
+
+Se bloquea el worker únicamente en ese archivo de tests, se espera el cierre
+visual del menú antes de ejecutar Axe y se simula un MVT vacío válido para
+comprobar la carga y el espacio reservado sin activar la contingencia. No se
+eliminan aserciones de accesibilidad ni de dimensiones. La suite específica de
+mapas conserva el Service Worker real y los escenarios de fallos del proveedor.
+
+Verificación local de esta corrección, con Edge y backend/BD de prueba aislados
+(PostgreSQL 18, `nf_integration`, puerto 55432):
+
+- `npx playwright test e2e/loading.spec.ts`: **2 aprobadas**, 9,1 s.
+- `npm run test:map:e2e`: **13 aprobadas**, 24,6 s.
+- Lint, formato, TypeScript y build API: correctos.
+
+Estos resultados locales no equivalen a una nueva ejecución completa de CI.
+No se modifican componentes productivos ni la política de caché con esta corrección.
+
 Fecha: 2026-11-07. Rama `feat/local-map-assets-cache`, sobre `c8fc65e`.
 Inspección inicial: rama correcta y árbol limpio. No se modifica main, backend
 o PostgreSQL; no hay merge ni despliegue. Sin dependencias nuevas.
