@@ -18,3 +18,4 @@ Cuando una decisión se revisa, no se borra: se conserva el texto original y se 
 | [010](010-llegada-y-presentacion-operativa-v2.md)   | Llegada con una acción y presentación operativa  | Implementación para revisión en V2                   |
 | [011](011-contingencia-cartografica-aws.md)        | Contingencia cartográfica propia en AWS          | Descartada por costos; sustituida por 012             |
 | [012](012-cache-local-visor.md)                   | Caché local de archivos propios del visor        | Alternativa conservadora aprobada                    |
+| [013](013-respaldo-local-geojson.md)              | Respaldo regional GeoJSON local y lista          | Implementado para revisión, amplía 012                |

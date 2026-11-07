@@ -51,7 +51,8 @@ test('worker real reutiliza un archivo propio almacenado estando offline y exclu
   expect(
     urls.every(
       (url) =>
-        new URL(url).origin === new URL(saved.url).origin && /\/assets\/.*\.(js|css)$/.test(url),
+        new URL(url).origin === new URL(saved.url).origin &&
+        /\/assets\/.*\.(js|css|geojson)$/.test(url),
     ),
   ).toBe(true)
   expect(urls.some((url) => /openfreemap|\/api\/|\.pbf/.test(url))).toBe(false)
@@ -144,16 +145,19 @@ for (const failure of ['http', 'network', 'corrupt', 'timeout'] as const) {
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
     await open(page)
-    await expect(page.getByRole('alert')).toContainText('Mapa no disponible', { timeout: 18000 })
-    const list = page.getByRole('list', { name: 'Tiendas asignadas sin mapa' })
-    await expect(list.getByRole('link')).toHaveCount(2)
+    await expect(
+      page.getByText(
+        'El mapa principal no está disponible. Se está utilizando cartografía simplificada',
+      ),
+    ).toBeVisible({ timeout: 18000 })
+    await expect(page.locator('.leaflet-overlay-pane path')).not.toHaveCount(0)
     await expect(page.locator('.nf-marker')).toHaveCount(2)
     await expect(page.locator('.leaflet-tile-container')).toHaveCount(0)
     if (failure === 'http') {
-      await page.screenshot({ path: 'test-results/map-unavailable.png', fullPage: true })
+      await page.screenshot({ path: 'test-results/map-local-geojson.png', fullPage: true })
     }
     recovered = true
-    await page.getByRole('button', { name: 'Reintentar mapa', exact: true }).click()
+    await page.getByRole('button', { name: 'Reintentar mapa principal', exact: true }).click()
     await expect(page.locator('.nf-map-status')).toHaveCount(0)
     await expect(page.locator('.nf-marker')).toHaveCount(2)
     await expect(page.locator('.leaflet-control-attribution')).toContainText('OpenFreeMap')

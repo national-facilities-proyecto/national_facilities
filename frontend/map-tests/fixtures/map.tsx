@@ -18,8 +18,12 @@ root.render(
                     id: 1,
                     name: 'Tienda piloto Lima',
                     address: 'Miraflores, Lima',
-                    latitude: -12.1739,
-                    longitude: -77.0181,
+                    latitude: new URLSearchParams(location.search).has('outside')
+                      ? -16.4
+                      : -12.1739,
+                    longitude: new URLSearchParams(location.search).has('outside')
+                      ? -71.5
+                      : -77.0181,
                   },
                   {
                     id: 2,

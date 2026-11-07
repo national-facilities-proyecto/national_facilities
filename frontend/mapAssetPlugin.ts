@@ -14,7 +14,7 @@ export function mapAssetPlugin(): Plugin {
     async generateBundle(_options, bundle) {
       const assets = Object.keys(bundle)
         .filter((name) =>
-          /^(?:assets\/)(?:AssignedLocationsMap|LazyMap|Leaflet\.VectorGrid)[^/]*\.(?:js|css)$/.test(
+          /^(?:assets\/)(?:(?:AssignedLocationsMap|LazyMap|Leaflet\.VectorGrid)[^/]*\.(?:js|css)|lima-pilot-[^/]+\.geojson)$/.test(
             name,
           ),
         )

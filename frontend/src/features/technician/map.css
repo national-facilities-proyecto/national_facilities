@@ -35,6 +35,12 @@
   gap: 12px;
   margin-bottom: 12px;
 }
+.nf-map-simplified {
+  margin-top: 12px;
+  padding: 12px;
+  border-left: 4px solid #b7791f;
+  background: #fff8eb;
+}
 .nf-marker span {
   display: grid;
   place-items: center;

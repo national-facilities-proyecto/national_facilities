@@ -1,105 +1,123 @@
-# Caché local limitada de archivos del visor
+# Contingencia cartográfica local — National Facilities V2
 
-La propuesta de S3/CloudFront se descartó para evitar infraestructura adicional.
-OpenFreeMap sigue siendo el único proveedor de teselas y Leaflet.VectorGrid sigue
-renderizando el mapa con los estilos y coordenadas existentes.
+Arquitectura: **OpenFreeMap → GeoJSON propio estático → lista de tiendas**.
+Se conserva React-Leaflet/Leaflet.VectorGrid, los estilos del principal, la
+validación de coordenadas, marcadores, GPS y controles. No se cambian backend,
+PostgreSQL, asignaciones o permisos. No se añaden servicios de infraestructura.
 
-**Esta implementación no guarda teselas en Cache Storage y no ofrece mapas offline.**
-El usuario aprobó esta alternativa después de la revisión de viabilidad del
-2026-11-07. Se guardan únicamente algunos archivos JavaScript/CSS propios del visor.
-No hay cambios de backend, PostgreSQL, permisos ni reglas de negocio.
+## Principal y transición
 
-## Condiciones de OpenFreeMap y decisión
+`MapBaseLayer.tsx` sigue utilizando OpenFreeMap y sus mecanismos existentes:
+`loading`, `load`, `tileerror`, timeout de 12 segundos, captura de importación,
+limpieza de listeners y cancelación de las peticiones al retirar la capa.
+`vectorTileTransport.ts` sigue comprobando HTTP/PBF, sin falsos éxitos ante 403/503.
 
-Los [términos oficiales](https://openfreemap.org/tos/), actualizados el 2026-10-14,
-permiten descargar áreas para offline con límites de 3.000 tiles o 50 MB por
-descarga, cuatro solicitudes simultáneas y un User-Agent que identifique la app.
-No aclaran expresamente el tratamiento de una caché oportunista de teselas vistas.
-Chrome descarta User-Agent personalizado en fetch, por lo que el frontend y un
-Service Worker no pueden garantizar ese requisito en los navegadores objetivo.
-Esto no equivale a afirmar que toda caché temporal esté prohibida; la autorización
-para nuestra modalidad concreta no está confirmada.
+Si falla, retira la capa antes de activar `LocalGeoJSONLayer.tsx`. El mapa React no
+se remonta y el fallo no vuelve a ajustar los bounds. Se conservan los objetos de
+marcador y las coordenadas que recibió el sistema. Cada intento avanza solo una
+vez hacia local/lista; no hay polling, sondeos ni retorno automático al principal.
 
-Por esa incertidumbre se excluyen las teselas de Cache Storage. Para reconsiderarlo,
-obtener primero aclaración de OpenFreeMap sobre caché web pasiva e identificación
-admitida. No sustituir User-Agent por otro header y asumir que eso cumple.
-No se envían mensajes al proveedor ni se añaden proxies en esta implementación.
+Cuando OpenFreeMap funciona no se solicita el archivo GeoJSON. Cuando falla se
+carga `assets/lima-pilot-<hash>.geojson` del mismo origen del frontend. No se
+consulta Overpass, OSM, ni otro proveedor durante su representación.
 
-Una comprobación HEAD de una tesela el 2026-11-07 devolvió HTTP 200, CORS `*`, MIME
-MVT y Cache-Control público. Las peticiones de teselas conservan fetch normal y
-la caché HTTP que administre el navegador según esos encabezados. Esto no garantiza
-que una tesela siga disponible durante una caída y no autoriza por sí solo una
-política de descarga offline personalizada. No hay prefetch, descarga de áreas,
-polling, `force-cache`, `only-if-cached` ni una copia alternativa local de PBF.
+## Respaldo simplificado y cobertura
 
-## Qué se almacena
+El archivo versionado contiene datos reales OSM: siete límites distritales de Lima
+sur y 116 grupos de vías principales. Tamaño: 581 023 bytes. Fecha de snapshot,
+licencia ODbL-1.0, relaciones OSM, consulta original y reproducción están en
+[procedencia del dataset](../../frontend/src/features/technician/data/README.md).
 
-Durante `vite build`, `mapAssetPlugin.ts` genera `map-assets-sw.js` e incorpora una
-lista exacta de archivos con hash emitidos para `AssignedLocationsMap`, `LazyMap`
-y `Leaflet.VectorGrid` (JS/CSS). No usa una regla amplia para todo `/assets/`.
-El identificador de versión incluye nombres de esos archivos y código del worker.
+`localPilot.ts` valida estructura, metadatos, geometrías Polygon/MultiPolygon y
+LineString/MultiLineString, anillos cerrados no degenerados y coordenadas WGS84
+finitas. El archivo se limita a 1 MiB, 500 features y 50 000 posiciones antes de
+representarlo. No es una validación de exactitud oficial o de topología completa.
 
-El registro usa un worker módulo del mismo origen, scope de `BASE_URL` y
-`updateViaCache: none`. Solo se registra en producción, en contexto seguro y si
-el navegador lo soporta. Un fallo de registro no impide iniciar la aplicación.
-En desarrollo normal no se instala; la suite específica usa un build real.
+La cobertura exige que todas las tiendas válidas y el punto GPS activo estén
+dentro del rectángulo operativo y de alguno de los polígonos distritales, excluyendo
+huecos. No basta con estar dentro de un bbox. No se alteran ni aproximan las
+coordenadas de las tiendas para hacerlas encajar.
 
-El worker solo responde a GET de URLs exactas de esa lista, mismo origen, sin
-query/hash, sin Authorization y sin `cache: no-store`. No intercepta teselas,
-HTML/navegaciones, API, login, datos de tiendas, evidencias, fuentes ni otros
-chunks compartidos. Por tanto **no es una PWA offline ni almacena la aplicación
-completa**: recargar o abrir por primera vez sin red puede fallar aunque haya
-algunos archivos del visor guardados.
+Con cobertura válida se dibuja una capa React-Leaflet `GeoJSON`, con límites y vías
+estilizados y tooltips de nombres insertados como texto. El mapa permite zoom,
+desplazamiento y popups de las tiendas. Se muestra el mensaje solicitado:
 
-## Política y errores
+> El mapa principal no está disponible. Se está utilizando cartografía simplificada
 
-- Cache-first para archivos permitidos ya guardados y no vencidos; no se hace una
-  petición adicional de actualización al acertar la caché.
-- Caducidad absoluta de siete días desde almacenamiento; leer no renueva el plazo.
-- Máximo 100 recursos y 10 MiB de cuerpos descomprimidos por versión. Es un límite
-  de datos gestionados por la app, no una medida exacta de espacio físico: headers
-  e índices del navegador añaden overhead.
-- Expulsión FIFO de entradas más antiguas para cumplir ambos límites. Operaciones
-  serializadas evitan exceder capacidad por solicitudes concurrentes.
-- Limpieza al consultar un archivo permitido; no hay tareas periódicas. Una entrada
-  vencida puede permanecer físicamente hasta la próxima consulta, pero no se sirve.
-- Un miss intenta una vez la red, con timeout de cuatro segundos que cubre también
-  el cuerpo. Si falla y no hay entrada vigente, falla la petición. No se devuelve
-  un archivo ficticio ni se sirve contenido vencido como si fuera vigente.
-- Solo se guardan respuestas 200 con MIME JavaScript/CSS, sin `no-store`/`private`.
-  Se normalizan las claves sin cabeceras de petición para los archivos estáticos
-  con hash, evitando variantes artificiales por Origin. Los cuerpos almacenados
-  ya están decodificados: se eliminan Content-Encoding y Content-Length al reconstruirlos.
-- Fallos de cuota, lectura, apertura o escritura de Cache Storage no invalidan una
-  respuesta de red correcta. Las peticiones normales continúan si no hay almacenamiento.
-- Al activarse se borran únicamente versiones anteriores con prefijo
-  `nf-map-assets-`; no se borran cachés de otros módulos. No se fuerza `skipWaiting`:
-  una actualización espera el ciclo de vida normal del navegador.
+Se identifican la cobertura regional limitada y la atribución OSM. No es un callejero
+completo ni un motor de rutas. Fuera del piloto puede no haber geometrías al desplazar
+la vista; el aviso permanente lo advierte. Se conservan las coordenadas y vista del
+principal sin limitar artificialmente el mapa al piloto.
 
-El navegador puede borrar estos datos por presión de espacio, limpieza manual,
-modo privado o políticas del dispositivo. La primera visita puede no estar aún
-controlada por el worker. Cambiar dominio, esquema, puerto o perfil produce un
-almacenamiento diferente. No se solicita persistencia obligatoria al navegador.
+Un archivo ausente, HTTP fallido, JSON corrupto/incompatible, error de construcción
+de capa, falta de cobertura o timeout local de cinco segundos termina en lista.
+La descarga local se cancela al desmontar/reintentar; las respuestas tardías no
+instalan capas ni cambian estado sobre una vista desmontada.
 
-## Resiliencia del mapa conservada
+## Lista y recuperación
 
-Se mantienen validación de coordenadas, renderizado/estilos compartidos, marcadores,
-GPS, popups y controles. El transporte de VectorGrid detecta HTTP no exitoso, red y
-PBF inválido; no los presenta como carga correcta. Conserva cancelación concurrente
-al retirar capas y protección ante import tardío, timeout y desmontaje.
+La lista conserva nombres, direcciones y enlaces de indicaciones. Las entradas
+con coordenadas inválidas pueden consultarse como texto, pero no generan enlaces
+de coordenadas ni marcadores. `AssignedLocationsList.tsx` es independiente del
+chunk del mapa: `LazyMap.tsx` también la muestra si no puede abrir el visor.
 
-El timeout cartográfico sigue siendo 12 segundos, incluyendo nuevos ciclos de
-carga después de mover/zoomear. Tras un fallo se retira la capa, se conservan
-marcadores y se presenta una lista de tiendas y reintento manual desde OpenFreeMap.
-No hay conmutación de proveedor ni bucles automáticos. La lista depende de los
-datos autorizados ya cargados: tampoco garantiza una recarga offline de la API.
+El botón del modo local o de la lista vuelve a intentar OpenFreeMap. Antes de
+instalarlo se desmonta la capa GeoJSON. Si vuelve a fallar, el nuevo intento puede
+usar otra vez el mismo GeoJSON. Un cambio de tiendas/GPS durante el modo local
+revalida cobertura sin repetir su descarga; si falta cobertura, pasa a lista.
 
-## Verificar localmente
+## Caché controlada
+
+Se mantiene el Service Worker existente. La lista exacta generada por
+`mapAssetPlugin.ts` incluye ahora el GeoJSON propio con hash, además de JS/CSS del
+visor. El worker admite MIME `application/geo+json` o `application/json` únicamente
+para un GeoJSON de esa lista y del mismo origen. API, HTML, autenticación, otros
+GeoJSON y teselas continúan fuera del alcance.
+
+La política no cambia:
+
+- Cache-first para entradas vigentes.
+- Caducidad absoluta de **siete días**, sin renovarla por lectura.
+- Máximo **100 recursos y 10 MiB** de cuerpos por versión, expulsión FIFO.
+- Operaciones serializadas; tolerancia a cuota/lectura/escritura denegadas.
+- Limpieza bajo demanda y borrado solo de versiones propias al activar.
+- Registro en producción segura, sin forzar `skipWaiting`.
+
+El GeoJSON se almacena solo tras solicitar el respaldo, no se precarga mientras
+el principal funciona. Si no está guardado y no hay red para descargarlo del
+frontend, se utiliza la lista. Un archivo vencido no se sirve deliberadamente.
+El navegador puede eliminar cachés por espacio, modo privado o limpieza manual.
+El límite mide cuerpos, no todo el overhead físico del almacenamiento.
+
+El worker limita la red de sus recursos a cuatro segundos por fetch; la carga
+local tiene además su propio límite de cinco segundos. No existen reintentos
+automáticos en bucle. Un contenido local corrupto puede quedar almacenado hasta
+expirar o limpiar la caché; el runtime siempre lo valida y pasa a lista. Una
+actualización válida se publica con un nuevo hash/build.
+
+**No se almacenan teselas de OpenFreeMap.** Sus peticiones siguen usando fetch y
+la caché HTTP normal que administre el navegador. No se descarga ninguna zona de
+OpenFreeMap para offline. La restricción de User-Agent para descargas offline
+evaluada en ADR-012 no se aplica como permiso para copiar sus teselas.
+
+## Límites de disponibilidad
+
+El respaldo elimina la dependencia de OpenFreeMap para la representación
+simplificada del piloto cuando el archivo local está accesible o en caché vigente.
+No garantiza todo Lima, Perú, todas las calles, datos actualizados continuamente,
+precisión catastral ni SLA. Tampoco garantiza abrir o recargar todo el portal sin
+Internet: HTML, dependencias compartidas y datos de negocio no se convierten en
+una PWA offline. Los enlaces de indicaciones necesitan conectividad externa.
+
+El alojamiento existente sigue sirviendo un archivo adicional; no se crean S3,
+CloudFront, proveedores alternativos ni nuevos servicios de pago. Esto no implica
+que el tráfico del alojamiento existente sea ilimitado o gratuito.
+
+## Verificación reproducible
 
 Desde `frontend`:
 
 ```powershell
-npm ci
 npm test
 npm run typecheck
 npm run lint
@@ -110,31 +128,21 @@ node scripts/check-api-build.mjs
 npm run test:map:e2e
 ```
 
-La última orden genera un build `maptest` con un fixture de tiendas ficticias y
-ejecuta Playwright contra Vite preview. Usa Service Worker, Cache Storage, Leaflet,
-VectorGrid y Canvas reales. El dominio de OpenFreeMap se intercepta con respuestas
-MVT controladas; no se descargan áreas ni se necesita API/BD. El modo `maptest` y
-su HTML no se incluyen en el build normal de producción.
+La suite Playwright construye `maptest` y usa tiendas ficticias, capas Leaflet/SVG,
+Service Worker y Cache Storage reales. Intercepta el principal con MVT controlado;
+el GeoJSON del respaldo es el archivo OSM real versionado, servido por Vite preview.
+El fixture `maptest` no se publica en el build normal.
 
-Para una revisión manual: construir y servir por HTTPS o localhost, esperar a
-que DevTools Application muestre el worker activo, abrir el visor y revisar
-`nf-map-assets-*`. Debe contener solo las URLs JS/CSS autorizadas, nunca PBF ni API.
-Desactivar red y verificar un archivo guardado con fetch desde esa pestaña; borrar
-esa entrada y comprobar fallo, volver online y comprobar recuperación. Inspeccionar
-el dominio OpenFreeMap para distinguir HTTP cache de Cache Storage. No inferir que
-todo un barrio, zoom o mapa se guardó por haberlo visto una vez.
+Para revisar manualmente: abrir el visor en HTTPS/localhost, bloquear únicamente
+`tiles.openfreemap.org`, comprobar rutas locales, atribución, aviso, marcadores y
+zoom. Bloquear o corromper el GeoJSON y comprobar la lista. Probar una tienda fuera
+del piloto. Tras un respaldo exitoso y con worker activo, desconectar Internet y
+reintentar para comprobar reutilización del GeoJSON; no confundirlo con recargar
+todo el portal offline. Desbloquear el principal y pulsar reintento para recuperarlo.
 
-Nginx entrega el script del worker con `Cache-Control: no-cache` y 404 real si falta.
-Con otro servidor configurar comportamiento equivalente; no devolver index.html
-para ese script. La aplicación sigue funcionando sin worker si el registro falla.
-No se añade endpoint de AWS ni variables para cartografía propia.
+Resultados/capturas: [VERIFICATION.md](VERIFICATION.md).
 
-## Fuentes
-
-- [Términos OpenFreeMap](https://openfreemap.org/tos/) y [guía oficial](https://openfreemap.org/quick_start/).
-- [User-Agent y limitación de Chrome](https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header).
-- [Service Workers y contexto seguro](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API).
-- [Cache API: caducidad y headers no son automáticos](https://developer.mozilla.org/en-US/docs/Web/API/Cache).
-- [Cuotas y eliminación del almacenamiento](https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria).
-
-Resultados reales y alcance: [VERIFICATION.md](VERIFICATION.md).
+Referencias: [licencia OSM](https://www.openstreetmap.org/copyright),
+[Overpass, uso público](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html),
+[React-Leaflet v4](https://react-leaflet.js.org/docs/v4/api-components/#geojson),
+[eliminación del almacenamiento del navegador](https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria).

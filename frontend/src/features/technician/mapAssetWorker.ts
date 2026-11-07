@@ -1,4 +1,4 @@
-// This worker caches only build-generated, same-origin viewer assets. Never tiles/API/HTML.
+// Only build-listed viewer JS/CSS and the local pilot GeoJSON. Never tiles/API/HTML.
 export const CACHE_PREFIX = 'nf-map-assets-'
 export const MAX_AGE = 7 * 24 * 60 * 60 * 1000
 export const MAX_ENTRIES = 100
@@ -98,7 +98,9 @@ export class MapAssetCache {
     if (
       cache &&
       response.status === 200 &&
-      /(?:javascript|text\/css)/i.test(type) &&
+      (/(?:javascript|text\/css)/i.test(type) ||
+        (new URL(request.url).pathname.endsWith('.geojson') &&
+          /application\/(?:geo\+json|json)/i.test(type))) &&
       !/no-store|private/i.test(response.headers.get('cache-control') ?? '')
     ) {
       try {

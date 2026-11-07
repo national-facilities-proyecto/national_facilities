@@ -5,6 +5,7 @@ const paths = [
   '/assets/AssignedLocationsMap-a.js',
   '/assets/AssignedLocationsMap-b.css',
   '/assets/Leaflet.VectorGrid-c.js',
+  '/assets/lima-pilot-d.geojson',
 ]
 const request = (index = 0) => new Request(origin + paths[index])
 let now: number
@@ -54,6 +55,20 @@ it('almacena un recurso permitido y lo reutiliza sin red', async () => {
   expect(await (await handler.handle(request())).text()).toBe('abcd')
   expect(fetcher).toHaveBeenCalledOnce()
   expect(entries.size).toBe(1)
+})
+it('guarda solo el GeoJSON propio de la lista con MIME JSON y reutiliza la misma política', async () => {
+  fetcher.mockResolvedValueOnce(
+    new Response('{"type":"FeatureCollection"}', {
+      headers: { 'content-type': 'application/geo+json' },
+    }),
+  )
+  const handler = policy()
+  await handler.handle(request(3))
+  fetcher.mockRejectedValue(new Error('offline'))
+  expect(await (await handler.handle(request(3))).text()).toContain('FeatureCollection')
+  expect(entries.size).toBe(1)
+  expect(handler.accepts(new Request(origin + '/assets/other.geojson'))).toBe(false)
+  expect(fetcher).toHaveBeenCalledOnce()
 })
 it('un recurso ausente falla sin inventar una respuesta offline', async () => {
   fetcher.mockRejectedValue(new TypeError('Failed to fetch'))

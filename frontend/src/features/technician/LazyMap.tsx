@@ -1,14 +1,25 @@
 import { lazy, Suspense } from 'react'
 import type { MapLocation } from './mapLocation'
 import { LoadingState } from '../../components/ui'
-import { ErrorBoundary } from '../../components/feedback/ErrorBoundary'
+import { MapFailureBoundary } from './MapFailureBoundary'
+import { AssignedLocationsList } from './AssignedLocationsList'
 const Map = lazy(async () => ({
   default: (await import('./AssignedLocationsMap')).AssignedLocationsMap,
 }))
 export function LazyMap(props: { stores: MapLocation[] }) {
   if (!props.stores.length) return null
   return (
-    <ErrorBoundary>
+    <MapFailureBoundary
+      fallback={
+        <section className="nf-card" aria-label="Tiendas asignadas">
+          <p role="alert">No se pudo abrir el visor. Puedes continuar desde la lista de tiendas.</p>
+          <AssignedLocationsList stores={props.stores} />
+          <button className="nf-button" onClick={() => window.location.reload()}>
+            Recargar y reintentar
+          </button>
+        </section>
+      }
+    >
       <Suspense
         fallback={
           <section className="nf-card" aria-label="Mapa de tiendas">
@@ -27,6 +38,6 @@ export function LazyMap(props: { stores: MapLocation[] }) {
       >
         <Map {...props} />
       </Suspense>
-    </ErrorBoundary>
+    </MapFailureBoundary>
   )
 }

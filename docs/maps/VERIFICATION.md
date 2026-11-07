@@ -1,85 +1,59 @@
-# Verificación de la alternativa aprobada
+# Verificación — respaldo GeoJSON local
 
-Rama: `feat/local-map-assets-cache`. Se conserva el commit anterior como historia;
-el diff final retira las partes específicas del respaldo AWS. No se modifica main,
-no se ejecuta merge y no se despliega.
+Fecha: 2026-11-07. Rama `feat/local-map-assets-cache`, sobre `c8fc65e`.
+Inspección inicial: rama correcta y árbol limpio. No se modifica main, backend
+o PostgreSQL; no hay merge ni despliegue. Sin dependencias nuevas.
 
-Fecha: 2026-11-07. Entorno: Windows, Node 22.14.0 y Microsoft Edge.
+## Resultados reales
 
-| Comprobación | Resultado real |
+| Comprobación | Resultado |
 | --- | --- |
-| `npm run test:coverage` | 46 archivos, 310 pruebas aprobadas; umbrales existentes aprobados |
-| `npm run test:map:e2e` | 7 escenarios aprobados sobre build real y Service Worker real |
-| `npm run typecheck` | Correcto |
+| `npm test` | 49 archivos, 336 pruebas aprobadas |
+| `npm run test:map:e2e` | 13 escenarios aprobados con Edge, worker, Cache Storage, Leaflet y GeoJSON reales |
 | `npm run lint` | Correcto |
+| `npm run typecheck` | Correcto |
 | `npm run format:check` | Correcto |
-| `npm run build` | Correcto; emite map-assets-sw.js y excluye el fixture maptest |
-| `npm run build:api` | Correcto |
-| `node scripts/check-api-build.mjs` | Correcto; bundle API sin fixtures/repositorio mock |
+| `npm run build` | Correcto, emite GeoJSON con hash y worker |
+| `npm run build:api` y `node scripts/check-api-build.mjs` | Correctos; el build API excluye fixtures y repositorio mock |
+| SHA-256 del GeoJSON | `e80708c8900f84e56ade9625f222a2357c1ee8ace4254165ad00afd8818a1f22` |
 
-La cobertura existente mide módulos centrales seleccionados: statements 92.35%,
-branches 92.45%, functions 92.39%, lines 92.83%. Esos porcentajes **no representan
-la cobertura del worker ni del módulo cartográfico**; estos tienen sus pruebas
-específicas unitarias y de navegador. No se amplió artificialmente ese alcance.
+Las pruebas de límite/capacidad y cancelación usan mocks y timers cuando corresponde.
+Los escenarios de navegador usan el archivo GeoJSON OSM real versionado, pero las
+respuestas de OpenFreeMap están interceptadas: no demuestran disponibilidad del
+proveedor real. No se midió cobertura en esta ejecución y no se inventan porcentajes.
 
-La prueba de viabilidad anterior verificó términos oficiales y una sola solicitud
-HEAD real a OpenFreeMap; no se descargaron áreas. Las pruebas automatizadas usan
-respuestas MVT sintéticas para no depender del proveedor. El worker y la caché
-de archivos propios son reales en Playwright, no mocks de Service Worker.
+## Escenarios comprobados
 
-Se corrigió una incompatibilidad de claves debida a Vary/Origin entre peticiones
-de CSS/módulos y fetch. Las claves normalizadas de archivos estáticos no conservan
-cabeceras de solicitud. Las lecturas no reescriben ni prolongan la vida de entradas.
+- Principal correcto, sin solicitar GeoJSON.
+- HTTP 503, error de red, PBF corrupto y timeout del principal activan GeoJSON.
+- Capa principal retirada, marcadores conservados, tooltips/popups, zoom y atribución.
+- Durante interacción local no se generan nuevas peticiones de teselas al principal.
+- Archivo local ausente o corrupto y ubicaciones fuera del piloto terminan en lista.
+- Cobertura mediante polígonos reales; rechazo de un punto de océano dentro del bbox,
+  huecos/bordes con fixtures sintéticos aislados y coordenadas inválidas.
+- Reintento manual vuelve al principal y desmonta GeoJSON; sin sondeos automáticos.
+- GeoJSON guardado en Cache Storage y redibujado offline desde una vista cargada.
+- Cambio de ubicaciones, import/carga tardíos, desmontaje, timeout local y error de capa.
+- Lista accesible incluso ante fallo de importación del chunk del visor.
+- Se conservan pruebas existentes del transporte, coordenadas, registro y política de caché.
 
-## Alcance comprobable
-
-- Pruebas de la política: hit, miss, fallo de red, caducidad absoluta, recuperación,
-  límites de cantidad/bytes, concurrencia, cuota, almacenamiento denegado, limpieza
-  de versiones propias y exclusión de teselas/API/HTML/Authorization.
-- Pruebas de registro: producción segura, desarrollo, contexto inseguro y error tolerado.
-- Pruebas de ciclo de mapa: carga, timeout inicial/tardío, errores, limpieza,
-  cancelación, desmontaje/import tardío y reintento sin bucles.
-- Integración de componente: identidad de mapa/marcadores, GPS, coordenadas y lista.
-- Playwright sobre build real: worker y Cache Storage reales, reutilización offline
-  de archivo propio guardado, ausencia/borrado, caducidad y recuperación online.
-- Leaflet/VectorGrid reales con HTTP, rechazo de red, PBF corrupto y timeout de
-  OpenFreeMap simulados; tiendas accesibles y recuperación manual del principal.
-
-Esto no demuestra mapas offline ni disponibilidad de teselas/zonas/zooms. No se
-activa una caché PBF personalizada: esa parte se descartó en la alternativa aprobada.
-No se cachéan HTML ni toda la cadena de dependencias; no se garantiza abrir el
-portal sin red. La suite completa E2E de negocio requiere API/BD preparadas y se
-conserva en CI; la suite de mapas no requiere backend.
-
-## Retirado y conservado
-
-Se retiran la plantilla CloudFormation, exportador MBTiles y pruebas, validador de
-dataset, capturas AWS, variable VITE_AWS_MAP_TILES_URL, build arg Docker, rama de
-selección AWS y sus escenarios específicos. Las guías de despliegue cartográfico
-se sustituyen por la explicación de almacenamiento local. El ADR-011 permanece
-como decisión histórica descartada; ADR-012 registra la alternativa aprobada.
-
-Se mantienen todas las pruebas previas a AWS, el adaptador de coordenadas, estilos,
-correcciones del transporte, cancelación, timeouts, lista y reintento. No se cambian
-paquetes/versiones, backend, datos, usuarios, permisos ni configuración de PostgreSQL.
+Los datos del producto son reales; los polígonos sintéticos usados para comprobar
+el algoritmo de huecos/bordes son solo fixtures de tests y no se distribuyen como
+cartografía del piloto. Las tiendas de las capturas son ficticias.
 
 ## Evidencia visual
 
-Captura de un fallo HTTP controlado, con tiendas ficticias y renderer Leaflet real.
-No demuestra disponibilidad offline del mapa base.
+![Respaldo GeoJSON real con tiendas ficticias](screenshots/map-local-geojson.png)
 
-![Mapa no disponible y tiendas accesibles](screenshots/map-unavailable.png)
+![Fuera del piloto: lista y explicación](screenshots/map-outside-pilot.png)
 
-## Archivos principales
+## Procedencia y límites
 
-- Nuevos: `frontend/mapAssetPlugin.ts`, `mapAssetWorker.ts`, `registerMapAssetWorker.ts`
-  y sus pruebas; `frontend/map-tests/map-cache.spec.ts`, entorno ficticio `.env.maptest`
-  y ADR-012.
-- Adaptados: Vite, Nginx, registro en `main.tsx`, configuración Playwright/CI,
-  componente/fábrica/ciclo de mapa y escenarios de integración.
-- Documentación: esta evidencia y guía de limitaciones; ADR-011 marcado descartado.
-- Retirados: herramientas, configuración y pruebas específicas de AWS detalladas arriba.
+Datos OSM obtenidos una sola vez con Overpass y publicados bajo ODbL-1.0:
+[procedencia, consulta, cobertura y reproducción](../../frontend/src/features/technician/data/README.md).
+No se descargaron teselas de OpenFreeMap. No se crearon servicios de infraestructura.
 
-No se ejecutó la suite E2E completa de negocio por faltar API/BD de integración
-locales; se conserva en el workflow. No se comprobó disponibilidad de OpenFreeMap
-durante las pruebas de integración: sus respuestas están interceptadas.
+No se certifican límites oficiales, exactitud topológica completa, calidad de un
+callejero íntegro, rutas, disponibilidad nacional ni una PWA offline. La suite E2E
+completa de negocio/API/BD se conserva en CI y no se ejecutó localmente. La política
+de caché mantiene siete días/100 recursos/10 MiB; el navegador puede eliminarla.

@@ -17,6 +17,10 @@ import { requestLocation } from '../geolocation/location'
 import { MapBaseLayer } from './MapBaseLayer'
 import { openFreeMapProvider } from './mapProviders'
 import { toProviderLatLng } from './mapProviderAdapter'
+import { LocalGeoJSONLayer } from './LocalGeoJSONLayer'
+import { MapFailureBoundary } from './MapFailureBoundary'
+import { AssignedLocationsList } from './AssignedLocationsList'
+import { LOCAL_ATTRIBUTION, SIMPLIFIED_MESSAGE } from './localPilot'
 
 // Conserva el punto de entrada utilizado por las pruebas y consumidores actuales.
 export { MapBaseLayer as OpenFreeMapLayer } from './MapBaseLayer'
@@ -84,21 +88,37 @@ function Bounds({ stores, position }: { stores: MapLocation[]; position?: [numbe
   return null
 }
 export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [state, setState] = useState<
+    'loading' | 'ready' | 'local-loading' | 'local-ready' | 'error'
+  >('loading')
   const [attempt, setAttempt] = useState(0)
   const [position, setPosition] = useState<[number, number]>()
   const [message, setMessage] = useState('')
+  const [mapError, setMapError] = useState('')
   const ready = useCallback(() => setState('ready'), [])
   const loading = useCallback(() => setState('loading'), [])
   const retry = () => {
     setState('loading')
+    setMapError('')
     setAttempt((value) => value + 1)
   }
-  const error = useCallback(() => setState('error'), [])
+  const error = useCallback(() => setState('local-loading'), [])
+  const localReady = useCallback(() => setState('local-ready'), [])
+  const localError = useCallback((reason: string) => {
+    setMapError(reason)
+    setState('error')
+  }, [])
   // ACL: solo coordenadas válidas llegan al proveedor de mapas.
   const validStores = useMemo(
     () => stores.filter((store) => toProviderLatLng(store) !== null),
     [stores],
+  )
+  const locations = useMemo(
+    () => [
+      ...validStores,
+      ...(position ? [{ latitude: position[0], longitude: position[1] }] : []),
+    ],
+    [validStores, position],
   )
   if (!validStores.length) return null
   return (
@@ -130,8 +150,17 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
           scrollWheelZoom={false}
           zoomControl={false}
         >
-          <MapBaseLayer key={attempt} onReady={ready} onError={error} onLoading={loading} />
-          <AttributionControl prefix={openFreeMapProvider.attribution} />
+          {(state === 'loading' || state === 'ready') && (
+            <MapBaseLayer key={attempt} onReady={ready} onError={error} onLoading={loading} />
+          )}
+          {(state === 'local-loading' || state === 'local-ready') && (
+            <MapFailureBoundary key={attempt} onError={localError}>
+              <LocalGeoJSONLayer locations={locations} onReady={localReady} onError={localError} />
+            </MapFailureBoundary>
+          )}
+          <AttributionControl
+            prefix={state === 'local-ready' ? LOCAL_ATTRIBUTION : openFreeMapProvider.attribution}
+          />
           <ZoomControl position="bottomright" />
           <Bounds stores={validStores} position={position} />
           {validStores.map((store) => (
@@ -180,41 +209,39 @@ export function AssignedLocationsMap({ stores }: { stores: MapLocation[] }) {
             </Marker>
           )}
         </MapContainer>
-        {state !== 'ready' && (
+        {state !== 'ready' && state !== 'local-ready' && (
           <div className="nf-map-status" role={state === 'error' ? 'alert' : undefined}>
-            {state === 'loading' ? (
+            {state === 'loading' || state === 'local-loading' ? (
               <LoadingState
                 variant="map"
-                title="Cargando mapa"
+                title={
+                  state === 'local-loading' ? 'Cargando cartografía simplificada' : 'Cargando mapa'
+                }
                 description="Puedes continuar desde la lista mientras se carga."
               />
             ) : (
               <>
                 <p>Mapa no disponible. Puedes continuar desde la lista de tiendas.</p>
+                {mapError && <p>{mapError}</p>}
                 <Button onClick={retry}>Reintentar mapa</Button>
               </>
             )}
           </div>
         )}
       </div>
-      {state === 'error' && (
-        <ul aria-label="Tiendas asignadas sin mapa">
-          {validStores.map((store) => (
-            <li key={store.id}>
-              <strong>{store.name}</strong>
-              <p>{store.address}</p>
-              <a
-                className="nf-link"
-                target="_blank"
-                rel="noopener noreferrer"
-                href={`https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}`}
-              >
-                Cómo llegar a {store.name}
-              </a>
-            </li>
-          ))}
-        </ul>
+      {state === 'local-ready' && (
+        <div role="status" className="nf-map-simplified">
+          <p>{SIMPLIFIED_MESSAGE}</p>
+          <p>
+            Piloto de Lima sur: límites distritales y selección de vías principales. Fuera de esa
+            cobertura no hay cartografía de respaldo.
+          </p>
+          <Button variant="secondary" onClick={retry}>
+            Reintentar mapa principal
+          </Button>
+        </div>
       )}
+      {state === 'error' && <AssignedLocationsList stores={stores} />}
       <p className="nf-map-legend">Tiendas: icono de local. Tu ubicación: punto azul.</p>
       {message && <p role="status">{message}</p>}
     </section>

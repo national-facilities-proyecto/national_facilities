@@ -3,6 +3,8 @@ import L from 'leaflet'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { VectorMapLayer } from './vectorTileTransport'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 const mocks = vi.hoisted(() => ({
   primary: vi.fn(),
@@ -16,6 +18,7 @@ vi.mock('react-leaflet', async () => {
   const { useEffect } = await import('react')
   return {
     useMap: () => mocks.map,
+    GeoJSON: () => <div data-testid="local-layer" />,
     MapContainer: ({ children }: { children: ReactNode }) => (
       <div data-testid="map">{children}</div>
     ),
@@ -71,6 +74,10 @@ function makeLayer() {
 const flush = () => act(async () => {})
 beforeEach(() => {
   vi.stubGlobal(
+    'fetch',
+    vi.fn().mockRejectedValue(new Error('No se pudo cargar la cartografía simplificada local.')),
+  )
+  vi.stubGlobal(
     'ResizeObserver',
     class {
       observe() {}
@@ -81,6 +88,47 @@ beforeEach(() => {
   mocks.primary.mockReset().mockResolvedValue(primary)
   mocks.markerMount.mockClear()
   mocks.map.fitBounds.mockClear()
+})
+
+it('activa GeoJSON conservando mapa, marcadores y viewport y permite recuperar OpenFreeMap', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockImplementation(
+        async () =>
+          new Response(
+            readFileSync(resolve('src/features/technician/data/lima-pilot.geojson'), 'utf8'),
+          ),
+      ),
+  )
+  render(<AssignedLocationsMap stores={stores} />)
+  await flush()
+  const marker = screen.getByTestId('marker')
+  const map = screen.getByTestId('map')
+  act(() => {
+    primary.fire('tileerror')
+  })
+  await flush()
+  expect(screen.getByTestId('local-layer')).toBeVisible()
+  expect(
+    screen.getByText(
+      'El mapa principal no está disponible. Se está utilizando cartografía simplificada',
+    ),
+  ).toBeVisible()
+  expect(screen.getByTestId('marker')).toBe(marker)
+  expect(screen.getByTestId('map')).toBe(map)
+  expect(mocks.map.fitBounds).toHaveBeenCalledOnce()
+  expect(primary.remove).toHaveBeenCalledOnce()
+  const recovered = makeLayer()
+  mocks.primary.mockResolvedValueOnce(recovered)
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar mapa principal' }))
+  await flush()
+  act(() => {
+    recovered.fire('load')
+  })
+  expect(screen.queryByTestId('local-layer')).not.toBeInTheDocument()
+  expect(mocks.primary).toHaveBeenCalledTimes(2)
 })
 afterEach(() => vi.unstubAllGlobals())
 
