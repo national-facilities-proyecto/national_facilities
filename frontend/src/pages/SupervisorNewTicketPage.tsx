@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useRepositories } from '../app/RepositoriesProvider'
+import { useAuth } from '../features/auth/AuthProvider'
 import { useQuery } from '../hooks/useQuery'
 import { QueryState } from '../components/feedback/QueryState'
 import { Alert, Button, Card, PageHeader, Select, Textarea } from '../components/ui'
@@ -17,16 +18,55 @@ type ReportPhoto = {
   source: Evidence['source']
   capturedAt?: string
 }
+type TicketDraft = {
+  description: string
+  category: string
+  priority: Priority
+  storeId: number
+  savedAt: number
+}
+const draftKey = (userId: number) => `nf:ticket-draft:${userId}`
+const DRAFT_MAX_AGE_MS = 2 * 60 * 60 * 1000
+function savedDraft(userId?: number): TicketDraft | null {
+  if (userId == null) return null
+  try {
+    const raw = sessionStorage.getItem(draftKey(userId))
+    if (!raw) return null
+    const value = JSON.parse(raw) as Partial<TicketDraft>
+    if (
+      typeof value.savedAt !== 'number' ||
+      Date.now() - value.savedAt > DRAFT_MAX_AGE_MS ||
+      typeof value.description !== 'string' ||
+      typeof value.category !== 'string' ||
+      typeof value.priority !== 'string' ||
+      typeof value.storeId !== 'number'
+    ) {
+      sessionStorage.removeItem(draftKey(userId))
+      return null
+    }
+    return {
+      description: value.description.slice(0, 500),
+      category: value.category,
+      priority: value.priority,
+      storeId: value.storeId,
+      savedAt: value.savedAt,
+    }
+  } catch {
+    return null
+  }
+}
 export default function SupervisorNewTicketPage() {
   const repos = useRepositories()
+  const { session } = useAuth()
   const navigate = useNavigate()
+  const [initialDraft] = useState(() => savedDraft(session?.user.id))
   const input = useRef<HTMLInputElement>(null)
   const [camera, setCamera] = useState(false)
   const replacementId = useRef<string>()
-  const [category, setCategory] = useState('')
-  const [priority, setPriority] = useState<Priority>('')
-  const [description, setDescription] = useState('')
-  const [storeId, setStoreId] = useState(0)
+  const [category, setCategory] = useState(initialDraft?.category ?? '')
+  const [priority, setPriority] = useState<Priority>(initialDraft?.priority ?? '')
+  const [description, setDescription] = useState(initialDraft?.description ?? '')
+  const [storeId, setStoreId] = useState(initialDraft?.storeId ?? 0)
   const [ids, setIds] = useState<string[]>([])
   const ownedIds = useRef<string[]>([])
   const recovered = useRef(false)
@@ -54,6 +94,38 @@ export default function SupervisorNewTicketPage() {
     ),
     false,
   )
+  useEffect(() => {
+    if (!session) return
+    const key = draftKey(session.user.id)
+    try {
+      if (!description && !category && !priority && !storeId) {
+        sessionStorage.removeItem(key)
+      } else {
+        sessionStorage.setItem(
+          key,
+          JSON.stringify({ description, category, priority, storeId, savedAt: Date.now() }),
+        )
+      }
+    } catch {
+      // El almacenamiento de la pestaña puede estar restringido.
+    }
+  }, [session, description, category, priority, storeId])
+  useEffect(() => {
+    if (!session) return
+    const clearDraft = () => {
+      try {
+        sessionStorage.removeItem(draftKey(session.user.id))
+      } catch {
+        // El formulario sigue siendo utilizable aunque el navegador lo bloquee.
+      }
+    }
+    window.addEventListener('nf:logout', clearDraft)
+    window.addEventListener('nf:expired', clearDraft)
+    return () => {
+      window.removeEventListener('nf:logout', clearDraft)
+      window.removeEventListener('nf:expired', clearDraft)
+    }
+  }, [session])
   useEffect(() => {
     const confirmed = query.data
     if (confirmed && !recovered.current) {
@@ -186,6 +258,7 @@ export default function SupervisorNewTicketPage() {
                 evidenceIds: ids,
               })
               .then((ticket) => {
+                if (session) sessionStorage.removeItem(draftKey(session.user.id))
                 void navigate(`/supervisor/tickets/${ticket.id}`)
               })
               .catch((cause) => {
@@ -346,7 +419,10 @@ export default function SupervisorNewTicketPage() {
             <Button
               variant="secondary"
               disabled={saving || uploading}
-              onClick={() => void navigate('/supervisor/tickets')}
+              onClick={() => {
+                if (session) sessionStorage.removeItem(draftKey(session.user.id))
+                void navigate('/supervisor/tickets')
+              }}
             >
               Cancelar
             </Button>
