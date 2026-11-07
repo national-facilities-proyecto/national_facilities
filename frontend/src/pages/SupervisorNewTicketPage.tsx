@@ -47,7 +47,7 @@ function savedDraft(userId?: number): TicketDraft | null {
     return {
       description: value.description.slice(0, 500),
       category: value.category,
-      priority: value.priority as Priority,
+      priority: value.priority,
       storeId: value.storeId,
       savedAt: value.savedAt,
     }
