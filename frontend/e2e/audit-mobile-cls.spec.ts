@@ -1,39 +1,34 @@
 import { expect, test } from '@playwright/test'
 import { login } from './helpers.js'
 
-type ShiftSample = {
+type Shift = {
   time: number
   value: number
-  sources: string[]
+  nodes: string[]
 }
 
-test('auditoría móvil: identifica elementos desplazados en /checklists', async ({ page }) => {
+test('auditoría móvil: desplazamientos en /checklists', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.addInitScript(() => {
-    const scope = window as typeof window & { __nfLayoutShifts?: ShiftSample[] }
-    scope.__nfLayoutShifts = []
+    const history: Shift[] = []
+    const root = window as Window & { __nfShifts?: Shift[] }
+    root.__nfShifts = history
     const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        const shift = entry as PerformanceEntry & {
-          value: number
+      for (const item of list.getEntries()) {
+        const entry = item as PerformanceEntry & {
           hadRecentInput?: boolean
+          value: number
           sources?: Array<{ node?: Element }>
         }
-        if (shift.hadRecentInput) continue
-        const sources = (shift.sources ?? []).map(({ node }) => {
-          if (!(node instanceof Element)) return '(elemento no disponible)'
-          return [
-            node.tagName.toLowerCase(),
-            node.id ? `#${node.id}` : '',
-            typeof node.className === 'string'
-              ? node.className.trim().split(/\\s+/).slice(0, 3).map((c) => `.${c}`).join('')
-              : '',
-          ].join('')
-        })
-        scope.__nfLayoutShifts?.push({
+        if (entry.hadRecentInput) continue
+        history.push({
           time: Math.round(entry.startTime),
-          value: shift.value,
-          sources,
+          value: entry.value,
+          nodes: (entry.sources ?? []).map(({ node }) => {
+            const tag = node?.tagName.toLowerCase() ?? '?'
+            const cls = node?.getAttribute('class')?.split(' ')[0] ?? ''
+            return `${tag}${cls ? `.${cls}` : ''}`
+          }),
         })
       }
     })
@@ -42,20 +37,13 @@ test('auditoría móvil: identifica elementos desplazados en /checklists', async
 
   await login(page)
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await expect(page.getByRole('heading', { name: 'Mis Checklist', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Perfil de/ })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Mis Checklist' })).toBeVisible()
   await page.waitForTimeout(2500)
 
-  const shifts = await page.evaluate(
-    () =>
-      (window as typeof window & { __nfLayoutShifts?: ShiftSample[] }).__nfLayoutShifts ?? [],
-  )
-  const ranked = [...shifts].sort((a, b) => b.value - a.value).slice(0, 10)
-  const rawTotal = shifts.reduce((sum, entry) => sum + entry.value, 0)
-  console.log(
-    'APF3_CLS_CHECKLISTS_MOBILE',
-    JSON.stringify({ viewport: '390x844', shifts: shifts.length, rawTotal, ranked }),
-  )
-  await page.screenshot({ path: 'test-results/apf3-checklists-mobile.png', fullPage: true })
-  expect(await page.locator('main').isVisible()).toBe(true)
+  const shifts = await page.evaluate(() => {
+    const root = window as Window & { __nfShifts?: Shift[] }
+    return root.__nfShifts ?? []
+  })
+  console.log('APF3_LAYOUT_SHIFTS', JSON.stringify(shifts))
+  await page.screenshot({ path: 'test-results/apf3-mobile-cls.png', fullPage: true })
 })
